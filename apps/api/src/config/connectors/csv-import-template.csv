@@ -1,0 +1,7 @@
+externalOrderId,sourceSystem,channel,orderType,status,currency,amount,createdAt
+WEB-100249,Magento,web,B2C,placed,USD,149.99,2026-04-10T10:00:00Z
+WEB-100250,Magento,web,B2C,processed,USD,89.50,2026-04-10T10:05:00Z
+MOB-200100,Magento,mobile,B2C,placed,GBP,210.00,2026-04-10T11:00:00Z
+POS-X992,VendPOS,instore,Retail,processed,USD,45.00,2026-04-10T10:05:00Z
+POS-X993,VendPOS,instore,Retail,placed,USD,128.75,2026-04-10T12:30:00Z
+SAP-B2B-8801,SAP,edi,B2B,placed,EUR,3450.00,2026-04-10T08:00:00Z

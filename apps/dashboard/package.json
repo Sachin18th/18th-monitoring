@@ -1,0 +1,25 @@
+{
+  "name": "dashboard",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "autoprefixer": "^10.4.27",
+    "axios": "^1.15.0",
+    "lucide-react": "^1.8.0",
+    "next": "latest",
+    "postcss": "^8.5.9",
+    "react": "latest",
+    "react-dom": "latest",
+    "recharts": "^3.8.1",
+    "tailwindcss": "^4.2.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/react": "19.2.14"
+  }
+}

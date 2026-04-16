@@ -1,0 +1,7 @@
+﻿{
+  "thresholds": {
+    "pageLoadMs": 3000,
+    "errorRatePct": 2,
+    "orderDelayMin": 60
+  }
+}

@@ -1,0 +1,45 @@
+# Use official Node.js 20 LTS Alpine image
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependency definitions
+COPY package*.json tsconfig.base.json ./
+COPY apps/dashboard/package*.json ./apps/dashboard/
+
+# Next.js telemetry disable
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Install dependencies
+RUN npm ci
+
+# Copy source
+COPY packages/ ./packages/
+COPY apps/dashboard/ ./apps/dashboard/
+
+# Build
+WORKDIR /app/apps/dashboard
+RUN npm run build
+
+# Runner Stage
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+
+# Copy necessary files from builder
+COPY --from=builder /app/apps/dashboard/public ./public
+# Automatically leverage output traces to reduce image size (Next.js standalone mode required in next.config.js)
+COPY --from=builder /app/apps/dashboard/.next/standalone ./
+COPY --from=builder /app/apps/dashboard/.next/static ./.next/static
+
+# Run unprivileged
+USER node
+
+EXPOSE 3000
+
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

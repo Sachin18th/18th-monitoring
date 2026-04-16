@@ -1,0 +1,10 @@
+﻿{
+  "tracking": {
+    "performance": true,
+    "user": true,
+    "errors": true
+  },
+  "sampling": {
+    "sessionRate": 1.0
+  }
+}

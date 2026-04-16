@@ -1,0 +1,723 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+    "name": "KPI Monitoring & Enterprise API Console",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Authentication & Users",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"superadmin@monitor.io\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Current User (Me)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/user/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "user",
+                "me"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Dashboard & Telemetry",
+      "item": [
+        {
+          "name": "List User Projects",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/projects",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "projects"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Dashboard Health State",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/dashboard/p/{{site_id}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "p",
+                "{{site_id}}",
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Metrics Catalog (KPI List)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/dashboard/p/{{site_id}}/metrics/catalog",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "p",
+                "{{site_id}}",
+                "metrics",
+                "catalog"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Time-Series Data (Metric Charting)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/dashboard/p/{{site_id}}/metrics/series?kpi=pageLoadTime&range=1h",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dashboard",
+                "p",
+                "{{site_id}}",
+                "metrics",
+                "series"
+              ],
+              "query": [
+                {
+                  "key": "kpi",
+                  "value": "pageLoadTime"
+                },
+                {
+                  "key": "range",
+                  "value": "1h"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Project Configuration & Integrations",
+      "item": [
+        {
+          "name": "Get Resolved Config Rules",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/config/resolved",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "config",
+                "resolved"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Registry Category Catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/integrations/categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "integrations",
+                "categories"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Master Provider Catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/integrations/catalog",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "integrations",
+                "catalog"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Connected Instances",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/integrations/instances",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "integrations",
+                "instances"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Integration Instance (Connect)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"connectorId\": \"zapier\",\n  \"label\": \"Zapier Ops Route\",\n  \"category\": \"middleware\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/integrations/instances",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "integrations",
+                "instances"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update/Configure Integration Instance",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"config\": {\n    \"prod\": { \"apiKey\": \"test_12345\" }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/integrations/instances/:instanceId",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "integrations",
+                "instances",
+                ":instanceId"
+              ],
+              "variable": [
+                {
+                  "key": "instanceId",
+                  "value": "int_xyz123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Test External Connection Pipeline",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"env\": \"prod\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/integrations/instances/:instanceId/test",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "integrations",
+                "instances",
+                ":instanceId",
+                "test"
+              ],
+              "variable": [
+                {
+                  "key": "instanceId",
+                  "value": "int_xyz123"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Identity & Access Governance",
+      "item": [
+        {
+          "name": "List API Access Keys",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/access-control/keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "access-control",
+                "keys"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create New API Access Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Reporting Engine Key\",\n  \"environment\": \"production\",\n  \"purpose\": \"Scheduled external data sync jobs\",\n  \"isVip\": false,\n  \"scopes\": [\"reporting\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/access-control/keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "access-control",
+                "keys"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Rotate Sensitive Credentials",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/access-control/keys/:keyId/rotate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "access-control",
+                "keys",
+                ":keyId",
+                "rotate"
+              ],
+              "variable": [
+                {
+                  "key": "keyId",
+                  "value": "key_master_001"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Revoke API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/access-control/keys/:keyId",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "access-control",
+                "keys",
+                ":keyId"
+              ],
+              "variable": [
+                {
+                  "key": "keyId",
+                  "value": "key_master_001"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Audit & Credential Logs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/config/p/{{site_id}}/access-control/audit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "config",
+                "p",
+                "{{site_id}}",
+                "access-control",
+                "audit"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Ingestion Engine",
+      "item": [
+        {
+          "name": "Simulate E2E Telemetry Events (Seed Data)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"siteId\": \"{{site_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/simulate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "simulate"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ingest Web/Browser SDK Events",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"siteId\": \"{{site_id}}\",\n  \"events\": [\n    {\n      \"eventId\": \"a123\",\n      \"eventType\": \"page_view\",\n      \"siteId\": \"{{site_id}}\",\n      \"timestamp\": \"2024-03-24T12:00:00Z\",\n      \"metadata\": { \"url\": \"/home\", \"loadTime\": 400 }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/i/browser",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "i",
+                "browser"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ingest Target Server Events (e.g., OMS flow)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"siteId\": \"{{site_id}}\",\n  \"events\": [\n    {\n      \"eventId\": \"s999\",\n      \"eventType\": \"order_placed\",\n      \"siteId\": \"{{site_id}}\",\n      \"timestamp\": \"2024-03-24T12:01:00Z\",\n      \"metadata\": { \"orderId\": \"ORD-TEST-1\", \"value\": 150.0 }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/i/server",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "i",
+                "server"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Shopify Order Create Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": 820982911946154500,\n  \"email\": \"jon@doe.ca\",\n  \"closed_at\": null,\n  \"created_at\": \"2024-04-14T12:00:00-04:00\",\n  \"updated_at\": \"2024-04-14T12:00:00-04:00\",\n  \"number\": 234,\n  \"note\": null,\n  \"token\": \"123456abcd\",\n  \"gateway\": \"bogus\",\n  \"test\": true,\n  \"total_price\": \"403.00\",\n  \"subtotal_price\": \"393.00\",\n  \"total_weight\": 0,\n  \"total_tax\": \"10.00\",\n  \"taxes_included\": false,\n  \"currency\": \"USD\",\n  \"financial_status\": \"paid\",\n  \"line_items\": [\n    {\n      \"id\": 1,\n      \"variant_id\": 1,\n      \"title\": \"Awesome Sneakers\",\n      \"quantity\": 1,\n      \"price\": \"393.00\",\n      \"sku\": \"SKU123\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/webhooks/shopify/orders/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "shopify",
+                "orders",
+                "create"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Magento Order Create Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entity_id\": \"1\",\n  \"state\": \"new\",\n  \"status\": \"pending\",\n  \"coupon_code\": null,\n  \"protect_code\": \"123\",\n  \"shipping_description\": \"Flat Rate - Fixed\",\n  \"is_virtual\": 0,\n  \"store_id\": 1,\n  \"customer_id\": 1,\n  \"base_discount_amount\": 0,\n  \"base_grand_total\": 100,\n  \"base_shipping_amount\": 5,\n  \"base_subtotal\": 95,\n  \"base_tax_amount\": 0,\n  \"base_to_global_rate\": 1,\n  \"base_to_order_rate\": 1,\n  \"discount_amount\": 0,\n  \"grand_total\": 100,\n  \"shipping_amount\": 5,\n  \"subtotal\": 95,\n  \"tax_amount\": 0,\n  \"store_currency_code\": \"USD\",\n  \"order_currency_code\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/webhooks/magento/orders/create",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "magento",
+                "orders",
+                "create"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:4000/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "site_id",
+      "value": "store_001",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "ey...your_token_here...",
+      "type": "string"
+    }
+  ]
+}

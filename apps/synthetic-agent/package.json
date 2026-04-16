@@ -1,0 +1,21 @@
+{
+  "name": "synthetic-agent",
+  "version": "1.0.0",
+  "private": true,
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "node-cron": "^3.0.3",
+    "playwright": "^1.43.0",
+    "undici": "^6.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-cron": "^3.0.11",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.5"
+  }
+}

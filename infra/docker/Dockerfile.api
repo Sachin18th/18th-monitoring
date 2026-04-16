@@ -1,0 +1,47 @@
+# Use official Node.js 20 LTS Alpine image for minimal footprint
+FROM node:20-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Enable corepack for modern package management if needed
+RUN corepack enable
+
+# Copy root configurations
+COPY package*.json tsconfig.base.json ./
+
+# Copy workspace packages and apps relevant to API
+COPY packages/ ./packages/
+COPY services/processor/ ./services/processor/
+COPY services/alert-engine/ ./services/alert-engine/
+COPY apps/api/ ./apps/api/
+
+# Install dependencies (workspaces support required)
+RUN npm ci
+
+# Build the API (if there's a build step, here using tsx directly for simplicity, but ideally compiled)
+# RUN npm run build --workspace=apps/api
+# For production, we'd compile TS to JS, but for this demo stack we'll prepare the environment
+
+# Runner Stage
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=4000
+
+# Copy node_modules and built assets from builder
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/services ./services
+COPY --from=builder /app/apps/api ./apps/api
+COPY --from=builder /app/package.json ./
+
+# Run unprivileged
+USER node
+
+EXPOSE 4000
+
+# Production startup
+# TODO: Use compiled JS instead of tsx in final prod image 
+CMD ["npx", "tsx", "apps/api/src/server.ts"]
