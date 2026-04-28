@@ -3,6 +3,7 @@ import { Card, Typography, Badge, OperationalTable, Column } from '@kpi-platform
 import { Layers, Globe, Smartphone, MousePointer2, ChevronRight } from 'lucide-react';
 
 export interface PivotData {
+  id?: string | number;
   dimension: string;
   count: number;
   p50: number;
@@ -12,18 +13,18 @@ export interface PivotData {
 }
 
 export interface SegmentationPivotProps {
-  title: string;
-  icon: any;
-  data: PivotData[];
-  onSelect: (item: PivotData) => void;
+  title?: string;
+  icon?: any;
+  data?: PivotData[];
+  onSelect?: (item: PivotData) => void;
   loading?: boolean;
 }
 
 export const SegmentationPivot: React.FC<SegmentationPivotProps> = ({
-  title,
-  icon: Icon,
-  data,
-  onSelect,
+  title = "Regional Latency Distribution",
+  icon: Icon = Globe,
+  data = [],
+  onSelect = () => {},
   loading
 }) => {
   const columns: Column<PivotData>[] = [
@@ -69,12 +70,12 @@ export const SegmentationPivot: React.FC<SegmentationPivotProps> = ({
          </div>
       </div>
       <OperationalTable 
-        columns={columns} 
-        data={data.slice(0, 5)} 
+        columns={columns as any} 
+        data={data.map(d => ({ ...d, id: d.id || d.dimension })).slice(0, 5)} 
         isDense 
         onRowClick={onSelect}
         isLoading={loading}
-        getRowKey={(item) => item.dimension}
+        getRowKey={(item: any) => item.dimension || item.id}
       />
     </Card>
   );

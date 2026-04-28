@@ -1,250 +1,463 @@
 'use client';
+
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
-import { PageLayout, Typography, Card, Badge } from '@kpi-platform/ui';
-import { 
-    ShieldAlert, 
-    CheckCircle2, 
-    AlertTriangle, 
-    XCircle, 
-    Activity,
-    Wifi,
-    GitMerge,
-    BarChart3,
-    Clock,
-    Bell,
-    BellOff
+import {
+  ShieldAlert,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  Activity,
+  Wifi,
+  GitMerge,
+  BarChart3,
+  Clock,
+  Bell,
+  WifiOff
 } from 'lucide-react';
 
 type HealthStatus = 'healthy' | 'warning' | 'degraded' | 'critical' | 'failed';
-type AlertSeverity = 'critical' | 'warning' | 'info';
-type AlertStatus = 'active' | 'acknowledged' | 'resolved';
+
+const pageStyle: React.CSSProperties = {
+  padding: '24px 28px',
+  maxWidth: '1280px',
+  margin: '0 auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '24px',
+  overflow: 'visible',
+  minHeight: '100vh',
+  background: 'var(--bg-page)',
+  color: 'var(--text-primary)'
+};
+
+const cardStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid var(--border-card)',
+  background: 'var(--bg-card)',
+  padding: '24px',
+  overflow: 'visible'
+};
 
 const healthColors: Record<HealthStatus, string> = {
-    healthy: 'text-success',
-    warning: 'text-warning',
-    degraded: 'text-orange-400',
-    critical: 'text-error',
-    failed: 'text-error'
+  healthy: '#22c55e',
+  warning: '#fbbf24',
+  degraded: '#fb923c',
+  critical: '#f87171',
+  failed: '#f87171'
 };
 
-const healthBg: Record<HealthStatus, string> = {
-    healthy: 'border-success',
-    warning: 'border-warning',
-    degraded: 'border-orange-400',
-    critical: 'border-error',
-    failed: 'border-error'
-};
-
-const severityBadge = (severity: AlertSeverity) => {
-    switch (severity) {
-        case 'critical': return <Badge variant="error" size="sm">CRITICAL</Badge>;
-        case 'warning': return <Badge variant="warning" size="sm">WARNING</Badge>;
-        default: return <Badge variant="info" size="sm">INFO</Badge>;
-    }
+const healthBorders: Record<HealthStatus, string> = {
+  healthy: '1px solid rgba(34,197,94,0.2)',
+  warning: '1px solid rgba(251,191,36,0.2)',
+  degraded: '1px solid rgba(251,146,60,0.2)',
+  critical: '1px solid rgba(248,113,113,0.2)',
+  failed: '1px solid rgba(248,113,113,0.2)'
 };
 
 const layerIcon = (layer: string) => {
-    switch (layer) {
-        case 'connector': return <Wifi size={16} />;
-        case 'pipeline': return <GitMerge size={16} />;
-        case 'kpi': return <BarChart3 size={16} />;
-        case 'freshness': return <Clock size={16} />;
-        default: return <Activity size={16} />;
-    }
+  switch (layer) {
+    case 'connector':
+      return <Wifi style={{ width: '16px', height: '16px' }} />;
+    case 'pipeline':
+      return <GitMerge style={{ width: '16px', height: '16px' }} />;
+    case 'kpi':
+      return <BarChart3 style={{ width: '16px', height: '16px' }} />;
+    case 'freshness':
+      return <Clock style={{ width: '16px', height: '16px' }} />;
+    default:
+      return <Activity style={{ width: '16px', height: '16px' }} />;
+  }
 };
 
 export default function MonitoringDashboardPage() {
-    const params = useParams();
-    const projectId = params.projectId as string;
-    const { token, apiFetch } = useAuth();
-    
-    const [loading, setLoading] = useState(true);
-    const [snapshot, setSnapshot] = useState<any>(null);
-    const [alerts, setAlerts] = useState<any[]>([]);
-    const [activeTab, setActiveTab] = useState<'active' | 'resolved'>('active');
+  const params = useParams();
+  const projectId = params.projectId as string;
+  const { token, apiFetch } = useAuth();
 
-    const loadData = useCallback(async () => {
-        if (!token || !projectId) return;
-        setLoading(true);
-        try {
-            const [healthRes, alertsRes] = await Promise.all([
-                apiFetch(`/api/v1/tenants/current/projects/${projectId}/health/snapshot`),
-                apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts`)
-            ]);
-            setSnapshot(healthRes?.data?.snapshot);
-            setAlerts(alertsRes?.data?.alerts || []);
-        } catch (err) {
-            console.error('Failed to load monitoring data', err);
-        } finally {
-            setLoading(false);
-        }
-    }, [projectId, token, apiFetch]);
+  const [loading, setLoading] = useState(true);
+  const [snapshot, setSnapshot] = useState<any>(null);
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'active' | 'resolved'>('active');
 
-    useEffect(() => { loadData(); }, [loadData]);
+  const loadData = useCallback(async () => {
+    if (!token || !projectId) return;
+    setLoading(true);
+    try {
+      const [healthRes, alertsRes] = await Promise.all([
+        apiFetch(`/api/v1/tenants/current/projects/${projectId}/health/snapshot`),
+        apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts`)
+      ]);
+      setSnapshot(healthRes?.data?.snapshot);
+      setAlerts(alertsRes?.data?.alerts || []);
+    } catch (err) {
+      console.error('Failed to load monitoring data', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, token, apiFetch]);
 
-    const handleAcknowledge = async (alertId: string) => {
-        await apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts/${alertId}/acknowledge`, {
-            method: 'POST', body: JSON.stringify({ userId: 'current_user' })
-        });
-        loadData();
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleAcknowledge = async (alertId: string) => {
+    await apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts/${alertId}/acknowledge`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: 'current_user' })
+    });
+    loadData();
+  };
+
+  const handleResolve = async (alertId: string) => {
+    await apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts/${alertId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: 'current_user' })
+    });
+    loadData();
+  };
+
+  const filteredAlerts = alerts.filter((a) =>
+    activeTab === 'active' ? ['active', 'acknowledged'].includes(a.status) : a.status === 'resolved'
+  );
+
+  const healthStatus: HealthStatus = snapshot?.status || 'healthy';
+  const healthScore: number = snapshot?.healthScore ?? 100;
+  const criticalCount = alerts.filter((a) => a.status === 'active' && a.severity === 'critical').length;
+  const warningCount = alerts.filter((a) => a.status === 'active' && a.severity === 'warning').length;
+
+  const severityPill = (severity: string) => {
+    const map: Record<string, { color: string; border: string; bg: string }> = {
+      critical: { color: '#f87171', border: '1px solid rgba(248,113,113,0.2)', bg: 'rgba(248,113,113,0.08)' },
+      warning: { color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)', bg: 'rgba(251,191,36,0.08)' },
+      info: { color: '#60a5fa', border: '1px solid rgba(96,165,250,0.2)', bg: 'rgba(96,165,250,0.08)' }
     };
-
-    const handleResolve = async (alertId: string) => {
-        await apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts/${alertId}/resolve`, {
-            method: 'POST', body: JSON.stringify({ userId: 'current_user' })
-        });
-        loadData();
-    };
-
-    const filteredAlerts = alerts.filter(a => 
-        activeTab === 'active' ? ['active', 'acknowledged'].includes(a.status) : a.status === 'resolved'
-    );
-
-    const healthStatus: HealthStatus = snapshot?.status || 'healthy';
-    const healthScore: number = snapshot?.healthScore ?? 100;
-
+    const style = map[severity] || map.info;
     return (
-        <PageLayout
-            title="System Monitoring"
-            subtitle="Real-time health evaluation, alert management, and operational visibility."
-            icon={<ShieldAlert size={24} />}
-        >
-            <div className="space-y-6">
-                {/* 1. Health Score Banner */}
-                <Card className={`p-6 border-l-4 ${healthBg[healthStatus]}`}>
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            <div className={`text-5xl font-black ${healthColors[healthStatus]}`}>
-                                {healthScore}
-                            </div>
-                            <div>
-                                <Typography variant="overline" className="text-text-muted">System Health Score</Typography>
-                                <Typography variant="h3" noMargin className={`uppercase font-black ${healthColors[healthStatus]}`}>
-                                    {healthStatus}
-                                </Typography>
-                            </div>
-                        </div>
-                        <div className="flex gap-2">
-                            <Badge variant={alerts.filter(a => a.status === 'active' && a.severity === 'critical').length > 0 ? 'error' : 'neutral'} size="sm">
-                                {alerts.filter(a => a.status === 'active' && a.severity === 'critical').length} Critical
-                            </Badge>
-                            <Badge variant={alerts.filter(a => a.status === 'active' && a.severity === 'warning').length > 0 ? 'warning' : 'neutral'} size="sm">
-                                {alerts.filter(a => a.status === 'active' && a.severity === 'warning').length} Warnings
-                            </Badge>
-                        </div>
-                    </div>
-                </Card>
-
-                {/* 2. Health Signal Breakdown */}
-                {snapshot?.signals && (
-                    <div>
-                        <Typography variant="overline" className="text-text-muted mb-3 block">Health Signal Breakdown</Typography>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            {snapshot.signals.map((signal: any) => (
-                                <Card key={signal.name} className={`p-4 border-l-4 ${healthBg[signal.status as HealthStatus]}`}>
-                                    <div className={`flex items-center gap-2 mb-2 ${healthColors[signal.status as HealthStatus]}`}>
-                                        {layerIcon(signal.layer)}
-                                        <span className="text-xs font-bold uppercase tracking-wider">{signal.layer}</span>
-                                    </div>
-                                    <Typography variant="caption" className="text-text-muted block">{signal.name}</Typography>
-                                    <span className={`text-xs font-bold uppercase mt-1 block ${healthColors[signal.status as HealthStatus]}`}>{signal.status}</span>
-                                    {signal.detail && <span className="text-[10px] text-text-muted block mt-1">{signal.detail}</span>}
-                                </Card>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* 3. Alerts Feed */}
-                <Card className="p-0 overflow-hidden">
-                    <div className="flex items-center justify-between p-4 border-b border-border">
-                        <div>
-                            <Typography variant="h4" noMargin>Alert Feed</Typography>
-                            <Typography variant="caption" className="text-text-muted">
-                                Rule-based alerts with lifecycle management.
-                            </Typography>
-                        </div>
-                        <div className="flex rounded-md overflow-hidden border border-border">
-                            {(['active', 'resolved'] as const).map(tab => (
-                                <button
-                                    key={tab}
-                                    onClick={() => setActiveTab(tab)}
-                                    className={`px-4 py-1.5 text-xs font-bold uppercase transition-colors ${
-                                        activeTab === tab 
-                                        ? 'bg-primary text-white' 
-                                        : 'bg-surface text-text-muted hover:bg-muted'
-                                    }`}
-                                >
-                                    {tab}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {loading ? (
-                        <div className="p-8 flex justify-center">
-                            <Activity size={24} className="text-text-muted animate-pulse" />
-                        </div>
-                    ) : filteredAlerts.length === 0 ? (
-                        <div className="p-10 flex flex-col items-center gap-3">
-                            <CheckCircle2 size={32} className="text-success opacity-60" />
-                            <Typography variant="body2" className="text-text-muted">
-                                {activeTab === 'active' ? 'No active alerts. System operating nominally.' : 'No resolved alerts to show.'}
-                            </Typography>
-                        </div>
-                    ) : (
-                        <div className="divide-y divide-border">
-                            {filteredAlerts.map(alert => (
-                                <div key={alert.id} className="p-4 flex items-start justify-between gap-4 hover:bg-muted/30 transition-colors">
-                                    <div className="flex items-start gap-4">
-                                        <div className="mt-0.5">
-                                            {alert.severity === 'critical' ? (
-                                                <XCircle size={18} className="text-error" />
-                                            ) : alert.severity === 'warning' ? (
-                                                <AlertTriangle size={18} className="text-warning" />
-                                            ) : (
-                                                <Bell size={18} className="text-info" />
-                                            )}
-                                        </div>
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                {severityBadge(alert.severity)}
-                                                {alert.status === 'acknowledged' && <Badge variant="neutral" size="sm">ACK</Badge>}
-                                            </div>
-                                            <Typography variant="body2" noMargin className="font-medium text-text-primary">
-                                                {alert.message}
-                                            </Typography>
-                                            <Typography variant="caption" className="text-text-muted">
-                                                Triggered: {new Date(alert.triggeredAt).toLocaleString()}
-                                                {alert.resolvedAt && ` · Resolved: ${new Date(alert.resolvedAt).toLocaleString()}`}
-                                            </Typography>
-                                        </div>
-                                    </div>
-                                    
-                                    {alert.status === 'active' && (
-                                        <div className="flex gap-2 shrink-0">
-                                            <button
-                                                onClick={() => handleAcknowledge(alert.id)}
-                                                className="px-3 py-1.5 text-xs font-bold text-warning border border-warning rounded hover:bg-warning/10 transition"
-                                            >
-                                                Ack
-                                            </button>
-                                            <button
-                                                onClick={() => handleResolve(alert.id)}
-                                                className="px-3 py-1.5 text-xs font-bold text-success border border-success rounded hover:bg-success/10 transition"
-                                            >
-                                                Resolve
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </Card>
-            </div>
-        </PageLayout>
+      <span
+        style={{
+          display: 'inline-block',
+          padding: '3px 10px',
+          borderRadius: '999px',
+          fontSize: '10px',
+          color: style.color,
+          border: style.border,
+          background: style.bg,
+          whiteSpace: 'nowrap'
+        }}
+      >
+        {severity.toUpperCase()}
+      </span>
     );
+  };
+
+  return (
+    <>
+      <div style={pageStyle}>
+        <div style={{ marginBottom: '8px', overflow: 'visible' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+            <div
+              style={{
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
+            >
+              <ShieldAlert style={{ width: '16px', height: '16px', color: 'var(--text-secondary)' }} />
+            </div>
+            <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)' }}>
+              Operations Monitoring
+            </span>
+          </div>
+
+          <div style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '6px' }}>
+            System Monitoring
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: '#22c55e',
+                display: 'inline-block',
+                marginLeft: '10px',
+                verticalAlign: 'middle'
+              }}
+            />
+          </div>
+
+          <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: '760px' }}>
+            Real-time health evaluation, alert management, and operational visibility.
+          </div>
+        </div>
+
+        <div
+          style={{
+            ...cardStyle,
+            border: healthBorders[healthStatus]
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+              <div style={{ fontSize: '52px', fontWeight: 700, color: healthColors[healthStatus], lineHeight: 1 }}>{healthScore}</div>
+              <div>
+                <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', marginBottom: '6px' }}>
+                  System Health Score
+                </div>
+                <div style={{ fontSize: '22px', fontWeight: 700, color: healthColors[healthStatus], textTransform: 'uppercase' }}>{healthStatus}</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  padding: '3px 10px',
+                  borderRadius: '999px',
+                  fontSize: '10px',
+                  border: '1px solid rgba(248,113,113,0.2)',
+                  color: criticalCount > 0 ? '#f87171' : 'var(--text-muted)',
+                  background: criticalCount > 0 ? 'rgba(248,113,113,0.08)' : 'var(--bg-input)',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {criticalCount} Critical
+              </span>
+              <span
+                style={{
+                  display: 'inline-block',
+                  padding: '3px 10px',
+                  borderRadius: '999px',
+                  fontSize: '10px',
+                  border: '1px solid rgba(251,191,36,0.2)',
+                  color: warningCount > 0 ? '#fbbf24' : 'var(--text-muted)',
+                  background: warningCount > 0 ? 'rgba(251,191,36,0.08)' : 'var(--bg-input)',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {warningCount} Warnings
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {snapshot?.signals && (
+          <div>
+            <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: '16px' }}>
+              Health Signal Breakdown
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', overflow: 'visible' }}>
+              {snapshot.signals.map((signal: any) => {
+                const status = signal.status as HealthStatus;
+                return (
+                  <div
+                    key={signal.name}
+                    style={{
+                      ...cardStyle,
+                      border: healthBorders[status]
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: healthColors[status] }}>
+                      {layerIcon(signal.layer)}
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>{signal.layer}</span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '6px' }}>{signal.name}</div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: healthColors[status], marginBottom: signal.detail ? '6px' : 0 }}>
+                      {signal.status}
+                    </div>
+                    {signal.detail && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{signal.detail}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div style={{ overflow: 'visible' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              flexWrap: 'wrap',
+              marginBottom: '16px'
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                Alert Feed
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Rule-based alerts with lifecycle management.</div>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                borderRadius: '10px',
+                border: '1px solid var(--border-card)',
+                overflow: 'visible'
+              }}
+            >
+              {(['active', 'resolved'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  style={{
+                    padding: '10px 14px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    border: 'none',
+                    cursor: 'pointer',
+                    background: activeTab === tab ? '#60a5fa' : 'var(--bg-card)',
+                    color: activeTab === tab ? '#fff' : 'var(--text-secondary)'
+                  }}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div
+            style={{
+              borderRadius: '12px',
+              border: '1px solid var(--border-card)',
+              background: 'var(--bg-card)',
+              padding: '0',
+              overflow: 'visible'
+            }}
+          >
+            {loading ? (
+              <div style={{ padding: '24px', display: 'flex', justifyContent: 'center' }}>
+                <Activity style={{ width: '16px', height: '16px', color: 'var(--text-label)' }} />
+              </div>
+            ) : filteredAlerts.length === 0 ? (
+              <div style={{ padding: '32px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', textAlign: 'center' }}>
+                <CheckCircle2 style={{ width: '16px', height: '16px', color: '#22c55e' }} />
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                  {activeTab === 'active' ? 'No active alerts. System operating nominally.' : 'No resolved alerts to show.'}
+                </div>
+              </div>
+            ) : (
+              filteredAlerts.map((alert, idx) => (
+                <div
+                  key={alert.id}
+                  style={{
+                    padding: '18px 20px',
+                    borderBottom: idx === filteredAlerts.length - 1 ? 'none' : '1px solid var(--border-card)',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    gap: '16px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0, flex: 1 }}>
+                    <div style={{ marginTop: '2px' }}>
+                      {alert.severity === 'critical' ? (
+                        <XCircle style={{ width: '16px', height: '16px', color: '#f87171' }} />
+                      ) : alert.severity === 'warning' ? (
+                        <AlertTriangle style={{ width: '16px', height: '16px', color: '#fbbf24' }} />
+                      ) : (
+                        <Bell style={{ width: '16px', height: '16px', color: '#60a5fa' }} />
+                      )}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                        {severityPill(alert.severity)}
+                        {alert.status === 'acknowledged' && (
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '3px 10px',
+                              borderRadius: '999px',
+                              fontSize: '10px',
+                              border: '1px solid var(--border-input)',
+                              color: 'var(--text-secondary)',
+                              background: 'var(--bg-input)',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            ACK
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '6px' }}>{alert.message}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Triggered: {new Date(alert.triggeredAt).toLocaleString()}
+                        {alert.resolvedAt && ` · Resolved: ${new Date(alert.resolvedAt).toLocaleString()}`}
+                      </div>
+                    </div>
+                  </div>
+
+                  {alert.status === 'active' && (
+                    <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                      <button
+                        onClick={() => handleAcknowledge(alert.id)}
+                        style={{
+                          padding: '8px 12px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          color: '#fbbf24',
+                          border: '1px solid rgba(251,191,36,0.3)',
+                          borderRadius: '10px',
+                          background: 'transparent',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Ack
+                      </button>
+                      <button
+                        onClick={() => handleResolve(alert.id)}
+                        style={{
+                          padding: '8px 12px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          color: '#22c55e',
+                          border: '1px solid rgba(34,197,94,0.3)',
+                          borderRadius: '10px',
+                          background: 'transparent',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Resolve
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          left: '24px',
+          zIndex: 50,
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-input)',
+          borderRadius: '999px',
+          padding: '6px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '11px',
+          color: 'var(--text-muted)'
+        }}
+      >
+        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+        Live feed · System nominal
+      </div>
+    </>
+  );
 }

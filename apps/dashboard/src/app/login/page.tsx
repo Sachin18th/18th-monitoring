@@ -2,10 +2,11 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { Button, Card, Input } from '@kpi-platform/ui';
+import { Button, Card, Input, Typography, Badge } from '@kpi-platform/ui';
 import { 
   ArrowRight, Lock, Mail, ShieldCheck, Activity, Layers3, 
-  CheckCircle2, Eye, EyeOff, Command, ChevronRight, User, MousePointer2
+  CheckCircle2, Eye, EyeOff, Command, ChevronRight, User, MousePointer2,
+  Sparkles, Globe, Zap, AlertTriangle
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -17,39 +18,29 @@ function cn(...inputs: ClassValue[]) {
 // ─── Sub-Components ─────────────────────────────────────────────────────────
 
 const BrandLockup = () => (
-  <div className="flex items-center gap-3 mb-8">
-    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
-      <Command size={24} />
+  <div className="flex items-center gap-4 mb-10">
+    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-white shadow-premium shadow-primary/25 relative overflow-hidden group">
+      <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500" />
+      <Command size={28} className="relative z-10" />
     </div>
     <div className="flex flex-col">
-      <span className="text-xl font-bold tracking-tight text-slate-900">18th Digitech</span>
-      <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-blue-600/80">Monitoring Workspace</span>
+      <span className="text-2xl font-black tracking-tighter text-text-primary leading-none">GRAVITY</span>
+      <span className="text-[10px] font-black uppercase tracking-[0.3em] text-primary mt-1">Monitoring Platform</span>
     </div>
   </div>
 );
 
-const FeatureCard = ({ icon: Icon, title, description }: { icon: any, title: string, description: string }) => (
-  <Card className="flex-1 border-slate-100 bg-white/50 shadow-sm transition-all duration-200 hover:translate-y-[-2px] hover:shadow-md" padding="none">
-    <div className="p-[22px] flex flex-col gap-4">
-      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-        <Icon size={22} />
-      </div>
-      <div>
-        <h4 className="text-xl font-semibold tracking-tight text-slate-900 mb-2">{title}</h4>
-        <p className="text-[16px] leading-[1.6] text-slate-500">{description}</p>
-      </div>
-    </div>
-  </Card>
-);
-
-const TrustItem = ({ icon: Icon, title, body }: { icon: any, title: string, body: string }) => (
-  <div className="flex flex-col gap-1 px-4 first:pl-0 last:pr-0 border-r border-slate-100 last:border-0 md:flex-row md:items-start md:gap-3">
-    <div className="mt-0.5 text-blue-500">
-      <Icon size={16} />
+const FeatureItem = ({ icon: Icon, title, description }: { icon: any, title: string, description: string }) => (
+  <div
+    className="flex flex-col rounded-3xl bg-white/5 border border-white/10 backdrop-blur-sm hover:bg-white/10 transition-all duration-300 group"
+    style={{ gap: 20, padding: '24px 22px' }}
+  >
+    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20 group-hover:scale-110 transition-transform">
+      <Icon size={24} />
     </div>
     <div>
-      <h5 className="text-[13px] font-semibold text-slate-900 leading-tight">{title}</h5>
-      <p className="text-[14px] text-slate-500 leading-normal">{body}</p>
+      <Typography variant="h3" noMargin className="text-white group-hover:text-primary transition-colors">{title}</Typography>
+      <Typography variant="caption" className="text-white/60 mt-3">{description}</Typography>
     </div>
   </div>
 );
@@ -59,24 +50,27 @@ const RoleSelectorItem = ({ icon: Icon, title, description, isSelected, onClick 
     type="button"
     onClick={onClick}
     className={cn(
-      "w-full flex items-center gap-4 p-4 rounded-[16px] border text-left transition-all duration-200",
+      "w-full flex items-center rounded-2xl border text-left transition-all duration-300",
       isSelected 
-        ? "bg-blue-50/50 border-blue-200 ring-1 ring-blue-100" 
-        : "bg-slate-50/50 border-slate-100 hover:bg-white hover:border-slate-200 hover:shadow-sm"
+        ? "bg-primary/5 border-primary shadow-[0_0_20px_rgba(37,99,235,0.1)]" 
+        : "bg-bg-muted/30 border-border-subtle hover:border-border-interactive hover:bg-bg-card"
     )}
+    style={{ gap: 16, padding: '14px 16px', minHeight: 84 }}
   >
     <div className={cn(
-      "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm border",
-      isSelected ? "text-blue-600 border-blue-100" : "text-slate-400 border-slate-100"
+      "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all",
+      isSelected ? "bg-primary text-white border-primary shadow-lg shadow-primary/20" : "bg-bg-card text-text-muted border-border-subtle"
     )}>
       <Icon size={20} />
     </div>
     <div className="flex-1 min-w-0">
       <div className="flex items-center justify-between">
-        <h5 className="text-[15px] font-semibold text-slate-900">{title}</h5>
-        {isSelected && <ChevronRight size={16} className="text-blue-500" />}
+        <Typography variant="body" weight="bold" noMargin className={isSelected ? "text-primary" : "text-text-primary"}>
+          {title}
+        </Typography>
+        {isSelected && <ChevronRight size={16} className="text-primary animate-pulse" />}
       </div>
-      <p className="text-[13px] text-slate-500 truncate">{description}</p>
+      <Typography variant="micro" className="truncate opacity-70">{description}</Typography>
     </div>
   </button>
 );
@@ -106,219 +100,187 @@ export default function LoginPage() {
 
   const selectDemoRole = (roleEmail: string) => {
     setEmail(roleEmail);
-    setPassword('password123');
+    setPassword('Demo@1234!');
     setError('');
   };
 
   return (
-    <div className="min-h-screen bg-[#FDFDFF] relative overflow-hidden font-sans flex items-center justify-center">
-      {/* Background Decor */}
-      <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-gradient-to-br from-blue-50/50 to-transparent rounded-full blur-3xl pointer-events-none -translate-y-1/2 translate-x-1/4" />
-      <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-gradient-to-tr from-blue-50/40 to-transparent rounded-full blur-3xl pointer-events-none translate-y-1/2 -translate-x-1/4" />
+    <div className="min-h-screen bg-bg-base relative overflow-hidden font-sans flex items-center justify-center selection:bg-primary/30">
+      {/* Dynamic Background */}
+      <div className="absolute inset-0 z-0">
+        <div className="absolute top-[-10%] left-[-5%] w-[40%] h-[40%] bg-primary/10 blur-[120px] rounded-full animate-float" />
+        <div className="absolute bottom-[-10%] right-[-5%] w-[35%] h-[35%] bg-secondary/10 blur-[100px] rounded-full animate-float" style={{ animationDelay: '-2s' }} />
+        <div className="absolute top-[20%] right-[10%] w-[25%] h-[25%] bg-accent/5 blur-[80px] rounded-full animate-float" style={{ animationDelay: '-4s' }} />
+      </div>
 
-      <main className="relative z-10 w-full max-w-[1320px] px-8 py-12 lg:py-16">
+      <main className="relative z-10 w-full max-w-[1440px] px-6 lg:px-12 py-12 flex flex-col lg:flex-row items-center gap-16 lg:gap-24">
         
-        <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-12 lg:gap-[80px] items-start lg:items-center">
+        {/* Left: Branding & Value Prop */}
+        <section className="flex-1 flex flex-col max-w-2xl text-center lg:text-left">
+          <BrandLockup />
           
-          {/* Left Hero Section */}
-          <section className="flex flex-col">
-            <BrandLockup />
-            
-            <div className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-blue-50 border border-blue-100/50 w-fit mb-6">
-                <span className="flex h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-                <span className="text-[14px] font-semibold text-blue-600">Enterprise monitoring workspace</span>
-            </div>
+          <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 w-fit mb-8 self-center lg:self-start animate-fade-in">
+              <Sparkles size={16} className="text-primary" />
+              <Typography variant="micro" weight="bold" className="text-primary !mb-0">Enterprise Grade Observability</Typography>
+          </div>
 
-            <h1 className="text-[44px] lg:text-[52px] font-extrabold tracking-[-0.03em] leading-[1.1] text-slate-900 mb-6">
-               Monitor commerce performance, platform health, and operational KPIs from one unified workspace.
-            </h1>
+          <Typography variant="display" className="mb-8 !leading-[1.05] tracking-tightest">
+            The next generation of <span className="text-primary italic">operational intelligence.</span>
+          </Typography>
 
-            <p className="text-[18px] lg:text-[19px] leading-[1.65] text-slate-600 max-w-[620px] mb-4">
-              Centralize telemetry, integrations, alerts, project governance, and team access in a secure environment built for modern digital operations.
-            </p>
+          <Typography variant="body" className="text-xl mb-12 opacity-80 leading-relaxed">
+            Centralize telemetry, platform health, and business KPIs into one high-fidelity control surface. Built for modern commerce ecosystems.
+          </Typography>
 
-            <span className="text-[15px] font-semibold text-slate-800 mb-10">
-              Built for operations teams, project leads, and enterprise stakeholders.
-            </span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-12">
+            <FeatureItem icon={Zap} title="Live Metrics" description="Real-time stream of all critical signals." />
+            <FeatureItem icon={Globe} title="Global Scale" description="Multi-region monitoring at your fingertips." />
+            <FeatureItem icon={ShieldCheck} title="Secured" description="Enterprise-grade tenant isolation." />
+          </div>
 
-            {/* Feature Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
-              <FeatureCard 
-                icon={Activity} 
-                title="Operational visibility" 
-                description="Track live metrics, latency, incidents, and service health across projects." 
-              />
-              <FeatureCard 
-                icon={ShieldCheck} 
-                title="Controlled access" 
-                description="Assign role-based access for admins, leads, and stakeholders with confidence." 
-              />
-              <FeatureCard 
-                icon={Layers3} 
-                title="Actionable workflows" 
-                description="Connect monitoring, issue tracking, governance, and reporting in one place." 
-              />
-            </div>
+          <div className="flex flex-wrap items-center justify-center lg:justify-start gap-8 opacity-60">
+             <div className="flex items-center gap-2">
+               <ShieldCheck size={18} />
+               <Typography variant="micro" weight="bold">AES-256 Encryption</Typography>
+             </div>
+             <div className="flex items-center gap-2">
+               <ShieldCheck size={18} />
+               <Typography variant="micro" weight="bold">SOC 2 Compliant</Typography>
+             </div>
+          </div>
+        </section>
 
-            {/* Trust / Security Strip */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-0 bg-blue-50/30 border border-blue-100/50 rounded-[22px] p-5">
-              <TrustItem 
-                icon={MousePointer2} 
-                title="SSO enabled" 
-                body="Enterprise-ready authentication and secure workspace access." 
-              />
-              <TrustItem 
-                icon={Lock} 
-                title="Encrypted sessions" 
-                body="Protected routing and token-based session security." 
-              />
-              <TrustItem 
-                icon={CheckCircle2} 
-                title="Auditable actions" 
-                body="Critical activity remains visible and traceable." 
-              />
-            </div>
-          </section>
+        {/* Right: Login Interface */}
+        <div className="w-full max-w-[520px] shrink-0 animate-slide-in-right">
+          <Card
+            className="!rounded-[40px] border-border-subtle bg-bg-card/80 backdrop-blur-xl shadow-premium relative overflow-hidden group"
+            style={{ padding: '36px 32px' }}
+          >
+              {/* Subtle top accent */}
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary via-secondary to-accent opacity-50" />
+              
+              <div className="text-center" style={{ marginBottom: 28 }}>
+                <Typography variant="h2" weight="semibold" className="mb-2">Workspace Login</Typography>
+                <Typography variant="caption">Access your operational command center.</Typography>
+              </div>
 
-          {/* Right Login Card */}
-          <div className="flex justify-center lg:justify-end">
-            <div className="auth-card-shadow w-full max-w-[500px] rounded-[24px] bg-white border border-slate-200/60 p-8 lg:p-10 shadow-[0_20px_50px_rgba(0,0,0,0.06)]">
-                <h2 className="text-[28px] lg:text-[30px] font-bold text-slate-900 mb-2 leading-tight">Sign in to your workspace</h2>
-                <p className="text-[15px] lg:text-[16px] leading-[1.6] text-slate-600 mb-8 font-medium">
-                  Use your work credentials to continue, or explore the platform using a predefined demo role.
-                </p>
+              <form onSubmit={handleSubmit} className="flex flex-col" style={{ gap: 20 }}>
+                <Input
+                  label="Work Email"
+                  placeholder="name@company.com"
+                  icon={Mail}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
 
-                <div className="h-px bg-slate-100 w-full mb-8" />
-
-                <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[14px] font-bold text-slate-800">Work email</label>
-                    <div className="relative group">
-                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors">
-                        <Mail size={18} />
-                      </div>
-                      <input
-                        type="email"
-                        placeholder="name@company.com"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="w-full h-[54px] pl-12 pr-4 rounded-[14px] border border-slate-200 bg-white text-[15px] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[14px] font-bold text-slate-800">Password</label>
-                    <div className="relative group">
-                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors">
-                        <Lock size={18} />
-                      </div>
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        placeholder="Enter your password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="w-full h-[54px] pl-12 pr-12 rounded-[14px] border border-slate-200 bg-white text-[15px] focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium"
-                        required
-                      />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <Input
+                    label="Password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="••••••••"
+                    icon={Lock}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    renderRight={
                       <button 
                         type="button"
                         onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none"
+                        className="text-text-muted hover:text-text-primary transition-colors"
                       >
                         {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
-                    </div>
-                    <p className="text-[13px] text-slate-400 mt-1">For demo access, use the shared password shown below.</p>
+                    }
+                  />
+                  <div className="flex justify-end" style={{ paddingTop: 4 }}>
+                    <button type="button" className="text-[11px] font-bold text-primary hover:underline uppercase tracking-wider">Forgot Password?</button>
                   </div>
-
-                  {error && (
-                    <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-[14px] font-semibold flex items-center gap-2">
-                      <div className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                      {error}
-                    </div>
-                  )}
-
-                  <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-2">
-                    <div className="inline-flex items-center gap-2 h-10 px-4 rounded-full bg-slate-50 text-slate-600 text-[13px] font-semibold">
-                       <ShieldCheck size={16} className="text-slate-400" />
-                       Secure session enabled
-                    </div>
-                    <Button 
-                      type="submit" 
-                      className="w-full sm:w-auto h-[54px] px-8 rounded-[14px] bg-blue-600 hover:bg-blue-700 text-[15px] font-bold flex items-center justify-center gap-2"
-                      isLoading={isLoading}
-                    >
-                      Sign in
-                    </Button>
-                  </div>
-                </form>
-
-                {/* Demo Roles Section */}
-                <div className="mt-8 flex flex-col gap-4">
-                  <div>
-                    <h3 className="text-[14px] font-bold text-slate-900 flex items-center gap-2">
-                      Explore demo roles
-                    </h3>
-                    <p className="text-[13px] text-slate-500">Preview the workspace with predefined access levels.</p>
-                  </div>
-                  
-                  <div className="flex flex-col gap-3">
-                    <RoleSelectorItem 
-                      icon={ShieldCheck} 
-                      title="Platform Admin" 
-                      description="Full workspace control, governance, and infrastructure visibility" 
-                      isSelected={email === 'superadmin@monitor.io'}
-                      onClick={() => selectDemoRole('superadmin@monitor.io')}
-                    />
-                    <RoleSelectorItem 
-                      icon={User} 
-                      title="Project Lead" 
-                      description="Project performance, team operations, and alert ownership" 
-                      isSelected={email === 'admin@store001.com'}
-                      onClick={() => selectDemoRole('admin@store001.com')}
-                    />
-                    <RoleSelectorItem 
-                      icon={Eye} 
-                      title="System Viewer" 
-                      description="Read-only access to monitoring dashboards and telemetry" 
-                      isSelected={email === 'viewer@store001.com'}
-                      onClick={() => selectDemoRole('viewer@store001.com')}
-                    />
-                  </div>
-                  
-                  <p className="text-[12px] lg:text-[13px] text-slate-400 text-center font-medium">
-                    All demo roles use the same shared password.
-                  </p>
                 </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Footer */}
-        <footer className="mt-12 lg:mt-20 pt-8 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-8 text-[13px] text-slate-400 font-medium">
-             <div className="flex items-center gap-2">
-               <ShieldCheck size={14} className="text-slate-300" />
-               AES-256 Encryption
-             </div>
-             <div className="flex items-center gap-2">
-               <ShieldCheck size={14} className="text-slate-300" />
-               SOC 2 Type II Compliant
-             </div>
-          </div>
-          <div className="flex items-center gap-8 text-[13px] text-slate-400 font-medium">
-            <a href="#" className="hover:text-slate-600 transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-slate-600 transition-colors">Terms of Service</a>
-            <span className="text-slate-500 font-bold">&copy; 2026 18th Digitech</span>
-          </div>
-        </footer>
+                {error && (
+                  <div className="p-4 bg-error-bg border border-error/20 rounded-2xl text-error-text text-sm font-bold flex items-center gap-3 animate-shake">
+                    <AlertTriangle size={18} />
+                    {error}
+                  </div>
+                )}
+
+                <Button 
+                  type="submit" 
+                  variant="primary"
+                  size="lg"
+                  className="w-full rounded-2xl shadow-lg shadow-primary/20 text-base"
+                  style={{ marginTop: 8 }}
+                  isLoading={isLoading}
+                >
+                  Authorize Session
+                  <ArrowRight size={18} className="ml-2" />
+                </Button>
+              </form>
+
+              <div className="flex items-center gap-4" style={{ marginTop: 26, marginBottom: 22 }}>
+                <div className="h-px flex-1 bg-border-subtle" />
+                <Typography variant="micro" weight="bold" className="text-text-muted opacity-50 !mb-0">Demo Environment</Typography>
+                <div className="h-px flex-1 bg-border-subtle" />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '2px 0' }}>
+                <div className="grid grid-cols-2" style={{ columnGap: 12, rowGap: 12 }}>
+                  <RoleSelectorItem 
+                    icon={ShieldCheck} 
+                    title="Super Admin" 
+                    description="Full Control" 
+                    isSelected={email === 'superadmin@18thdigitech.com'}
+                    onClick={() => selectDemoRole('superadmin@18thdigitech.com')}
+                  />
+                  <RoleSelectorItem 
+                    icon={User} 
+                    title="Project Admin" 
+                    description="Management" 
+                    isSelected={email === 'admin@18thdigitech.com'}
+                    onClick={() => selectDemoRole('admin@18thdigitech.com')}
+                  />
+                  <RoleSelectorItem 
+                    icon={Layers3} 
+                    title="Ops Lead" 
+                    description="Incident Control" 
+                    isSelected={email === 'contributor@18thdigitech.com'}
+                    onClick={() => selectDemoRole('contributor@18thdigitech.com')}
+                  />
+                  <RoleSelectorItem 
+                    icon={Eye} 
+                    title="Analyst" 
+                    description="ReadOnly" 
+                    isSelected={email === 'viewer@18thdigitech.com'}
+                    onClick={() => selectDemoRole('viewer@18thdigitech.com')}
+                  />
+                </div>
+              </div>
+              
+              <div className="bg-primary/5 border border-primary/10 rounded-2xl text-center" style={{ marginTop: 18, padding: '14px 16px' }}>
+                <Typography variant="micro" weight="bold" className="!mb-0">
+                  Shared Demo Password: <span className="select-all font-mono text-primary bg-primary/10 px-2 py-0.5 rounded ml-1">Demo@1234!</span>
+                </Typography>
+              </div>
+          </Card>
+        </div>
       </main>
 
       <style jsx global>{`
-        .auth-card-shadow {
-           box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.01), 0 2px 4px -2px rgb(0 0 0 / 0.01), 0 20px 40px -4px rgb(0 0 0 / 0.03);
+        @keyframes float {
+          0%, 100% { transform: translate(0, 0); }
+          50% { transform: translate(20px, 30px); }
+        }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-4px); }
+          75% { transform: translateX(4px); }
+        }
+        .animate-shake {
+          animation: shake 0.2s ease-in-out 0s 2;
+        }
+        .tracking-tightest {
+          letter-spacing: -0.05em;
         }
       `}</style>
     </div>

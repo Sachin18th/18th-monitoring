@@ -20,8 +20,11 @@ const COLORS = {
 
 export const StatusCodeDistribution: React.FC<StatusCodeDistributionProps> = ({ data }) => {
   return (
-    <Card className="p-6 bg-slate-900/50 backdrop-blur-xl border-slate-800 h-full">
-      <h3 className="text-sm font-medium text-slate-400 mb-6 uppercase tracking-wider">Status Code Distribution</h3>
+    <Card
+      className="p-6 h-full"
+      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-card)', boxShadow: 'none' }}
+    >
+      <h3 className="text-sm font-medium mb-6 uppercase tracking-wider" style={{ color: 'var(--text-label)' }}>Status Code Distribution</h3>
       
       <div className="h-[250px] w-full">
         <ResponsiveContainer width="100%" height="100%">
@@ -38,7 +41,7 @@ export const StatusCodeDistribution: React.FC<StatusCodeDistributionProps> = ({ 
               ))}
             </Pie>
             <Tooltip 
-              contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '8px' }}
+              contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px', color: 'var(--text-primary)' }}
             />
             <Legend />
           </PieChart>

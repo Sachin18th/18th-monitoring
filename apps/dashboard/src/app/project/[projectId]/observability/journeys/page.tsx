@@ -1,30 +1,50 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
-import { FunnelAnalysis } from '@/components/observability/FunnelAnalysis';
-import { Card } from '@/components/ui/Card';
 import {
   Map,
   ZapOff,
   MousePointerClick,
   AlertCircle,
-  Timer,
   ShoppingBag,
   TrendingUp,
   Filter,
   History,
-  RefreshCw
+  RefreshCw,
+  ArrowDown,
+  AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+
+const pageStyle: React.CSSProperties = {
+  padding: '24px 28px',
+  maxWidth: '1280px',
+  margin: '0 auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '24px',
+  overflow: 'visible',
+  minHeight: '100vh',
+  background: 'var(--bg-page)',
+  color: 'var(--text-primary)'
+};
+
+const cardStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid var(--border-card)',
+  background: 'var(--bg-card)',
+  padding: '24px',
+  overflow: 'visible'
+};
 
 export default function JourneyIntelligencePage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
 
-  const [loading, setLoading]           = useState(true);
-  const [error, setError]               = useState<string | null>(null);
-  const [funnelSteps, setFunnelSteps]   = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [funnelSteps, setFunnelSteps] = useState<any[]>([]);
   const [intelligence, setIntelligence] = useState<any>(null);
 
   const loadData = useCallback(async () => {
@@ -34,12 +54,14 @@ export default function JourneyIntelligencePage() {
     try {
       const res = await apiFetch(`/api/v1/dashboard/customers/intelligence?siteId=${projectId}`);
       const funnel = Array.isArray(res?.funnel) ? res.funnel : [];
-      setFunnelSteps(funnel.map((s: any) => ({
-        label: s.stage,
-        count: s.count,
-        dropRate: s.percent ? Math.round(100 - s.percent) : 0,
-        technicalDropCount: 0
-      })));
+      setFunnelSteps(
+        funnel.map((s: any) => ({
+          label: s.stage,
+          count: s.count,
+          dropRate: s.percent ? Math.round(100 - s.percent) : 0,
+          technicalDropCount: 0
+        }))
+      );
       setIntelligence(res);
     } catch (err: any) {
       console.error('[Journeys] Load failed', err);
@@ -55,160 +77,559 @@ export default function JourneyIntelligencePage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  const firstStep = funnelSteps[0]?.count || 1;
+  const lastStep = funnelSteps[funnelSteps.length - 1]?.count || 0;
+  const completion = firstStep > 0 ? ((lastStep / firstStep) * 100).toFixed(2) : '0.00';
+  const frictionSignals = funnelSteps.filter((s) => s.dropRate > 50).length;
+
+  const metricCards = useMemo(
+    () => [
+      {
+        label: 'Completion Rate',
+        value: `${completion}%`,
+        badge: 'End-to-end conversion',
+        icon: ShoppingBag
+      },
+      {
+        label: 'Total Visitors',
+        value: firstStep.toLocaleString(),
+        badge: 'Entered first stage',
+        icon: TrendingUp
+      },
+      {
+        label: 'Journey Drop-offs',
+        value: (firstStep - lastStep).toLocaleString(),
+        badge: 'Exited before completion',
+        icon: ZapOff
+      },
+      {
+        label: 'Friction Signals',
+        value: `${frictionSignals} stages`,
+        badge: 'High-loss stage count',
+        icon: MousePointerClick
+      }
+    ],
+    [completion, firstStep, frictionSignals, lastStep]
+  );
+
   if (loading && funnelSteps.length === 0) {
     return (
-      <div className="flex items-center justify-center h-screen bg-slate-950 text-slate-400">
-        <div className="flex flex-col items-center">
-          <div className="w-12 h-12 rounded-full border-4 border-t-indigo-500 border-slate-800 animate-spin mb-4" />
-          <span className="text-[10px] font-black uppercase tracking-[0.2em]">Reconstructing User Journeys…</span>
+      <div style={{ ...pageStyle, alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div
+            style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '999px',
+              border: '4px solid #1f2937',
+              borderTopColor: '#22c55e',
+              marginBottom: '16px',
+              animation: 'spin 1s linear infinite'
+            }}
+          />
+          <span
+            style={{
+              fontSize: '10px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.18em',
+              color: 'var(--text-muted)'
+            }}
+          >
+            Reconstructing user journeys...
+          </span>
         </div>
       </div>
     );
   }
 
-  // Derived KPIs from live funnel data
-  const firstStep  = funnelSteps[0]?.count || 1;
-  const lastStep   = funnelSteps[funnelSteps.length - 1]?.count || 0;
-  const completion = firstStep > 0 ? ((lastStep / firstStep) * 100).toFixed(2) : '0.00';
-
   return (
-    <div className="p-6 space-y-6 bg-slate-950 min-h-screen text-slate-200">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Map className="w-6 h-6 text-indigo-400" />
-            Customer Journey Intelligence
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">Behavioral diagnostics and technical funnel attribution for {projectId as string}</p>
-        </div>
-
-        <div className="flex gap-2">
-          <button onClick={loadData}
-            className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-medium text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors">
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </button>
-          <button className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-medium text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors">
-            <History className="w-3 h-3" /> Compare
-          </button>
-          <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-500 flex items-center gap-2 transition-colors shadow-[0_0_15px_rgba(79,70,229,0.4)]">
-            <Filter className="w-3 h-3" /> Configuration
-          </button>
-        </div>
-      </div>
-
-      {/* Error banner */}
-      {error && (
-        <div className="flex items-center gap-3 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          {error}
-          <button onClick={loadData} className="ml-auto text-xs underline hover:text-white">Retry</button>
-        </div>
-      )}
-
-      {/* KPI Ribbon — live data where available */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Completion Rate',    value: `${completion}%`,                                  icon: ShoppingBag,       color: 'text-indigo-400' },
-          { label: 'Total Visitors',     value: firstStep.toLocaleString(),                        icon: TrendingUp,        color: 'text-emerald-400' },
-          { label: 'Journey Drop-offs',  value: (firstStep - lastStep).toLocaleString(),           icon: ZapOff,            color: 'text-rose-400' },
-          { label: 'Friction Signals',   value: `${funnelSteps.filter(s => s.dropRate > 50).length} stages`, icon: MousePointerClick, color: 'text-purple-400' },
-        ].map((kpi) => (
-          <Card key={kpi.label} className="p-4 bg-slate-900/50 border-slate-800">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{kpi.label}</span>
-              <kpi.icon className={`w-3.5 h-3.5 ${kpi.color}`} />
+    <>
+      <div style={pageStyle}>
+        <div style={{ marginBottom: '8px', overflow: 'visible' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+            <div
+              style={{
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
+            >
+              <Map style={{ width: '16px', height: '16px', color: 'var(--text-secondary)' }} />
             </div>
-            <p className="text-xl font-bold text-white">{kpi.value}</p>
-          </Card>
-        ))}
-      </div>
+            <span
+              style={{
+                fontSize: '10px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: 'var(--text-label)'
+              }}
+            >
+              Journey Observability
+            </span>
+          </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Funnel */}
-        <div className="lg:col-span-2">
-          {funnelSteps.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 bg-slate-900/20 rounded-3xl border border-slate-800/50 text-center">
-              <p className="text-slate-500 text-sm">No funnel data available. Ingest customer events to begin.</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 0, maxWidth: '760px' }}>
+              <div style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '6px' }}>
+                Customer Journey Intelligence
+                <span
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: '#22c55e',
+                    display: 'inline-block',
+                    marginLeft: '10px',
+                    verticalAlign: 'middle'
+                  }}
+                />
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Behavioral diagnostics and technical funnel attribution for {projectId as string}
+              </div>
             </div>
-          ) : (
-            <FunnelAnalysis steps={funnelSteps} />
-          )}
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={loadData}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0, animation: loading ? 'spin 1s linear infinite' : undefined }} />
+                Refresh
+              </button>
+              <button
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <History style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                Compare
+              </button>
+              <button
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(96,165,250,0.2)',
+                  background: '#60a5fa',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <Filter style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                Configuration
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* Drop-off Diagnostics */}
-        <div className="space-y-6">
-          <Card className="p-6 bg-slate-900/50 backdrop-blur-xl border-slate-800">
-            <h3 className="text-sm font-medium text-slate-400 mb-6 uppercase tracking-wider">Abandonment Attribution</h3>
-            <div className="space-y-4">
-              {[
-                { label: 'Network/API Failure',        value: '35%', color: 'bg-rose-500' },
-                { label: 'UX Friction (Rage Click)',   value: '24%', color: 'bg-purple-500' },
-                { label: 'Performance (Slow Load)',    value: '18%', color: 'bg-amber-500' },
-                { label: 'Other / Intent-based',       value: '23%', color: 'bg-slate-700' },
-              ].map((attr) => (
-                <div key={attr.label}>
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className="text-slate-300">{attr.label}</span>
-                    <span className="font-bold text-white">{attr.value}</span>
+        {error && (
+          <div
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              padding: '14px 16px',
+              borderRadius: '12px',
+              border: '1px solid rgba(244,63,94,0.2)',
+              background: 'rgba(244,63,94,0.1)',
+              color: '#fb7185',
+              overflow: 'visible'
+            }}
+          >
+            <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: '12px' }}>
+              <AlertCircle style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+              <span style={{ fontSize: '13px', overflowWrap: 'anywhere' }}>{error}</span>
+            </div>
+            <button
+              onClick={loadData}
+              style={{
+                marginLeft: '8px',
+                flexShrink: 0,
+                fontSize: '12px',
+                fontWeight: 500,
+                color: '#fb7185',
+                cursor: 'pointer',
+                background: 'transparent',
+                border: 'none',
+                padding: 0
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '20px',
+            overflow: 'visible'
+          }}
+        >
+          {metricCards.map((metric) => {
+            const Icon = metric.icon;
+            return (
+              <div
+                key={metric.label}
+                style={{
+                  borderRadius: '12px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: '140px',
+                  overflow: 'visible'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                      color: 'var(--text-label)',
+                      fontWeight: 500
+                    }}
+                  >
+                    {metric.label}
+                  </span>
+                  <Icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                </div>
+                <div style={{ fontSize: '38px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '8px 0' }}>{metric.value}</div>
+                <div style={{ marginTop: '12px' }}>
+                  <span style={{ fontSize: '12px', color: '#22c55e' }}>{metric.badge}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1.7fr) minmax(320px, 1fr)',
+            gap: '20px',
+            overflow: 'visible'
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible', minWidth: 0 }}>
+            {funnelSteps.length === 0 ? (
+              <div style={{ ...cardStyle, minHeight: '280px', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px' }}>No funnel data available. Ingest customer events to begin.</p>
+              </div>
+            ) : (
+              <div style={cardStyle}>
+                <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                  Purchase Journey Funnel
+                </div>
+                <span
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: '999px',
+                    fontSize: '10px',
+                    border: '1px solid var(--border-input)',
+                    color: 'var(--text-muted)',
+                    marginBottom: '20px',
+                    display: 'inline-block',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  Live Analysis (Project Scope)
+                </span>
+
+                <div style={{ overflow: 'visible' }}>
+                  {funnelSteps.map((step, idx) => {
+                    const widthPct = firstStep > 0 ? (step.count / firstStep) * 100 : 0;
+                    const technicalPct = step.count > 0 ? (step.technicalDropCount / step.count) * 100 : 0;
+
+                    return (
+                      <div key={step.label} style={{ marginBottom: idx === funnelSteps.length - 1 ? '0' : '20px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{step.label}</span>
+                          <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{step.count.toLocaleString()}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase' }}>Users</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase' }}>
+                            {idx > 0 ? `${step.dropRate}% drop-off` : 'Entry stage'}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            height: '10px',
+                            borderRadius: '999px',
+                            background: 'var(--bg-input)',
+                            overflow: 'visible',
+                            position: 'relative'
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${Math.max(6, widthPct)}%`,
+                              height: '100%',
+                              borderRadius: '999px',
+                              background: 'linear-gradient(90deg, #60a5fa 0%, #22c55e 100%)'
+                            }}
+                          />
+                          {step.technicalDropCount > 0 && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                right: 0,
+                                top: 0,
+                                width: `${technicalPct}%`,
+                                height: '100%',
+                                borderRadius: '999px',
+                                background: 'rgba(248,113,113,0.55)'
+                              }}
+                            />
+                          )}
+                        </div>
+                        {idx > 0 && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', color: 'var(--text-label)' }}>
+                            <ArrowDown style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                            <span style={{ fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                              {step.dropRate}% lost from previous stage
+                            </span>
+                            {step.dropRate > 50 && <AlertTriangle style={{ width: '16px', height: '16px', flexShrink: 0, color: '#f59e0b' }} />}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border-card)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                  <div
+                    style={{
+                      borderRadius: '12px',
+                      border: '1px solid rgba(34,197,94,0.15)',
+                      background: 'rgba(34,197,94,0.06)',
+                      padding: '16px',
+                      overflow: 'visible'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <TrendingUp style={{ width: '16px', height: '16px', color: '#22c55e' }} />
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>
+                        Conversion Rate
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 500, color: '#22c55e' }}>{completion}%</div>
                   </div>
-                  <div className="h-1 w-full bg-slate-800 rounded-full">
-                    <div className={`h-full ${attr.color}`} style={{ width: attr.value }} />
+                  <div
+                    style={{
+                      borderRadius: '12px',
+                      border: '1px solid rgba(248,113,113,0.15)',
+                      background: 'rgba(248,113,113,0.06)',
+                      padding: '16px',
+                      overflow: 'visible'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <AlertTriangle style={{ width: '16px', height: '16px', color: '#f87171' }} />
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>
+                        Technical Loss
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '18px', fontWeight: 500, color: '#f87171' }}>0.8%</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible' }}>
+            <div style={cardStyle}>
+              <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '20px' }}>
+                Abandonment Attribution
+              </div>
+              {[
+                { label: 'Network/API Failure', value: '35%', color: '#f43f5e' },
+                { label: 'UX Friction (Rage Click)', value: '24%', color: '#a855f7' },
+                { label: 'Performance (Slow Load)', value: '18%', color: '#f59e0b' },
+                { label: 'Other / Intent-based', value: '23%', color: '#334155' }
+              ].map((attr, idx, arr) => (
+                <div
+                  key={attr.label}
+                  style={{
+                    padding: '14px 0',
+                    borderBottom: idx === arr.length - 1 ? 'none' : '1px solid var(--border-card)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{attr.label}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{attr.value}</span>
+                  </div>
+                  <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px' }}>
+                    <div style={{ height: '100%', width: attr.value, background: attr.color, borderRadius: '999px' }} />
                   </div>
                 </div>
               ))}
             </div>
-          </Card>
 
-          <Card className="p-6 bg-indigo-500/5 border-indigo-500/20">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
-              <div>
-                <h4 className="text-sm font-bold text-white mb-1">Intelligence Insight</h4>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Checkout drop-offs increased by <span className="text-rose-400 font-bold">12%</span> in the last hour.
-                  Correlation signals suggest a link to <span className="text-indigo-400 font-bold">Stripe Payment</span> gateway latency spikes.
-                </p>
-                <button className="mt-3 text-[10px] font-bold text-indigo-400 hover:underline uppercase tracking-widest">
-                  Investigate Cause
-                </button>
+            <div
+              style={{
+                ...cardStyle,
+                background: 'rgba(79,70,229,0.08)',
+                border: '1px solid rgba(129,140,248,0.3)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                <AlertCircle style={{ width: '16px', height: '16px', color: '#818cf8', flexShrink: 0, marginTop: '2px' }} />
+                <div>
+                  <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 5px' }}>Intelligence Insight</p>
+                  <p
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--text-muted)',
+                      lineHeight: 1.6,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      margin: '0 0 8px'
+                    }}
+                  >
+                    Checkout drop-offs increased by 12% in the last hour. Correlation signals suggest a link to Stripe Payment gateway latency spikes.
+                  </p>
+                  <button
+                    style={{
+                      fontSize: '11px',
+                      color: '#60a5fa',
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: 0
+                    }}
+                  >
+                    Investigate Cause
+                  </button>
+                </div>
               </div>
             </div>
-          </Card>
+          </div>
         </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            gap: '20px',
+            overflow: 'visible'
+          }}
+        >
+          {[
+            {
+              label: 'Broken CTAs',
+              value: '12',
+              note: 'Buttons with no response detected',
+              icon: ZapOff,
+              iconColor: '#f87171',
+              iconBg: 'rgba(244,63,94,0.12)'
+            },
+            {
+              label: 'Rage Click Spots',
+              value: '5',
+              note: 'High friction zones identified',
+              icon: MousePointerClick,
+              iconColor: '#c084fc',
+              iconBg: 'rgba(168,85,247,0.12)'
+            },
+            {
+              label: 'Stalled Journeys',
+              value: `${funnelSteps.filter((s) => s.dropRate > 50).length * 24 || 0}`,
+              note: 'Users currently waiting > 30s',
+              icon: TrendingUp,
+              iconColor: '#fbbf24',
+              iconBg: 'rgba(245,158,11,0.12)'
+            }
+          ].map((item) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.label} style={cardStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                  <div style={{ padding: '8px', borderRadius: '8px', background: item.iconBg }}>
+                    <Icon style={{ width: '16px', height: '16px', color: item.iconColor }} />
+                  </div>
+                  <h4 style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
+                    {item.label}
+                  </h4>
+                </div>
+                <div style={{ fontSize: '36px', lineHeight: 1, fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>{item.value}</div>
+                <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0 }}>{item.note}</p>
+              </div>
+            );
+          })}
+        </div>
+
+        {intelligence?.generatedAt && (
+          <div style={{ fontSize: '11px', color: 'var(--text-label)' }}>
+            Last intelligence refresh: {new Date(intelligence.generatedAt).toLocaleString()}
+          </div>
+        )}
       </div>
 
-      {/* Interaction Health Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="p-5 bg-slate-900/50 border-slate-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-rose-500/10"><ZapOff className="w-4 h-4 text-rose-400" /></div>
-            <h4 className="text-xs font-bold text-slate-300 uppercase">Broken CTAs</h4>
-          </div>
-          <div className="text-2xl font-bold text-white mb-1">12</div>
-          <p className="text-[10px] text-slate-500">Buttons with no response detected</p>
-        </Card>
-
-        <Card className="p-5 bg-slate-900/50 border-slate-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-purple-500/10"><MousePointerClick className="w-4 h-4 text-purple-400" /></div>
-            <h4 className="text-xs font-bold text-slate-300 uppercase">Rage Click Spots</h4>
-          </div>
-          <div className="text-2xl font-bold text-white mb-1">5</div>
-          <p className="text-[10px] text-slate-500">High friction zones identified</p>
-        </Card>
-
-        <Card className="p-5 bg-slate-900/50 border-slate-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-amber-500/10"><TrendingUp className="w-4 h-4 text-amber-400" /></div>
-            <h4 className="text-xs font-bold text-slate-300 uppercase">Stalled Journeys</h4>
-          </div>
-          <div className="text-2xl font-bold text-white mb-1">
-            {funnelSteps.filter(s => s.dropRate > 50).length * 24 || 0}
-          </div>
-          <p className="text-[10px] text-slate-500">Users currently waiting &gt; 30s</p>
-        </Card>
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          left: '24px',
+          zIndex: 50,
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-input)',
+          borderRadius: '999px',
+          padding: '6px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '11px',
+          color: 'var(--text-muted)'
+        }}
+      >
+        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+        Live feed · System nominal
       </div>
-    </div>
+    </>
   );
 }

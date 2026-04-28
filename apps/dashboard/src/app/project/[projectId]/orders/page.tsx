@@ -1,59 +1,68 @@
 'use client';
+
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../../../../context/AuthContext';
-import { useParams, useRouter } from 'next/navigation';
-import { 
-  PageLayout, 
-  Typography, 
-  Card, 
-  Badge, 
-  BadgeVariant,
-  FilterBar, 
-  InformationState,
-  DiagnosticDrawer,
-  OperationalTable,
-  Column,
-  MetricCard
-} from '@kpi-platform/ui';
-import { 
-  Package, 
-  TrendingUp, 
-  Clock, 
-  AlertTriangle, 
-  ShoppingBag, 
-  ArrowRight,
-  Activity,
-  Filter,
-  Search,
-  MoreHorizontal,
-  ChevronRight,
-  RefreshCw,
-  Box,
-  Truck,
-  CreditCard,
-  Building2,
-  FileText
+import { useParams } from 'next/navigation';
+import { DiagnosticDrawer } from '@kpi-platform/ui';
+import {
+    Package,
+    Clock,
+    AlertTriangle,
+    ShoppingBag,
+    Activity,
+    Search,
+    ChevronRight,
+    RefreshCw,
+    Building2,
+    FileText,
+    AlertCircle,
+    CheckCircle2,
+    Truck,
 } from 'lucide-react';
 
-// Orders specific components
-import { OrderHealthSummary } from '../../../../components/orders/OrderHealthSummary';
-import { LifecycleDistribution } from '../../../../components/orders/LifecycleDistribution';
 import { OrderDetailDrawerContent } from '../../../../components/orders/OrderDetailDrawerContent';
+
+const pageStyle: React.CSSProperties = {
+    padding: '24px 28px',
+    maxWidth: '1280px',
+    margin: '0 auto',
+    display: 'block',
+    overflow: 'visible',
+};
+
+const sectionStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px',
+    overflow: 'visible',
+};
+
+const cardStyle: React.CSSProperties = {
+    borderRadius: '12px',
+    border: '1px solid var(--border-card)',
+    background: 'var(--bg-card)',
+    padding: '24px',
+    overflow: 'visible',
+};
 
 export default function OrdersPage() {
     const params = useParams();
-    const router = useRouter();
     const projectId = params.projectId as string;
     const { token, apiFetch } = useAuth();
-    
-    // State
+
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState<any>({
-        totalOrders: 0, ordersThisHour: 0, onlineSplit: 0, offlineSplit: 0, delayedCount: 0, failedCount: 0, ordersPerMinute: '0.00'
+        totalOrders: 0,
+        ordersThisHour: 0,
+        onlineSplit: 0,
+        offlineSplit: 0,
+        delayedCount: 0,
+        failedCount: 0,
+        ordersPerMinute: '0.00',
     });
     const [orders, setOrders] = useState<any[]>([]);
-    
-    // UI State
+    const [error, setError] = useState<string | null>(null);
+
     const [selectedOrder, setSelectedOrder] = useState<any>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -62,15 +71,17 @@ export default function OrdersPage() {
     const fetchData = useCallback(async () => {
         if (!token || !projectId) return;
         setLoading(true);
+        setError(null);
         try {
             const [s, oList] = await Promise.all([
                 apiFetch(`/api/v1/dashboard/orders/summary?siteId=${projectId}`),
-                apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}`)
+                apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}`),
             ]);
             setStats(s);
-            setOrders(oList);
+            setOrders(Array.isArray(oList) ? oList : []);
         } catch (e) {
             console.error('Failed to sync order intelligence:', e);
+            setError('Failed to synchronize order intelligence. Please retry.');
         } finally {
             setLoading(false);
         }
@@ -78,7 +89,7 @@ export default function OrdersPage() {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 30000); // 30s refresh for orders
+        const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
     }, [fetchData]);
 
@@ -88,199 +99,257 @@ export default function OrdersPage() {
     };
 
     const handleAction = async (action: string) => {
-        // Implementation for retry/reprocess actions
         console.log(`Action triggered for ${selectedOrder?.id}: ${action}`);
     };
 
     const filteredOrders = useMemo(() => {
-        return orders.filter(o => {
-            const matchesSearch = o.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                  o.externalOrderId.toLowerCase().includes(searchQuery.toLowerCase());
+        return orders.filter((o) => {
+            const id = String(o.id || '').toLowerCase();
+            const externalId = String(o.externalOrderId || '').toLowerCase();
+            const query = searchQuery.toLowerCase();
+            const matchesSearch = id.includes(query) || externalId.includes(query);
             const matchesStatus = !filterStatus || o.status === filterStatus;
             return matchesSearch && matchesStatus;
         });
     }, [orders, searchQuery, filterStatus]);
 
-    const getStatusVariant = (status: string): BadgeVariant => {
-        switch (status.toLowerCase()) {
+    const timeline = useMemo<any[]>(() => {
+        if (!selectedOrder) return [];
+        const events: any[] = [
+            {
+                title: 'Order Placed',
+                time: 'Captured',
+                system: selectedOrder.channel?.toUpperCase() || 'SOURCE',
+                type: 'success',
+            },
+        ];
+        if (['paid', 'shipped', 'delivered'].includes(selectedOrder.status)) {
+            events.push({ title: 'Payment Validated', time: 'Processed', system: 'GATEWAY', type: 'success' });
+        }
+        if (selectedOrder.syncStatus === 'error') {
+            events.push({
+                title: 'Sync Failure',
+                time: 'Recent',
+                system: 'OMS-1',
+                type: 'error',
+                description: 'Internal processing error during synchronization.',
+            });
+        } else if (selectedOrder.syncStatus === 'synced') {
+            events.push({ title: 'Unified State Sync', time: 'Success', system: 'CORE', type: 'success' });
+        }
+        return events.reverse();
+    }, [selectedOrder]);
+
+    const reconciliation = useMemo(() => {
+        if (!selectedOrder) return [];
+        return [
+            {
+                name: 'Storefront State',
+                id: 'SOURCE_API',
+                value: `$${selectedOrder.amount?.toFixed(2)}`,
+                match: true,
+                icon: <ShoppingBag size={14} />,
+            },
+            {
+                name: 'OMS State',
+                id: 'INTEGRATION_LAYER',
+                value: `$${selectedOrder.amount?.toFixed(2)}`,
+                match: selectedOrder.syncStatus !== 'mismatch',
+                icon: <Building2 size={14} />,
+            },
+            {
+                name: 'Financial Ledger',
+                id: 'ERP_CORE',
+                value: `$${selectedOrder.amount?.toFixed(2)}`,
+                match: true,
+                icon: <RefreshCw size={14} />,
+            },
+        ];
+    }, [selectedOrder]);
+
+    const statusColor = (status: string) => {
+        switch ((status || '').toLowerCase()) {
             case 'shipped':
             case 'delivered':
-            case 'paid': return 'success';
+            case 'paid':
+                return { bg: 'var(--success-bg)', text: 'var(--success-text)' };
             case 'placed':
-            case 'processing': return 'processing';
+            case 'processing':
+                return { bg: 'var(--info-bg)', text: 'var(--info-text)' };
             case 'cancelled':
-            case 'failed': return 'error';
-            default: return 'default';
+            case 'failed':
+                return { bg: 'var(--error-bg)', text: 'var(--error-text)' };
+            default:
+                return { bg: 'var(--bg-badge-active)', text: 'var(--text-muted)' };
         }
     };
 
-    const orderColumns: Column<any>[] = [
-        { 
-            key: 'id', 
-            header: 'Order Reference', 
-            render: (val, row) => (
-                <div>
-                   <Typography variant="body" weight="bold" className="text-sm" noMargin>{val}</Typography>
-                   <Typography variant="micro" className="text-text-muted">{row.externalOrderId}</Typography>
+    const healthColor = (health: string) => {
+        if (health === 'healthy') return { bg: 'var(--success-bg)', text: 'var(--success-text)' };
+        if (health === 'delayed') return { bg: 'var(--warning-bg)', text: 'var(--warning-text)' };
+        return { bg: 'var(--error-bg)', text: 'var(--error-text)' };
+    };
+
+    if (loading && orders.length === 0) {
+        return (
+            <div style={{ ...pageStyle, ...sectionStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ width: '48px', height: '48px', borderRadius: '9999px', border: '4px solid #1f2937', borderTopColor: '#3b82f6', marginBottom: '16px', animation: 'spin 1s linear infinite' }} />
+                    <span style={{ fontSize: '10px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.2em' }}>Loading Order Console…</span>
                 </div>
-            )
-        },
-        { 
-            key: 'orderSource', 
-            header: 'Channel',
-            render: (val) => (
-                <div className="flex items-center gap-2">
-                    {val === 'online' ? <Activity size={14} className="text-primary"/> : <Building2 size={14} className="text-text-muted"/>}
-                    <span className="text-xs uppercase font-bold text-text-secondary">{val}</span>
-                </div>
-            )
-        },
-        { 
-            key: 'status', 
-            header: 'Lifecycle State',
-            render: (val) => (
-                <Badge variant={getStatusVariant(val)} size="sm">
-                    {val.toUpperCase()}
-                </Badge>
-            )
-        },
-        { 
-            key: 'health', 
-            header: 'Health',
-            render: (val) => (
-                <Badge variant={val === 'healthy' ? 'success' : val === 'delayed' ? 'warning' : 'error'} size="sm" dot>
-                    {val?.toUpperCase()}
-                </Badge>
-            )
-        },
-        { 
-            key: 'syncStatus', 
-            header: 'Reconciliation',
-            render: (val) => (
-                <Badge variant={val === 'synced' ? 'default' : 'error'} size="sm" className={val !== 'synced' ? 'animate-pulse' : ''}>
-                    {val?.toUpperCase()}
-                </Badge>
-            )
-        },
-        { 
-            key: 'amount', 
-            header: 'Value',
-            align: 'right',
-            render: (val) => <span className="font-bold">${val.toFixed(2)}</span>
-        },
-        { 
-            key: 'createdAt', 
-            header: 'Age',
-            align: 'right',
-            render: (val) => {
-                const diff = (Date.now() - new Date(val).getTime()) / 60000;
-                return <span className={diff > 60 ? 'text-error font-bold' : 'text-text-muted'}>{Math.floor(diff)}m ago</span>;
-            }
-        },
-        {
-            key: 'actions',
-            header: '',
-            align: 'right',
-            render: () => <ChevronRight size={16} className="text-text-muted group-hover:text-primary transition-colors" />
-        }
-    ];
+            </div>
+        );
+    }
 
     return (
-        <PageLayout
-            title="Order Operations Console"
-            subtitle="Real-time oversight and intelligence for high-volume order flows."
-            icon={<Package size={24} />}
-        >
-            <div className="space-y-6">
-                {/* 1. Statistics & Velocity Header */}
-                <OrderHealthSummary stats={stats} loading={loading} />
+        <>
+            <div style={{ ...pageStyle, ...sectionStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ maxWidth: '44rem', minWidth: 0 }}>
+                        <h1 style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', fontSize: '20px', lineHeight: 1.25, fontWeight: 500, color: 'var(--text-primary)' }}>
+                            <Package style={{ width: '20px', height: '20px', color: '#60a5fa', flexShrink: 0 }} />
+                            <span>Order Operations Console</span>
+                        </h1>
+                        <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>
+                            Real-time oversight and intelligence for high-volume order flows.
+                        </p>
+                    </div>
 
-                {/* 2. Exception Highlighting */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <Card className="bg-error-bg border-error/10 p-5 flex items-center justify-between group cursor-pointer hover:border-error/30 transition-all">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-error/10 flex items-center justify-center text-error">
-                                <AlertTriangle size={24} />
-                            </div>
-                            <div>
-                                <Typography variant="h2" weight="bold" noMargin className="text-error-text">{stats.failedCount}</Typography>
-                                <Typography variant="caption" className="text-error-text opacity-70">Critical Order Failures</Typography>
-                            </div>
-                        </div>
-                        <ArrowRight size={20} className="text-error opacity-40 group-hover:opacity-100 transform group-hover:translateX-1 transition-all" />
-                    </Card>
-
-                    <Card className="bg-warning-bg border-warning/10 p-5 flex items-center justify-between group cursor-pointer hover:border-warning/30 transition-all">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-warning/10 flex items-center justify-center text-warning">
-                                <Clock size={24} />
-                            </div>
-                            <div>
-                                <Typography variant="h2" weight="bold" noMargin className="text-warning-text">{stats.delayedCount}</Typography>
-                                <Typography variant="caption" className="text-warning-text opacity-70">SLA Breach / Delays</Typography>
-                            </div>
-                        </div>
-                        <ArrowRight size={20} className="text-warning opacity-40 group-hover:opacity-100 transform group-hover:translateX-1 transition-all" />
-                    </Card>
-
-                    <Card className="border-subtle p-5 flex items-center justify-between group cursor-pointer hover:border-primary/30 transition-all">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center text-text-muted group-hover:bg-primary/5 group-hover:text-primary transition-colors">
-                                <FileText size={24} />
-                            </div>
-                            <div>
-                                <Typography variant="h2" weight="bold" noMargin>{stats.mismatches || 0}</Typography>
-                                <Typography variant="caption" className="text-text-muted">Unreconciled Mismatches</Typography>
-                            </div>
-                        </div>
-                        <ArrowRight size={20} className="text-text-muted opacity-40 group-hover:opacity-100 transform group-hover:translateX-1 transition-all" />
-                    </Card>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+                        <button onClick={fetchData} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+                            <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0, animation: loading ? 'spin 1s linear infinite' : undefined }} /> Refresh
+                        </button>
+                    </div>
                 </div>
 
-                {/* 3. Lifecycle & Distribution */}
-                <LifecycleDistribution 
-                    loading={loading}
-                    stages={stats.stages || []}
-                />
+                {error && (
+                    <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '12px 16px', borderRadius: '8px', border: '1px solid rgba(244,63,94,0.2)', background: 'rgba(244,63,94,0.1)', color: '#fb7185', overflow: 'visible' }}>
+                        <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: '12px' }}>
+                            <AlertCircle style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                            <span style={{ fontSize: '14px', overflowWrap: 'anywhere' }}>{error}</span>
+                        </div>
+                        <button onClick={fetchData} style={{ marginLeft: '8px', flexShrink: 0, fontSize: '14px', fontWeight: 500, textDecoration: 'underline', color: '#fb7185', cursor: 'pointer', background: 'transparent', border: 'none' }}>
+                            Retry
+                        </button>
+                    </div>
+                )}
 
-                {/* 4. Unified Filter Bar */}
-                <FilterBar 
-                    searchPlaceholder="Search Order ID, Marketplace ID, or Customer..."
-                    searchValue={searchQuery}
-                    onSearchChange={setSearchQuery}
-                    filters={[
-                        {
-                            id: 'status',
-                            label: 'Status',
-                            value: filterStatus,
-                            options: [
-                                { label: 'Placed', value: 'placed' },
-                                { label: 'Shipped', value: 'shipped' },
-                                { label: 'Paid', value: 'paid' },
-                                { label: 'Cancelled', value: 'cancelled' },
-                                { label: 'Failed', value: 'failed' }
-                            ]
-                        }
-                    ]}
-                    onFilterChange={(_, val) => setFilterStatus(val)}
-                    activeFilterCount={filterStatus ? 1 : 0}
-                    onClearFilters={() => { setFilterStatus(''); setSearchQuery(''); }}
-                />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '24px', overflow: 'visible' }}>
+                    {[
+                        { label: 'Total Orders', value: stats.totalOrders ?? 0, status: 'LIVE', context: 'Across channels', icon: ShoppingBag, statusBg: 'var(--success-bg)', statusColor: 'var(--success-text)' },
+                        { label: 'Orders This Hour', value: stats.ordersThisHour ?? 0, status: 'FLOW', context: 'Current hour throughput', icon: Activity, statusBg: 'var(--info-bg)', statusColor: 'var(--info-text)' },
+                        { label: 'Delayed Orders', value: stats.delayedCount ?? 0, status: 'SLA', context: 'Potential breach', icon: Clock, statusBg: 'var(--warning-bg)', statusColor: 'var(--warning-text)' },
+                        { label: 'Critical Failures', value: stats.failedCount ?? 0, status: 'ALERT', context: 'Immediate review', icon: AlertTriangle, statusBg: 'var(--error-bg)', statusColor: 'var(--error-text)' },
+                    ].map((metric) => (
+                        <div key={metric.label} style={{ borderRadius: '12px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '140px', overflow: 'visible' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{metric.label}</span>
+                                <metric.icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                            </div>
+                            <div style={{ fontSize: '38px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '8px 0', overflow: 'visible' }}>{metric.value}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '12px' }}>
+                                <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: metric.statusBg, color: metric.statusColor }}>{metric.status}</span>
+                                <span style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{metric.context}</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
 
-                {/* 5. High-Performance Orders Table */}
-                <Card className="p-0 overflow-hidden border-subtle border">
-                    <OperationalTable 
-                        columns={orderColumns} 
-                        data={filteredOrders} 
-                        isLoading={loading}
-                        isEmpty={filteredOrders.length === 0}
-                        onRowClick={handleInspect}
-                        className="group"
-                    />
-                </Card>
+                <div style={cardStyle}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '12px', alignItems: 'center' }}>
+                        <div style={{ position: 'relative' }}>
+                            <Search style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', width: '16px', height: '16px', color: '#64748b' }} />
+                            <input
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Search Order ID, Marketplace ID, or Customer..."
+                                style={{ width: '100%', height: '40px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 12px 0 36px', fontSize: '14px' }}
+                            />
+                        </div>
+                        <select
+                            value={filterStatus}
+                            onChange={(e) => setFilterStatus(e.target.value)}
+                            style={{ height: '40px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 12px', fontSize: '14px' }}
+                        >
+                            <option value="">All Statuses</option>
+                            <option value="placed">Placed</option>
+                            <option value="processing">Processing</option>
+                            <option value="paid">Paid</option>
+                            <option value="shipped">Shipped</option>
+                            <option value="delivered">Delivered</option>
+                            <option value="cancelled">Cancelled</option>
+                            <option value="failed">Failed</option>
+                        </select>
+                        <button
+                            onClick={() => {
+                                setFilterStatus('');
+                                setSearchQuery('');
+                            }}
+                            style={{ height: '40px', borderRadius: '8px', border: '1px solid var(--border-card)', background: '#dee3ee', color: 'var(--text-primary)', padding: '0 14px', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer' }}
+                        >
+                            Clear
+                        </button>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', height: '40px', borderRadius: '8px', border: '1px solid var(--border-card)', background: 'var(--bg-input)', color: 'var(--text-muted)', padding: '0 12px', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                            <Truck style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                            {filteredOrders.length} visible
+                        </div>
+                    </div>
+                </div>
+
+                <div style={{ ...cardStyle, padding: '0' }}>
+                    {filteredOrders.length === 0 ? (
+                        <div style={{ minHeight: '280px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
+                            <CheckCircle2 style={{ width: '40px', height: '40px', color: '#10b981', marginBottom: '12px' }} />
+                            <h3 style={{ fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '8px' }}>No Orders Matched</h3>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Adjust search or status filters to broaden results.</p>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.7fr 0.8fr 0.8fr 1fr 0.7fr 0.6fr', padding: '12px 16px', borderBottom: '1px solid var(--border-card)', color: 'var(--text-muted)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 700 }}>
+                                <span>Order Reference</span>
+                                <span>Channel</span>
+                                <span>Status</span>
+                                <span>Health</span>
+                                <span>Reconciliation</span>
+                                <span style={{ textAlign: 'right' }}>Value</span>
+                                <span style={{ textAlign: 'right' }}>Age</span>
+                            </div>
+                            {filteredOrders.map((o) => {
+                                const status = statusColor(o.status || '');
+                                const health = healthColor(o.health || '');
+                                const syncError = o.syncStatus !== 'synced';
+                                const diff = (Date.now() - new Date(o.createdAt).getTime()) / 60000;
+                                return (
+                                    <button
+                                        key={o.id}
+                                        onClick={() => handleInspect(o)}
+                                        style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.7fr 0.8fr 0.8fr 1fr 0.7fr 0.6fr', alignItems: 'center', gap: '8px', padding: '14px 16px', borderBottom: '1px solid var(--border-card)', background: 'transparent', color: 'var(--text-primary)', textAlign: 'left', cursor: 'pointer', borderLeft: 'none', borderRight: 'none', borderTop: 'none' }}
+                                    >
+                                        <div style={{ minWidth: 0 }}>
+                                            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.id}</div>
+                                            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.externalOrderId}</div>
+                                        </div>
+                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                                            <Activity style={{ width: '14px', height: '14px', flexShrink: 0, color: o.orderSource === 'online' ? '#60a5fa' : 'var(--text-muted)' }} />
+                                            <span style={{ fontSize: '11px', textTransform: 'uppercase', fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.orderSource || 'unknown'}</span>
+                                        </div>
+                                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', background: status.bg, color: status.text, width: 'fit-content' }}>{String(o.status || 'unknown').toUpperCase()}</span>
+                                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', background: health.bg, color: health.text, width: 'fit-content' }}>{String(o.health || 'unknown').toUpperCase()}</span>
+                                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', background: syncError ? 'var(--error-bg)' : 'var(--bg-badge-active)', color: syncError ? 'var(--error-text)' : 'var(--text-muted)', width: 'fit-content' }}>{String(o.syncStatus || 'unknown').toUpperCase()}</span>
+                                        <span style={{ textAlign: 'right', fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>${Number(o.amount || 0).toFixed(2)}</span>
+                                        <span style={{ textAlign: 'right', fontSize: '11px', fontWeight: diff > 60 ? 700 : 500, color: diff > 60 ? '#f87171' : 'var(--text-muted)', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                                            <Clock style={{ width: '14px', height: '14px', flexShrink: 0 }} />
+                                            {Math.floor(diff)}m
+                                            <ChevronRight style={{ width: '14px', height: '14px', flexShrink: 0, color: 'var(--text-secondary)' }} />
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {/* Order Diagnostic Side Panel */}
             <DiagnosticDrawer
                 isOpen={isDrawerOpen}
                 onClose={() => setIsDrawerOpen(false)}
@@ -288,34 +357,13 @@ export default function OrdersPage() {
                 subtitle={`Site: ${projectId} • Integrity: ${selectedOrder?.health === 'healthy' ? 'Verified' : 'Review Required'}`}
                 width="600px"
             >
-                <OrderDetailDrawerContent 
+                <OrderDetailDrawerContent
                     order={selectedOrder}
-                    timeline={useMemo(() => {
-                        if (!selectedOrder) return [];
-                        const events = [
-                            { title: 'Order Placed', time: 'Captured', system: selectedOrder.channel?.toUpperCase() || 'SOURCE', type: 'success' },
-                        ];
-                        if (['paid', 'shipped', 'delivered'].includes(selectedOrder.status)) {
-                            events.push({ title: 'Payment Validated', time: 'Processed', system: 'GATEWAY', type: 'success' });
-                        }
-                        if (selectedOrder.syncStatus === 'error') {
-                            events.push({ title: 'Sync Failure', time: 'Recent', system: 'OMS-1', type: 'error', description: 'Internal processing error during synchronization.' });
-                        } else if (selectedOrder.syncStatus === 'synced') {
-                            events.push({ title: 'Unified State Sync', time: 'Success', system: 'CORE', type: 'success' });
-                        }
-                        return events.reverse();
-                    }, [selectedOrder])}
-                    reconciliation={useMemo(() => {
-                        if (!selectedOrder) return [];
-                        return [
-                            { name: 'Storefront State', id: 'SOURCE_API', value: `$${selectedOrder.amount?.toFixed(2)}`, match: true, icon: <ShoppingBag size={14}/> },
-                            { name: 'OMS State', id: 'INTEGRATION_LAYER', value: `$${selectedOrder.amount?.toFixed(2)}`, match: selectedOrder.syncStatus !== 'mismatch', icon: <Building2 size={14}/> },
-                            { name: 'Financial Ledger', id: 'ERP_CORE', value: `$${selectedOrder.amount?.toFixed(2)}`, match: true, icon: <RefreshCw size={14}/> },
-                        ];
-                    }, [selectedOrder])}
+                    timeline={timeline}
+                    reconciliation={reconciliation}
                     onAction={handleAction}
                 />
             </DiagnosticDrawer>
-        </PageLayout>
+        </>
     );
 }

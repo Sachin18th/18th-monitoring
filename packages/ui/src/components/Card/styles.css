@@ -1,26 +1,44 @@
 .ui-card {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   transition: all var(--transition-normal);
   overflow: hidden;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  position: relative;
+}
+
+.ui-card.is-hoverable {
+  cursor: pointer;
 }
 
 .ui-card.is-hoverable:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
-  border-color: color-mix(in srgb, var(--primary) 16%, var(--border-subtle));
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-premium);
+  border-color: color-mix(in srgb, var(--primary) 25%, var(--border-subtle));
+}
+
+.ui-card.is-hoverable:active {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Glassmorphism Variant */
+.ui-card--glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-color: var(--glass-border);
 }
 
 /* Padding */
 .ui-card--none { padding: 0; }
 .ui-card--sm { padding: var(--space-4); }
-.ui-card--md { padding: var(--space-5); }
-.ui-card--lg { padding: var(--space-7); }
+.ui-card--md { padding: var(--space-6); }
+.ui-card--lg { padding: var(--space-8); }
 
 .ui-card-header {
   padding-bottom: var(--space-4);
@@ -42,9 +60,9 @@
 .ui-card-title {
   color: var(--text-primary);
   font-size: var(--text-lg);
-  font-weight: var(--font-semibold);
+  font-weight: var(--font-bold);
   line-height: var(--leading-tight);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 .ui-card-description {
@@ -62,13 +80,26 @@
 
 .ui-card-content {
   flex: 1;
+  min-width: 0;
 }
 
 .ui-card-footer {
   padding-top: var(--space-4);
-  margin-top: auto;
+  margin-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
+}
+
+/* Card with gradient top border */
+.ui-card--premium::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  opacity: 0.8;
 }

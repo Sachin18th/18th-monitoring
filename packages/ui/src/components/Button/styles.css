@@ -3,15 +3,17 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   font-weight: var(--font-semibold);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all var(--transition-normal);
   border: 1px solid transparent;
   white-space: nowrap;
   user-select: none;
-  line-height: 1;
+  line-height: 1.2;
   box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
 }
 
 .ui-button:disabled {
@@ -25,42 +27,34 @@
   box-shadow: var(--focus-ring);
 }
 
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
 /* Variants */
 .ui-button--primary {
   background-color: var(--primary);
   color: var(--primary-foreground);
-  border-color: transparent;
+  border-color: var(--primary);
 }
 .ui-button--primary:hover:not(:disabled) {
   background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-premium);
 }
 .ui-button--primary:active:not(:disabled) {
   transform: translateY(0);
-  box-shadow: var(--shadow-sm);
+  background-color: var(--primary-active);
 }
 
 .ui-button--secondary {
-  background-color: var(--bg-muted);
+  background-color: var(--bg-surface);
   color: var(--text-primary);
-  border-color: var(--border-subtle);
+  border-color: var(--border-strong);
 }
 .ui-button--secondary:hover:not(:disabled) {
-  background-color: var(--border-subtle);
-  border-color: var(--border-interactive);
+  background-color: var(--bg-muted);
+  border-color: var(--primary);
 }
 .ui-button--secondary:active:not(:disabled) {
-  background-color: var(--bg-muted);
+  background-color: var(--border-subtle);
 }
 
 .ui-button--outline {
@@ -73,9 +67,6 @@
   border-color: var(--primary);
   color: var(--primary);
 }
-.ui-button--outline:active:not(:disabled) {
-  background-color: var(--bg-accent);
-}
 
 .ui-button--ghost {
   background-color: transparent;
@@ -87,53 +78,68 @@
   background-color: var(--bg-muted);
   color: var(--text-primary);
 }
-.ui-button--ghost:active:not(:disabled) {
-  background-color: var(--border-subtle);
-}
 
 .ui-button--danger {
-  background-color: var(--error);
-  color: var(--text-inverse);
-  border-color: transparent;
+  background-color: var(--error-bg);
+  color: var(--error-text);
+  border-color: color-mix(in srgb, var(--error) 20%, transparent);
 }
 .ui-button--danger:hover:not(:disabled) {
-  background-color: var(--error-text);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-.ui-button--danger:active:not(:disabled) {
-  transform: translateY(0);
+  background-color: var(--error);
+  color: var(--primary-foreground);
+  border-color: var(--error);
 }
 
 /* Sizes */
 .ui-button--sm {
   padding: 0 var(--space-3);
-  font-size: var(--text-sm);
-  height: 36px;
-  gap: var(--space-1-5);
+  font-size: var(--text-xs);
+  height: 32px;
+  gap: var(--space-1);
 }
 
 .ui-button--md {
   padding: 0 var(--space-4);
   font-size: var(--text-sm);
-  height: 42px;
+  height: 40px;
   gap: var(--space-2);
 }
 
 .ui-button--lg {
   padding: 0 var(--space-6);
   font-size: var(--text-base);
-  height: 50px;
+  height: 48px;
   gap: var(--space-3);
 }
 
 .ui-button--icon {
-  width: 42px;
-  height: 42px;
+  width: 40px;
+  height: 40px;
   padding: 0;
 }
 
-.ui-button__text {
-  display: inline-flex;
-  align-items: center;
+.ui-button--sm.ui-button--icon { width: 32px; height: 32px; }
+.ui-button--lg.ui-button--icon { width: 48px; height: 48px; }
+
+/* Loading State Overlay */
+.ui-button--loading {
+  color: transparent !important;
+  pointer-events: none;
+}
+
+.ui-button__spinner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 1.25em;
+  height: 1.25em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ui-spin 0.75s linear infinite;
+}
+
+@keyframes ui-spin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
 }

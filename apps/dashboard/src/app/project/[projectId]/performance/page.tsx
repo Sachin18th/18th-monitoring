@@ -1,46 +1,178 @@
 'use client';
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+
 import { useAuth } from '../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
 import { 
   PageLayout, 
   Typography, 
-  Card, 
   Badge, 
+  Button,
   OperationalTable, 
-  InformationState,
-  DiagnosticDrawer,
-  FilterBar
+    DiagnosticDrawer
 } from '@kpi-platform/ui';
 import { 
   Activity, 
-  Zap, 
   AlertTriangle, 
-  Globe, 
-  Smartphone, 
-  Server, 
-  Clock, 
-  RefreshCw, 
+  ShieldCheck,
   Search,
   ExternalLink,
-  ShieldCheck,
-  ChevronRight,
-  MousePointer2,
-  Layers,
   History,
-  Box
+  Clock,
+    Zap,
+    RefreshCw
 } from 'lucide-react';
 
 // Intelligence Components
-import { PerformanceHealthHeader } from '../../../../components/performance/PerformanceHealthHeader';
 import { AnomalyExplorer } from '../../../../components/performance/AnomalyExplorer';
 import { PerformanceTrendExplorer } from '../../../../components/performance/PerformanceTrendExplorer';
 import { SegmentationPivot } from '../../../../components/performance/SegmentationPivot';
 
+const pageStyle: React.CSSProperties = {
+    padding: '24px 28px',
+    maxWidth: '1280px',
+    margin: '0 auto',
+    display: 'block',
+    overflow: 'visible',
+};
+
+const sectionSpacingStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px',
+    overflow: 'visible',
+};
+
+const metricGridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(4, 1fr)',
+    gap: '24px',
+    marginBottom: '24px',
+    overflow: 'visible',
+};
+
+const metricCardStyle: React.CSSProperties = {
+    borderRadius: '12px',
+    border: '1px solid var(--border-card)',
+    background: 'var(--bg-card)',
+    padding: '24px',
+    paddingTop: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    minHeight: '140px',
+    overflow: 'visible',
+};
+
+const metricTopRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: '12px',
+};
+
+const metricLabelStyle: React.CSSProperties = {
+    fontSize: '10px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    color: 'var(--text-muted)',
+    fontWeight: 500,
+    maxWidth: '100%',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+};
+
+const metricValueStyle: React.CSSProperties = {
+    fontSize: '38px',
+    fontWeight: 500,
+    color: 'var(--text-primary)',
+    lineHeight: 1,
+    padding: '8px 0',
+    overflow: 'visible',
+};
+
+const metricBottomRowStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: '12px',
+};
+
+const panelGridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: '1fr 320px',
+    gap: '24px',
+    overflow: 'visible',
+    alignItems: 'start',
+};
+
+const leftColumnStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px',
+    overflow: 'visible',
+};
+
+const sectionLabelStyle: React.CSSProperties = {
+    fontSize: '10px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    color: 'var(--text-label)',
+    fontWeight: 500,
+};
+
+const sectionTitleStyle: React.CSSProperties = {
+    fontSize: '18px',
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+    marginBottom: '12px',
+};
+
+const contentCardStyle: React.CSSProperties = {
+    borderRadius: '12px',
+    border: '1px solid var(--border-card)',
+    background: 'var(--bg-card)',
+    padding: '24px',
+    overflow: 'visible',
+};
+
+const sidebarStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+};
+
+const sidebarCardStyle: React.CSSProperties = {
+    borderRadius: '12px',
+    border: '1px solid var(--border-card)',
+    background: 'var(--bg-card)',
+    padding: '24px',
+    marginBottom: '16px',
+};
+
+const sidebarLabelStyle: React.CSSProperties = {
+    fontSize: '10px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.1em',
+    color: 'var(--text-label)',
+    fontWeight: 500,
+    display: 'block',
+    marginBottom: '16px',
+};
+
+const bottleneckRowStyle: React.CSSProperties = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '12px 0',
+    borderBottom: '1px solid var(--border-card)',
+};
+
 export default function PerformancePage() {
     const params = useParams();
     const projectId = params.projectId as string;
-    const { token, apiFetch, outageStatus, lastUpdated } = useAuth();
+    const { token, apiFetch, outageStatus } = useAuth();
 
     // Data State
     const [loading, setLoading] = useState(true);
@@ -53,12 +185,10 @@ export default function PerformancePage() {
     const [apis, setApis] = useState<any[]>([]);
     const [integrations, setIntegrations] = useState<any[]>([]);
 
-    // UI UI State
+    // UI State
     const [selectedAnomaly, setSelectedAnomaly] = useState<any>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [activeMetric, setActiveMetric] = useState('latency');
-
-    const isExpired = outageStatus === 'expired';
 
     const loadData = useCallback(async () => {
         if (!token || !projectId) return;
@@ -73,28 +203,38 @@ export default function PerformancePage() {
                 apiFetch(`/api/v1/dashboard/integrations/summary?siteId=${projectId}`)
             ]);
 
-            setSummary(summ);
+            setSummary(summ || summary);
             setTrends(Array.isArray(trnd) ? trnd : []);
             setAnomalies(Array.isArray(anom) ? anom : []);
             setIntegrations(Array.isArray(intg) ? intg : []);
             
-            setRegional(reg?.map((r: any) => ({
-                dimension: r.name,
-                count: r.share * 1000,
-                p50: r.lcp,
-                p95: r.lcp * 1.8,
-                errors: r.errorRate,
-                health: r.lcp > 2000 ? 'critical' : r.lcp > 1500 ? 'warning' : 'healthy'
-            })) || []);
+            // Defensive mapping for regional data
+            if (Array.isArray(reg)) {
+                setRegional(reg.map((r: any) => ({
+                    dimension: r.name || 'Unknown',
+                    count: (r.share || 0) * 1000,
+                    p50: r.lcp || 0,
+                    p95: (r.lcp || 0) * 1.8,
+                    errors: r.errorRate || 0,
+                    health: (r.lcp || 0) > 2000 ? 'critical' : (r.lcp || 0) > 1500 ? 'warning' : 'healthy'
+                })));
+            } else {
+                setRegional([]);
+            }
             
-            setApis(pages?.map((p: any) => ({
-                dimension: p.page,
-                count: p.hits || 5000,
-                p50: p.loadTime,
-                p95: p.loadTime * 2.1,
-                errors: p.errorRate || 0.2,
-                health: p.loadTime > 3000 ? 'critical' : 'healthy'
-            })) || []);
+            // Defensive mapping for apis/pages data
+            if (Array.isArray(pages)) {
+                setApis(pages.map((p: any) => ({
+                    dimension: p.page || 'Unknown',
+                    count: p.hits || 5000,
+                    p50: p.loadTime || 0,
+                    p95: (p.loadTime || 0) * 2.1,
+                    errors: p.errorRate || 0,
+                    health: (p.loadTime || 0) > 3000 ? 'critical' : 'healthy'
+                })));
+            } else {
+                setApis([]);
+            }
         } catch (err) {
             console.error('Performance lab failure:', err);
         } finally {
@@ -119,131 +259,159 @@ export default function PerformancePage() {
             subtitle="Deep intelligence on site reliability, latency distributions, and anomaly attribution."
             icon={<Activity size={24} />}
         >
-            <div className="space-y-8 pb-12">
-                {/* 1. System Health Header */}
-                <PerformanceHealthHeader 
-                    summary={summary} 
-                    loading={loading} 
-                />
-
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                    {/* 2. Visual Intelligence Zone */}
-                    <div className="lg:col-span-3 space-y-8">
-                        <PerformanceTrendExplorer 
-                            trends={trends} 
-                            loading={loading}
-                            activeMetric={activeMetric}
-                            onMetricChange={setActiveMetric}
-                        />
-
-                        <AnomalyExplorer 
-                            anomalies={anomalies} 
-                            loading={loading}
-                            onInspect={handleAnomalyInspect}
-                        />
-
-                        <SegmentationPivot 
-                            regionalData={regional}
-                            loading={loading}
-                        />
+            <div style={{ ...pageStyle, ...sectionSpacingStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ maxWidth: '42rem', minWidth: 0 }}>
+                        <h1 style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', fontSize: '20px', lineHeight: 1.25, fontWeight: 500, color: 'var(--text-primary)' }}>
+                            <Activity style={{ width: '20px', height: '20px', color: '#818cf8', flexShrink: 0 }} />
+                            <span>Performance Lab</span>
+                        </h1>
+                        <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>Deep intelligence on site reliability, latency distributions, and anomaly attribution.</p>
                     </div>
 
-                    {/* 3. Contextual Sidebar */}
-                    <div className="space-y-6">
-                        <Card className="p-6 border-subtle">
-                           <Typography variant="body" weight="bold" className="text-sm uppercase tracking-wider text-text-muted mb-6 block border-b border-subtle pb-2">
-                              Top Bottlenecks
-                           </Typography>
-                           <div className="space-y-6">
-                              {apis.slice(0, 5).map((api, idx) => (
-                                 <div key={idx} className="flex flex-col gap-1 cursor-pointer group">
-                                    <div className="flex justify-between items-center">
-                                       <Typography variant="body" weight="bold" className="text-xs truncate max-w-[140px] group-hover:text-primary transition-colors">
-                                          {api.dimension}
-                                       </Typography>
-                                       <Badge variant={api.health as any} size="sm">{api.p95}ms</Badge>
-                                    </div>
-                                    <div className="h-1 w-full bg-muted rounded-full overflow-hidden">
-                                       <div 
-                                          className={`h-full ${api.health === 'critical' ? 'bg-error' : 'bg-success'}`} 
-                                          style={{ width: `${Math.min(100, (api.p95 / 5000) * 100)}%` }} 
-                                       />
-                                    </div>
-                                 </div>
-                              ))}
-                           </div>
-                        </Card>
-
-                        <OperationalTable 
-                            columns={[
-                                { key: 'dimension', header: 'Resource' },
-                                { key: 'p95', header: 'p95', width: '80px', render: (v) => `${v}ms` }
-                            ] as any}
-                            data={apis.slice(5, 10)}
-                            isLoading={loading}
-                            onSelect={(s) => console.log('API Filter:', s)}
-                        />
-
-                        <Card className="p-5 border-subtle bg-muted/20">
-                           <div className="flex items-center gap-2 mb-4">
-                              <ShieldCheck size={18} className="text-success" />
-                              <Typography variant="body" weight="bold" className="text-sm uppercase tracking-wider text-text-muted">
-                                 SLA Confidence Score
-                              </Typography>
-                           </div>
-                           <div className="flex items-end gap-2">
-                              <Typography variant="h2" weight="bold" noMargin>{summary.uptime || '99.9'}%</Typography>
-                              <Typography variant="caption" className="text-success mb-1 font-bold">+0.2% vs avg</Typography>
-                           </div>
-                           <Typography variant="micro" className="text-text-muted mt-2 block">
-                              Aggregate reliability across critical paths in the last 24h window.
-                           </Typography>
-                        </Card>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+                        <button onClick={loadData} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+                            <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0, transform: loading ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 200ms linear' }} /> Refresh
+                        </button>
+                        <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+                            <History style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Activity
+                        </button>
+                        <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid #6366f1', background: '#4f46e5', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+                            <ShieldCheck style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Health Overview
+                        </button>
                     </div>
                 </div>
 
-                {/* 4. Dependency & Trace Section */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <Card className="p-6">
-                       <Typography variant="body" weight="bold" className="text-sm uppercase tracking-wider text-text-muted mb-6 block border-b border-subtle pb-2">
-                          External System Correlation
-                       </Typography>
-                       <div className="space-y-4">
-                          {integrations.length > 0 ? (
-                            integrations.slice(0, 4).map((dep) => (
-                              <div key={dep.name} className="flex items-center justify-between p-3 bg-muted/30 rounded-xl">
-                                 <div>
-                                    <Typography variant="body" weight="bold" className="text-sm">{dep.name}</Typography>
-                                    <Typography variant="micro" className="text-text-muted uppercase">{dep.status}</Typography>
-                                 </div>
-                                 <div className="text-right">
-                                    <Typography variant="body" weight="bold" className="text-sm">{dep.latency}</Typography>
-                                    <Badge variant={dep.status === 'Active' ? 'success' : 'warning'} size="sm">{dep.status}</Badge>
-                                 </div>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="p-8 text-center">
-                              <Typography variant="caption" className="text-text-muted">No external dependencies tracked.</Typography>
-                            </div>
-                          )}
-                       </div>
-                    </Card>
+                <div style={metricGridStyle}>
+                    <div style={metricCardStyle}>
+                        <div style={metricTopRowStyle}>
+                            <span style={metricLabelStyle}>P50 Latency</span>
+                            <Clock style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                        </div>
+                        <div style={metricValueStyle}>{summary.p50} <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>ms</span></div>
+                        <div style={metricBottomRowStyle}>
+                            <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: 'var(--success-bg)', color: 'var(--success-text)' }}>BASELINE</span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>Latency</span>
+                        </div>
+                    </div>
+                    <div style={metricCardStyle}>
+                        <div style={metricTopRowStyle}>
+                            <span style={metricLabelStyle}>P95 Latency</span>
+                            <Zap style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                        </div>
+                        <div style={metricValueStyle}>{summary.p95} <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>ms</span></div>
+                        <div style={metricBottomRowStyle}>
+                            <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: 'var(--warning-bg)', color: 'var(--warning-text)' }}>WARNING</span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>Latency</span>
+                        </div>
+                    </div>
+                    <div style={metricCardStyle}>
+                        <div style={metricTopRowStyle}>
+                            <span style={metricLabelStyle}>Error Rate</span>
+                            <AlertTriangle style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                        </div>
+                        <div style={metricValueStyle}>{summary.errorRate}%</div>
+                        <div style={metricBottomRowStyle}>
+                            <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: 'var(--success-bg)', color: 'var(--success-text)' }}>HEALTHY</span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>Errors</span>
+                        </div>
+                    </div>
+                    <div style={metricCardStyle}>
+                        <div style={metricTopRowStyle}>
+                            <span style={metricLabelStyle}>SLA Uptime</span>
+                            <ShieldCheck style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                        </div>
+                        <div style={metricValueStyle}>{summary.uptime}%</div>
+                        <div style={metricBottomRowStyle}>
+                            <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: 'var(--success-bg)', color: 'var(--success-text)' }}>STABLE</span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>Availability</span>
+                        </div>
+                    </div>
+                </div>
 
-                    <Card className="p-6 flex flex-col justify-center items-center text-center gap-4 bg-primary/5 border-primary/20">
-                       <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center text-primary">
-                          <Search size={32} />
-                       </div>
-                       <div>
-                          <Typography variant="h3" weight="bold" noMargin>Request Trace Explorer</Typography>
-                          <Typography variant="caption" className="text-text-muted max-w-xs mt-2 block">
-                             Jump into granular p99 request traces for deep code-level bottleneck analysis.
-                          </Typography>
-                       </div>
-                       <button type="button" className="action-btn action-btn--primary">
-                           Start Deep Trace <ExternalLink size={14} />
-                        </button>
-                    </Card>
+                <div style={panelGridStyle}>
+                    <div style={leftColumnStyle}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <span style={sectionLabelStyle}>PERFORMANCE TRENDS</span>
+                            <p style={sectionTitleStyle}>Latency Distribution</p>
+                            <div style={contentCardStyle}>
+                                <PerformanceTrendExplorer 
+                                    trends={trends} 
+                                    loading={loading}
+                                    activeMetric={activeMetric}
+                                    onMetricChange={setActiveMetric}
+                                />
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <span style={sectionLabelStyle}>ANOMALY DETECTION</span>
+                            <p style={sectionTitleStyle}>Performance Regressions</p>
+                            <div style={contentCardStyle}>
+                                <AnomalyExplorer 
+                                    anomalies={anomalies} 
+                                    loading={loading}
+                                    onInspect={handleAnomalyInspect}
+                                />
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <span style={sectionLabelStyle}>REGIONAL ANALYSIS</span>
+                            <p style={sectionTitleStyle}>Geographic Distribution</p>
+                            <div style={contentCardStyle}>
+                                <SegmentationPivot 
+                                    data={regional}
+                                    loading={loading}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style={sidebarStyle}>
+                        <div style={sidebarCardStyle}>
+                           <span style={sidebarLabelStyle}>TOP BOTTLENECKS</span>
+                           <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              {apis.length > 0 ? apis.slice(0, 5).map((api, idx) => (
+                                 <div key={idx} style={bottleneckRowStyle}>
+                                    <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                       {api.dimension}
+                                    </span>
+                                    <Badge variant={api.health as any} size="sm">{Math.round(api.p95)}ms</Badge>
+                                 </div>
+                              )) : (
+                                <Typography variant="caption" style={{ display: 'block', textAlign: 'center', padding: '32px 0', color: 'var(--text-muted)' }}>No slowest pages detected.</Typography>
+                              )}
+                           </div>
+                        </div>
+
+                        <div style={sidebarCardStyle}>
+                            <span style={sidebarLabelStyle}>ENDPOINT INTELLIGENCE</span>
+                            <OperationalTable 
+                                columns={[
+                                    { key: 'dimension', header: 'Resource', render: (v) => <span style={{ fontFamily: 'monospace', fontSize: '10px' }}>{v}</span> },
+                                    { key: 'p95', header: 'p95', width: '80px', align: 'right', render: (v) => <span style={{ fontWeight: 700 }}>{Math.round(v)}ms</span> }
+                                ]}
+                                data={apis.slice(5, 12)}
+                                isLoading={loading}
+                                isDense
+                            />
+                        </div>
+
+                                <div style={{ borderRadius: '12px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: '16px' }}>
+                           <span style={sidebarLabelStyle}>DEEP TRACE</span>
+                                    <div style={{ width: '48px', height: '48px', borderRadius: '16px', background: 'var(--bg-input)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#818cf8', border: '1px solid var(--border-input)' }}>
+                              <Search size={24} />
+                           </div>
+                           <div>
+                              <Typography variant="h3" noMargin>Trace Explorer</Typography>
+                              <Typography variant="caption" style={{ marginTop: '4px', display: 'block' }}>Analyze granular p99 request traces.</Typography>
+                           </div>
+                           <Button variant="primary" size="sm" style={{ width: '100%', borderRadius: '999px' }}>
+                               Start Deep Trace <ExternalLink size={14} style={{ marginLeft: '8px' }} />
+                            </Button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -254,52 +422,54 @@ export default function PerformancePage() {
                 subtitle={`Fingerprint: ${selectedAnomaly?.id || 'Unknown'}`}
             >
                 {selectedAnomaly && (
-                    <div className="space-y-8">
-                        <div className="p-4 bg-error/10 border border-error/20 rounded-2xl flex gap-3">
-                            <AlertTriangle className="text-error" size={24} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                        <div style={{ padding: '24px', background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', borderRadius: '16px', display: 'flex', gap: '16px' }}>
+                            <div style={{ padding: '12px', background: 'var(--bg-card)', borderRadius: '12px', color: '#f87171', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
+                                <AlertTriangle size={24} />
+                            </div>
                             <div>
-                                <Typography variant="body" weight="bold">Critical Performance Regression</Typography>
-                                <Typography variant="caption" className="text-text-secondary mt-1 block">
-                                    The system detected a {selectedAnomaly.deviation} deviation in {selectedAnomaly.metric} across {selectedAnomaly.scope}.
+                                <Typography variant="h3" style={{ color: '#f87171' }}>Performance Regression</Typography>
+                                <Typography variant="body" style={{ marginTop: '4px', display: 'block' }}>
+                                    A <span style={{ fontWeight: 700, color: '#f87171' }}>{selectedAnomaly.deviation}</span> deviation in <span style={{ fontWeight: 700 }}>{selectedAnomaly.metric}</span> was detected across <span style={{ fontWeight: 700 }}>{selectedAnomaly.scope}</span>.
                                 </Typography>
                             </div>
                         </div>
 
-                        <section className="space-y-4">
-                            <Typography variant="body" weight="bold" className="text-sm text-text-muted uppercase tracking-wider">Root Cause Attribution</Typography>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="p-4 bg-muted/20 border border-subtle rounded-2xl">
-                                    <Typography variant="micro" className="text-text-muted uppercase font-bold block mb-1">Primary Factor</Typography>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            <Typography variant="h3">Root Cause Attribution</Typography>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px' }}>
+                                <div style={{ padding: '16px', background: 'var(--bg-input)', border: '1px solid var(--border-card)', borderRadius: '12px' }}>
+                                    <Typography variant="micro" weight="bold" style={{ opacity: 0.6, marginBottom: '4px', display: 'block' }}>Metric</Typography>
                                     <Typography variant="body" weight="bold">{selectedAnomaly.metric}</Typography>
                                 </div>
-                                <div className="p-4 bg-muted/20 border border-subtle rounded-2xl">
-                                    <Typography variant="micro" className="text-text-muted uppercase font-bold block mb-1">Impacted Scope</Typography>
+                                <div style={{ padding: '16px', background: 'var(--bg-input)', border: '1px solid var(--border-card)', borderRadius: '12px' }}>
+                                    <Typography variant="micro" weight="bold" style={{ opacity: 0.6, marginBottom: '4px', display: 'block' }}>Scope</Typography>
                                     <Typography variant="body" weight="bold">{selectedAnomaly.scope}</Typography>
                                 </div>
                             </div>
-                        </section>
+                        </div>
 
-                        <section className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <Typography variant="body" weight="bold" className="text-sm text-text-muted uppercase tracking-wider">Historical Context</Typography>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Typography variant="h3">Historical Samples</Typography>
                                 <Badge variant="info">3 SAMPLES</Badge>
                             </div>
-                            <div className="space-y-2">
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 {[1, 2, 3].map(i => (
-                                    <div key={i} className="flex justify-between items-center p-3 border border-subtle rounded-xl bg-surface">
-                                        <div className="flex items-center gap-3">
-                                            <History size={16} className="text-text-muted" />
-                                            <Typography variant="body" className="text-xs">T - {i*10}m occurrence</Typography>
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', border: '1px solid var(--border-card)', borderRadius: '12px', background: 'var(--bg-card)' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                            <History size={16} style={{ color: 'var(--text-muted)' }} />
+                                            <Typography variant="caption">T - {i*10}m occurrence</Typography>
                                         </div>
-                                        <Typography variant="body" weight="bold" className="text-xs">{selectedAnomaly.deviation}</Typography>
+                                        <Typography variant="body" weight="bold" style={{ color: '#f87171' }}>{selectedAnomaly.deviation}</Typography>
                                     </div>
                                 ))}
                             </div>
-                        </section>
+                        </div>
 
-                        <div className="pt-8 flex gap-4">
-                            <button className="action-btn action-btn--primary flex-1">Acknowledge Anomaly</button>
-                            <button className="action-btn action-btn--outline flex-1">Open CloudTrace</button>
+                        <div style={{ paddingTop: '32px', display: 'flex', gap: '16px' }}>
+                            <Button variant="primary" style={{ flex: 1, borderRadius: '999px' }}>Acknowledge</Button>
+                            <Button variant="outline" style={{ flex: 1, borderRadius: '999px' }}>Open Trace</Button>
                         </div>
                     </div>
                 )}

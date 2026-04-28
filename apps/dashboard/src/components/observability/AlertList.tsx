@@ -15,7 +15,7 @@ interface AlertListProps {
   alerts: Alert[];
 }
 
-export const AlertList: React.FC<AlertListProps> = ({ alerts }) => {
+export const AlertList: React.FC<AlertListProps> = ({ alerts = [] }) => {
   return (
     <div className="space-y-4">
       {alerts.map((alert) => (

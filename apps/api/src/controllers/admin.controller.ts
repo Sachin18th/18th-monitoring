@@ -1,5 +1,6 @@
-import { InMemoryRelationalAdapter } from '../../../../packages/db/src/adapters/in-memory.adapter';
+import { InMemoryRelationalAdapter, GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
 import { AuthService } from '../services/auth.service';
+import { purge18thDigitech } from '../../../../packages/db/src/seeders/demo-seeder';
 
 const db = new InMemoryRelationalAdapter();
 
@@ -75,5 +76,19 @@ export const updatePlatformUserStatus = async (req: any, reply: any) => {
         return { success: true };
     } catch (e: any) {
         return reply.code(404).send({ error: e.message });
+    }
+};
+
+export const purgeDemoData = async (req: any, reply: any) => {
+    // Only Super Admins can purge demo data
+    if (req.user.role !== 'SUPER_ADMIN') {
+        return reply.code(403).send({ error: 'Forbidden', message: 'Only Super Admins can perform this action.' });
+    }
+
+    try {
+        purge18thDigitech(GlobalMemoryStore);
+        return { success: true, message: '18th Digitech demo data purged successfully.' };
+    } catch (e: any) {
+        return reply.code(500).send({ error: 'Purge failed', message: e.message });
     }
 };

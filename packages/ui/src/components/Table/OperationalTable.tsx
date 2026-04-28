@@ -8,8 +8,7 @@ import {
   TD 
 } from './index';
 import { InformationState } from '../Feedback/InformationState';
-import { ChevronRight, ArrowUpDown, MoreHorizontal } from 'lucide-react';
-import { Button } from '../Button';
+import { ArrowUpDown } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -54,60 +53,83 @@ export function OperationalTable<T extends { id?: string | number }>({
   className
 }: OperationalTableProps<T>) {
   if (isLoading) {
-    return <InformationState type="loading" />;
+    return (
+      <div className="flex flex-col gap-4 w-full p-8 animate-pulse">
+        <div className="h-10 w-full bg-bg-muted rounded-lg" />
+        {[1, 2, 3, 4, 5].map(i => (
+          <div key={i} className="h-12 w-full bg-bg-muted/50 rounded-lg" />
+        ))}
+      </div>
+    );
   }
 
-  if (isEmpty || (!data.length && !isLoading)) {
-    return <InformationState type="empty" title={emptyTitle} description={emptyDescription} />;
+  if (isEmpty || (!data?.length && !isLoading)) {
+    return (
+      <div className="p-12 border border-dashed border-border-subtle rounded-2xl flex flex-col items-center justify-center text-center gap-4 bg-bg-muted/10">
+        <div className="p-4 bg-bg-surface rounded-full shadow-sm text-text-muted">
+           <InformationState type="empty" title={emptyTitle} description={emptyDescription} />
+        </div>
+      </div>
+    );
   }
 
   return (
-    <Table className={cn(className, isDense && 'ui-table--dense')}>
-      <THead>
-        <TR>
-          {columns.map((col) => (
-            <TH 
-              key={col.key} 
-              style={{ width: col.width, textAlign: col.align || 'left' }}
-            >
-              <div className="flex items-center gap-2">
-                {col.header}
-                {col.sortable && <ArrowUpDown size={12} className="text-text-muted" />}
-              </div>
-            </TH>
-          ))}
-          {rowActions && <TH style={{ width: '40px' }} />}
-        </TR>
-      </THead>
-      <TBody>
-        {data.map((item, index) => {
-          if (!item) return null;
-          const rowKey = getRowKey ? getRowKey(item) : item.id || index;
-          return (
-            <TR 
-              key={rowKey} 
-              onClick={onRowClick ? () => onRowClick(item) : undefined}
-              className={onRowClick ? 'cursor-pointer' : ''}
-            >
+    <div className={cn('ui-table-container', className)}>
+      <Table className={cn(isDense && 'ui-table--dense')}>
+        <THead>
+          <TR>
             {columns.map((col) => (
-              <TD 
+              <TH 
                 key={col.key} 
-                style={{ textAlign: col.align || 'left' }}
+                style={{ width: col.width, textAlign: col.align || 'left' }}
               >
-                {col.render ? col.render((item as any)[col.key], item) : (item as any)[col.key]}
-              </TD>
-            ))}
-            {rowActions && (
-              <TD className="actions-cell">
-                <div className="flex justify-end">
-                  {rowActions(item)}
+                <div className={cn(
+                  "flex items-center gap-2",
+                  col.align === 'right' && "justify-end",
+                  col.align === 'center' && "justify-center"
+                )}>
+                  {col.header}
+                  {col.sortable && <ArrowUpDown size={12} className="opacity-40" />}
                 </div>
-              </TD>
-            )}
+              </TH>
+            ))}
+            {rowActions && <TH style={{ width: '60px' }} />}
           </TR>
-          );
-        })}
-      </TBody>
-    </Table>
+        </THead>
+        <TBody>
+          {data.map((item, index) => {
+            if (!item) return null;
+            const rowKey = getRowKey ? getRowKey(item) : item.id || index;
+            return (
+              <TR 
+                key={rowKey} 
+                onClick={onRowClick ? () => onRowClick(item) : undefined}
+                className={cn(
+                  'group transition-colors',
+                  onRowClick && 'cursor-pointer hover:bg-primary/5'
+                )}
+              >
+                {columns.map((col) => (
+                  <TD 
+                    key={col.key} 
+                    style={{ textAlign: col.align || 'left' }}
+                    className="group-hover:text-text-primary transition-colors"
+                  >
+                    {col.render ? col.render((item as any)[col.key], item) : (item as any)[col.key]}
+                  </TD>
+                ))}
+                {rowActions && (
+                  <TD className="actions-cell">
+                    <div className="flex justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                      {rowActions(item)}
+                    </div>
+                  </TD>
+                )}
+              </TR>
+            );
+          })}
+        </TBody>
+      </Table>
+    </div>
   );
 }

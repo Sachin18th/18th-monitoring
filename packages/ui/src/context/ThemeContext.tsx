@@ -12,17 +12,13 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setThemeState] = useState<Theme>('light');
+  const [theme, setThemeState] = useState<Theme>('dark');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    // Check local storage or system preference
     const savedTheme = localStorage.getItem('theme') as Theme;
-    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    
-    const initialTheme = savedTheme || systemTheme;
-    
-    // Apply initial theme
+    const initialTheme = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'dark';
+
     setTheme(initialTheme);
     setMounted(true);
   }, []);
@@ -30,6 +26,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);
     if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('dark', newTheme === 'dark');
       document.documentElement.setAttribute('data-theme', newTheme);
       localStorage.setItem('theme', newTheme);
     }
@@ -39,6 +36,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setThemeState((prev) => {
       const next = prev === 'light' ? 'dark' : 'light';
       if (typeof document !== 'undefined') {
+        document.documentElement.classList.toggle('dark', next === 'dark');
         document.documentElement.setAttribute('data-theme', next);
         localStorage.setItem('theme', next);
       }

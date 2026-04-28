@@ -10,7 +10,7 @@ import { TOPICS } from './config/topics';
 import { dashboardRoutes } from './routes/dashboard';
 import { login, getMe, getProjects } from './controllers/auth.controller';
 import { createProject, updateProject } from './controllers/project.controller';
-import { listPlatformUsers, createPlatformUser, updatePlatformUserStatus } from './controllers/admin.controller';
+import { listPlatformUsers, createPlatformUser, updatePlatformUserStatus, purgeDemoData } from './controllers/admin.controller';
 import { tenantAuthHandler } from './middlewares/auth.middleware';
 import { viewOnlyGuard, roleGuard } from './middlewares/rbac.middleware';
 import { rateLimiter } from './middlewares/rate-limiter.middleware';
@@ -230,6 +230,8 @@ export const bootstrapApi = async () => {
     server.get('/api/v1/admin/projects/:projectId/customers',   { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, listPlatformUsers);
     server.post('/api/v1/admin/projects/:projectId/customers',  { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, createPlatformUser);
     server.patch('/api/v1/admin/customers/:userId/status',      { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, updatePlatformUserStatus);
+    
+    server.post('/api/v1/admin/demo/purge', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, purgeDemoData);
 
     // ── Health & Readiness Probes (K8s / LB) ───────────────────────────────
     server.get('/health', async (_req, reply) => {

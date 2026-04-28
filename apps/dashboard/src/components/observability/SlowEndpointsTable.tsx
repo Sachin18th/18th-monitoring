@@ -17,10 +17,13 @@ interface SlowEndpointsTableProps {
 
 export const SlowEndpointsTable: React.FC<SlowEndpointsTableProps> = ({ endpoints }) => {
   return (
-    <Card className="p-6 bg-slate-900/50 backdrop-blur-xl border-slate-800">
+    <Card
+      className="p-6"
+      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-card)', boxShadow: 'none' }}
+    >
       <div className="flex justify-between items-center mb-6">
-        <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Top Slow Endpoints</h3>
-        <span className="text-[10px] text-slate-500 flex items-center gap-1">
+        <h3 className="text-sm font-medium uppercase tracking-wider" style={{ color: 'var(--text-label)' }}>Top Slow Endpoints</h3>
+        <span className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
           <Clock className="w-3 h-3" /> Last 60 Minutes
         </span>
       </div>
@@ -28,7 +31,7 @@ export const SlowEndpointsTable: React.FC<SlowEndpointsTableProps> = ({ endpoint
       <div className="overflow-x-auto">
         <table className="w-full text-left">
           <thead>
-            <tr className="border-b border-slate-800 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+            <tr className="text-[10px] font-bold uppercase tracking-widest" style={{ borderBottom: '1px solid var(--border-card)', color: 'var(--text-label)' }}>
               <th className="pb-3">METHOD</th>
               <th className="pb-3">ROUTE</th>
               <th className="pb-3 text-right">P95</th>
@@ -37,9 +40,9 @@ export const SlowEndpointsTable: React.FC<SlowEndpointsTableProps> = ({ endpoint
               <th className="pb-3 text-right">CALLS</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-800/50">
+          <tbody>
             {endpoints.map((item, idx) => (
-              <tr key={idx} className="group hover:bg-white/5 transition-colors">
+              <tr key={idx} className="group transition-colors" style={{ borderBottom: '1px solid var(--border-card)' }}>
                 <td className="py-3 pr-4">
                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
                     item.method === 'POST' ? 'bg-indigo-500/10 text-indigo-400' :
@@ -49,20 +52,20 @@ export const SlowEndpointsTable: React.FC<SlowEndpointsTableProps> = ({ endpoint
                     {item.method}
                   </span>
                 </td>
-                <td className="py-3 text-xs font-mono text-slate-300 truncate max-w-[200px]">
+                <td className="py-3 text-xs font-mono truncate max-w-[200px]" style={{ color: 'var(--text-primary)' }}>
                   {item.route}
                 </td>
-                <td className="py-3 text-xs text-right font-medium text-slate-300">
+                <td className="py-3 text-xs text-right font-medium" style={{ color: 'var(--text-primary)' }}>
                   {item.p95}ms
                 </td>
-                <td className={`py-3 text-xs text-right font-bold ${item.p99 > 1000 ? 'text-rose-400' : 'text-slate-300'}`}>
+                <td className={`py-3 text-xs text-right font-bold ${item.p99 > 1000 ? 'text-rose-400' : ''}`} style={item.p99 > 1000 ? undefined : { color: 'var(--text-primary)' }}>
                   {item.p99}ms
                 </td>
                 <td className={`py-3 text-xs text-right font-medium ${item.errorRate > 1 ? 'text-rose-400' : 'text-emerald-400'}`}>
                   {item.errorRate}%
                 </td>
-                <td className="py-3 text-xs text-right text-slate-500">
-                  {item.calls.toLocaleString()}
+                <td className="py-3 text-xs text-right" style={{ color: 'var(--text-muted)' }}>
+                  {item.calls?.toLocaleString() || '0'}
                 </td>
               </tr>
             ))}

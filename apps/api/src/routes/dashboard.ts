@@ -46,6 +46,7 @@ export const dashboardRoutes = async (fastify: any) => {
     
     fastify.get('/summaries', getSummaries);
     // Alerts are now handled via monitoringRoutes to avoid duplication
+    // fastify.get('/alerts', getAlerts);
     fastify.get('/audit', getAuditLogs);
     fastify.get('/activity', getActivityFeed);
     fastify.get('/governance', getGovernanceConfig);

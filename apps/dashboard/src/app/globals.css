@@ -1,5 +1,6 @@
 @import "@kpi-platform/ui/styles";
 @import "tailwindcss";
+@source "../../../../packages/ui/src";
 
 /* ==========================================================================
    Tailwind v4 Theme Bridge
@@ -21,11 +22,20 @@
   --color-muted: var(--bg-muted);
   --color-accent: var(--bg-accent);
   --color-card: var(--bg-card);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-base: var(--bg-base);
+  --color-bg-muted: var(--bg-muted);
+  --color-bg-accent: var(--bg-accent);
+  --color-bg-card: var(--bg-card);
+  --color-surface-overlay: color-mix(in srgb, var(--bg-surface) 92%, transparent);
 
   /* ---- Borders ---- */
   --color-subtle: var(--border-subtle);
   --color-strong: var(--border-strong);
   --color-interactive: var(--border-interactive);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-border-interactive: var(--border-interactive);
 
   /* ---- Text ---- */
   --color-text-primary: var(--text-primary);
@@ -76,12 +86,68 @@
 }
 
 /* ==========================================================================
+   Application Theme Tokens
+   ========================================================================== */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+  --bg-base: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-muted: #f1f5f9;
+  --bg-accent: #eff6ff;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.12);
+  --bg-page: #f8fafc;
+  --bg-card-hover: #f1f5f9;
+  --border-card: rgba(0, 0, 0, 0.08);
+  --text-label: rgba(0, 0, 0, 0.35);
+  --bg-nav: #ffffff;
+  --border-nav: rgba(0, 0, 0, 0.06);
+  --bg-sidebar: #f8fafc;
+  --border-sidebar: rgba(0, 0, 0, 0.06);
+  --bg-input: rgba(0, 0, 0, 0.04);
+  --border-input: rgba(0, 0, 0, 0.1);
+  --bg-badge-active: rgba(0, 0, 0, 0.06);
+}
+
+.dark,
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg-base: #0a0c10;
+  --bg-surface: #0d1017;
+  --bg-card: #111318;
+  --bg-muted: #161b26;
+  --bg-accent: #1e2a3d;
+  --text-primary: #f1f5f9;
+  --text-secondary: #64748b;
+  --text-muted: rgba(255, 255, 255, 0.35);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --bg-page: #0a0c10;
+  --bg-card-hover: #161b26;
+  --border-card: rgba(255, 255, 255, 0.08);
+  --text-label: rgba(255, 255, 255, 0.35);
+  --bg-nav: #0d1017;
+  --border-nav: rgba(255, 255, 255, 0.06);
+  --bg-sidebar: #0d1017;
+  --border-sidebar: rgba(255, 255, 255, 0.06);
+  --bg-input: rgba(255, 255, 255, 0.05);
+  --border-input: rgba(255, 255, 255, 0.08);
+  --bg-badge-active: rgba(255, 255, 255, 0.08);
+}
+
+/* ==========================================================================
    Base Reset & Typography
    ========================================================================== */
 
 html, body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background-color: var(--bg-base);
+  background-color: var(--bg-page);
   color: var(--text-primary);
   min-height: 100%;
   line-height: 1.5;
@@ -91,6 +157,9 @@ html, body {
 
 body {
   margin: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 a {

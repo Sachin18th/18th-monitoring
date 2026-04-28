@@ -31,8 +31,8 @@ export interface OrderDetailDrawerContentProps {
 
 export const OrderDetailDrawerContent: React.FC<OrderDetailDrawerContentProps> = ({
   order,
-  timeline,
-  reconciliation,
+  timeline = [],
+  reconciliation = [],
   onAction
 }) => {
   if (!order) return <InformationState type="loading" />;

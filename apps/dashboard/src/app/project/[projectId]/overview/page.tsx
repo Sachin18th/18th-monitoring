@@ -3,34 +3,20 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  ArrowRight,
+  Bell,
   AlertTriangle,
   Activity,
-  Bell,
-  BrainCircuit,
-  Clock,
-  Database,
   Gauge,
   LayoutDashboard,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
-  TrendingUp,
   Package,
   Users,
-  Layers3,
   ChevronRight,
+  Flame,
+  Database,
 } from 'lucide-react';
-import {
-  Badge,
-  Button,
-  Card,
-  OperationalTable,
-  TimeRangeSelector,
-  TimeRangeValue,
-  Typography,
-  Column,
-} from '@kpi-platform/ui';
+import { type TimeRangeValue } from '@kpi-platform/ui';
 import { useAuth } from '../../../../context/AuthContext';
 import { PerformanceChart } from '../../../../components/ui/PerformanceChart';
 
@@ -58,44 +44,24 @@ type StatSummary = {
   revenueAtRisk?: number;
 };
 
-const moduleToneClasses = {
-  healthy: 'border-success/20 bg-success/10 text-success',
-  warning: 'border-warning/20 bg-warning/10 text-warning',
-  critical: 'border-error/20 bg-error/10 text-error',
-  stale: 'border-stale/20 bg-stale/10 text-stale',
-} as const;
-
-const severityColors = {
-  low: 'bg-success',
-  medium: 'bg-warning',
-  high: 'bg-error',
-  critical: 'bg-error',
-} as const;
-
-function formatTime(value?: string) {
-  if (!value) return 'Now';
-  try {
-    return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } catch {
-    return 'Now';
-  }
-}
-
 function formatCount(value?: number | string) {
   const numberValue = Number(value || 0);
   return new Intl.NumberFormat('en-US').format(Number.isFinite(numberValue) ? numberValue : 0);
 }
 
-function trendSeries(range: TimeRangeValue) {
-  const scale = range === '7d' ? 1.08 : range === '30d' ? 1.18 : 1;
+function formatRPM(value?: number | string) {
+  const numberValue = Number(value || 0);
+  return Number.isFinite(numberValue) ? numberValue.toFixed(2) : '0.00';
+}
 
-  return Array.from({ length: 12 }).map((_, index) => ({
-    timestamp: `${String(index * 2).padStart(2, '0')}:00`,
-    pageLoadTime: 180 + index * 9 * scale + Math.sin(index / 2) * 14,
-    ttfb: 65 + index * 3 * scale + Math.cos(index / 2) * 5,
-    fcp: 120 + index * 5 * scale + Math.sin(index / 3) * 7,
-    lcp: 310 + index * 12 * scale + Math.cos(index / 4) * 12,
-  }));
+function formatAPIReliability(value?: number | string) {
+  const numberValue = Number(value || 0);
+  const safeValue = Number.isFinite(numberValue) ? numberValue : 0;
+  return `${safeValue.toFixed(1)}%`;
+}
+
+function formatLiveSessions(value?: number | string) {
+  return formatCount(value);
 }
 
 function deriveHealth(metrics: Metric[], stats: StatSummary | null) {
@@ -116,127 +82,71 @@ function deriveHealth(metrics: Metric[], stats: StatSummary | null) {
   const score = Math.max(0, Math.min(100, scoreFromMetric - failedCount * 2 - delayedCount * 1.5));
 
   if (score < 90) {
-    return { label: 'System degraded', tone: 'critical' as const, score };
+    return { label: 'Critical', status: 'critical' as const, score };
   }
   if (score < 97) {
-    return { label: 'System under watch', tone: 'warning' as const, score };
+    return { label: 'Warning', status: 'warning' as const, score };
   }
-  return { label: 'All systems nominal', tone: 'healthy' as const, score };
+  return { label: 'Healthy', status: 'success' as const, score };
 }
 
-function KPIBlock({
-  title,
-  value,
-  subtitle,
-  ctaLabel,
-  ctaHref,
-  ctaTone = 'default',
-  onCtaClick,
-}: {
-  title: string;
-  value: string;
-  subtitle: string;
-  ctaLabel?: string;
-  ctaHref?: string;
-  ctaTone?: 'default' | 'critical' | 'success';
-  onCtaClick?: () => void;
-}) {
-  const toneClasses = {
-    default: 'text-primary border-primary/15 bg-primary/8',
-    critical: 'text-error border-error/15 bg-error/8',
-    success: 'text-success border-success/15 bg-success/8',
-  } as const;
-
-  return (
-    <div className="group flex h-full min-h-[160px] flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-xl hover:shadow-primary/5">
-      <div className="space-y-3">
-        <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-text-muted">{title}</div>
-        <div className="text-3xl font-black tracking-tight text-text-primary">{value}</div>
-        <div className="text-sm leading-6 text-text-muted">{subtitle}</div>
-      </div>
-
-      {ctaLabel && (
-        <div className="pt-4">
-          <button
-            type="button"
-            onClick={onCtaClick}
-            className={`ml-auto inline-flex items-center gap-2 rounded-full border px-3 py-2 text-[11px] font-black uppercase tracking-[0.16em] transition-all duration-150 active:scale-[0.98] ${toneClasses[ctaTone]}`}
-          >
-            {ctaLabel}
-            <ArrowRight size={14} />
-          </button>
-        </div>
-      )}
-    </div>
-  );
+function metricStatusStyle(status: 'success' | 'warning' | 'critical' | 'stale') {
+  if (status === 'critical') {
+    return { statusBg: 'var(--error-bg)', statusColor: 'var(--error-text)' };
+  }
+  if (status === 'warning') {
+    return { statusBg: 'var(--warning-bg)', statusColor: 'var(--warning-text)' };
+  }
+  if (status === 'stale') {
+    return { statusBg: 'var(--bg-input)', statusColor: 'var(--text-secondary)' };
+  }
+  return { statusBg: 'var(--success-bg)', statusColor: 'var(--success-text)' };
 }
 
-function SubsystemCard({
-  name,
-  status,
-  metric,
-  subMetric,
-  icon: Icon,
-  onClick,
-}: {
-  name: string;
-  status: 'healthy' | 'warning' | 'critical' | 'stale';
-  metric: string;
-  subMetric: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group flex h-full min-h-[210px] flex-col justify-between rounded-2xl border border-border-subtle bg-bg-surface p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-primary/25 hover:shadow-xl hover:shadow-primary/5 active:scale-[0.99]"
-    >
-      <div className="space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className={`rounded-xl border p-2.5 transition-colors ${moduleToneClasses[status]} group-hover:shadow-sm`}>
-              <Icon size={18} />
-            </div>
-            <div>
-              <div className="text-base font-semibold tracking-tight text-text-primary">{name}</div>
-              <div className="text-[10px] font-black uppercase tracking-[0.16em] text-text-muted">Domain snapshot</div>
-            </div>
-          </div>
-          <Badge
-            variant={status === 'healthy' ? 'success' : status === 'warning' ? 'warning' : status === 'critical' ? 'error' : 'stale'}
-            size="sm"
-            dot
-            className="font-black"
-          >
-            {status}
-          </Badge>
-        </div>
+const pageStyle: React.CSSProperties = {
+  padding: '24px 28px',
+  maxWidth: '1280px',
+  margin: '0 auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '24px',
+  overflow: 'visible',
+  boxSizing: 'border-box',
+};
 
-        <div className="space-y-2">
-          <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-muted">Primary Metric</div>
-          <div className="text-2xl font-black tracking-tight text-text-primary">{metric}</div>
-        </div>
+const sectionHeaderInfoStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+};
 
-        <div className="space-y-1 border-t border-border-subtle/70 pt-3">
-          <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-muted">Secondary Metric</div>
-          <div className="text-sm font-medium text-text-secondary">{subMetric}</div>
-        </div>
-      </div>
+const sectionTitleStyle: React.CSSProperties = {
+  fontSize: '15px',
+  fontWeight: 500,
+  color: 'var(--text-primary)',
+  margin: 0,
+};
 
-      <div className="mt-5 flex items-center justify-between border-t border-border-subtle/60 pt-4">
-        <span className="text-[11px] font-black uppercase tracking-[0.16em] text-primary">Domain deep dive</span>
-        <ChevronRight size={16} className="text-text-muted transition-transform duration-200 group-hover:translate-x-1 group-hover:text-primary" />
-      </div>
-    </button>
-  );
-}
+const sectionSubtitleStyle: React.CSSProperties = {
+  fontSize: '12px',
+  color: 'var(--text-muted)',
+  lineHeight: 1.6,
+  margin: 0,
+};
+
+const timeRangeOptions: Array<{ label: string; value: TimeRangeValue }> = [
+  { label: '24H', value: '24h' },
+  { label: '7D', value: '7d' },
+  { label: '30D', value: '30d' },
+  { label: '90D', value: '90d' },
+  { label: 'ALL', value: 'all' },
+];
 
 export default function ProjectOverviewPage() {
   const params = useParams();
   const router = useRouter();
   const projectId = params.projectId as string;
-  const { token, apiFetch, user, outageStatus, lastUpdated } = useAuth();
+  const { token, apiFetch, user, lastUpdated } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<Metric[]>([]);
@@ -244,9 +154,7 @@ export default function ProjectOverviewPage() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [stats, setStats] = useState<StatSummary | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>('24h');
-  const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
-  const isExpired = outageStatus === 'expired';
   const activeAlerts = useMemo(() => alerts.filter((alert) => alert.severity && alert.severity !== 'low'), [alerts]);
   const health = useMemo(() => deriveHealth(metrics, stats), [metrics, stats]);
 
@@ -285,457 +193,615 @@ export default function ProjectOverviewPage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  const alertColumns: Column<any>[] = [
+  const routeActivity = () => {
+    router.push(`/project/${projectId}/management/audit`);
+  };
+
+  const resolveModule = (href: string) => {
+    router.push(href);
+  };
+
+  const syncMetric = metrics.find((m) => m.kpiName === 'syncSuccessRate');
+  const pageLoadMetric = metrics.find((m) => m.kpiName === 'pageLoadTime');
+  const liveUserMetric = metrics.find((m) => m.kpiName === 'activeUsers');
+
+  const metricCards = [
     {
-      key: 'severity',
-      header: 'Level',
-      width: '100px',
-      render: (val) => (
-        <div className="flex items-center gap-2 px-2">
-          <div className={`h-2 w-2 rounded-full ${val === 'high' || val === 'critical' ? 'bg-error' : 'bg-warning'} animate-pulse`} />
-          <Badge variant={val === 'high' || val === 'critical' ? 'error' : 'warning'} size="sm" className="font-black">
-            {String(val || '').toUpperCase()}
-          </Badge>
-        </div>
-      ),
+      label: 'System Health Score',
+      value: `${health.score.toFixed(1)}%`,
+      unit: '',
+      status: health.label,
+      contextLabel: 'Overall health',
+      icon: health.status === 'success' ? ShieldCheck : AlertTriangle,
+      tone: health.status,
     },
     {
-      key: 'message',
-      header: 'Signal',
-      render: (val, row) => (
-        <div className="py-1">
-          <Typography variant="body" weight="bold" className="text-sm text-text-primary" noMargin>
-            {row.kpiName}
-          </Typography>
-          <Typography variant="micro" className="text-text-muted">
-            {val}
-          </Typography>
-        </div>
-      ),
+      label: 'Order Velocity',
+      value: formatRPM(stats?.ordersPerMinute),
+      unit: 'RPM',
+      status: 'Healthy',
+      contextLabel: 'Throughput',
+      icon: Package,
+      tone: 'success' as const,
     },
     {
-      key: 'timestamp',
-      header: 'Detected',
-      width: '110px',
-      align: 'right',
-      render: (val) => (
-        <span className="font-mono text-[11px] text-text-muted">
-          {formatTime(val)}
-        </span>
-      ),
+      label: 'API Reliability',
+      value: formatAPIReliability(syncMetric?.value),
+      unit: '',
+      status: syncMetric?.state === 'critical' ? 'Critical' : 'Healthy',
+      contextLabel: 'Sync success',
+      icon: RefreshCw,
+      tone: syncMetric?.state === 'critical' ? 'critical' as const : 'success' as const,
+    },
+    {
+      label: 'Latency P95',
+      value: `${pageLoadMetric?.value || 0}`,
+      unit: 'ms',
+      status: Number(pageLoadMetric?.value || 0) > 2000 ? 'Warning' : 'Healthy',
+      contextLabel: 'User response',
+      icon: Activity,
+      tone: Number(pageLoadMetric?.value || 0) > 2000 ? 'warning' as const : 'success' as const,
+    },
+    {
+      label: 'Live Sessions',
+      value: formatLiveSessions(liveUserMetric?.value),
+      unit: '',
+      status: 'Healthy',
+      contextLabel: 'Active users',
+      icon: Users,
+      tone: 'success' as const,
+    },
+  ];
+
+  const executiveCards = [
+    {
+      label: 'SLA Adherence',
+      badge: '99.4%',
+      value: 'Stable',
+      description: 'All monitored endpoints are performing within target thresholds.',
+      actionLabel: '',
+    },
+    {
+      label: 'Revenue at Risk',
+      badge: `$${formatCount((stats?.revenueAtRisk ?? (stats?.delayedCount || 0) * 850))}`,
+      value: stats?.failedCount ? 'At Risk' : 'Protected',
+      description: `Derived from ${stats?.delayedCount || 0} delayed transactions.`,
+      actionLabel: 'Resolve Exceptions',
+    },
+  ];
+
+  const domainSnapshots = [
+    {
+      name: 'Integrations',
+      icon: RefreshCw,
+      path: 'integrations',
+      description: 'Deep intelligence on reliability and integrations throughput.',
+    },
+    {
+      name: 'Orders',
+      icon: Package,
+      path: 'orders',
+      description: 'Deep intelligence on reliability and orders throughput.',
+    },
+    {
+      name: 'Performance',
+      icon: Activity,
+      path: 'performance',
+      description: 'Deep intelligence on reliability and performance throughput.',
+    },
+    {
+      name: 'Customers',
+      icon: Users,
+      path: 'customers',
+      description: 'Deep intelligence on reliability and customers throughput.',
     },
   ];
 
   if (loading && metrics.length === 0) {
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-6 text-center animate-pulse">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-bg-muted">
-          <BrainCircuit size={32} className="text-text-muted" />
+      <div
+        style={{
+          ...pageStyle,
+          minHeight: '60vh',
+          alignItems: 'center',
+          justifyContent: 'center',
+          textAlign: 'center',
+        }}
+      >
+        <div
+          style={{
+            width: '72px',
+            height: '72px',
+            borderRadius: '24px',
+            border: '1px solid var(--border-card)',
+            background: 'var(--bg-card)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxSizing: 'border-box',
+          }}
+        >
+          <RefreshCw size={28} style={{ color: 'var(--text-primary)', animation: 'spin 1s linear infinite' }} />
         </div>
-        <div className="space-y-2">
-          <div className="mx-auto h-6 w-56 rounded-full bg-bg-muted" />
-          <div className="mx-auto h-4 w-72 rounded-full bg-bg-muted/70" />
-        </div>
+        <p style={{ fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 4px' }}>Initializing Control Tower</p>
+        <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0 }}>
+          Synchronizing live telemetry from {projectId.toUpperCase()}...
+        </p>
       </div>
     );
   }
 
-  const subsystemCards = [
-    {
-      name: 'Integrations',
-      status: metrics.find((metric) => metric.kpiName === 'syncSuccessRate')?.state || 'healthy',
-      metric: `${metrics.find((metric) => metric.kpiName === 'syncSuccessRate')?.value || 0}%`,
-      subMetric: `Reliability • ${metrics.find((metric) => metric.kpiName === 'syncSuccessRate')?.trend || 'Stable'}`,
-      icon: RefreshCw,
-      href: `/project/${projectId}/integrations`,
-    },
-    {
-      name: 'Orders',
-      status: stats?.failedCount ? 'critical' : stats?.delayedCount ? 'warning' : 'healthy',
-      metric: `${stats?.ordersPerMinute || '0.00'} RPM`,
-      subMetric: `Delayed ${stats?.delayedCount || 0} • Failed ${stats?.failedCount || 0}`,
-      icon: Package,
-      href: `/project/${projectId}/orders`,
-    },
-    {
-      name: 'Performance',
-      status: metrics.find((metric) => metric.kpiName === 'errorRatePct')?.state || 'healthy',
-      metric: `${metrics.find((metric) => metric.kpiName === 'pageLoadTime')?.value || 0}ms`,
-      subMetric: `Error rate • ${metrics.find((metric) => metric.kpiName === 'errorRatePct')?.value || 0}%`,
-      icon: Activity,
-      href: `/project/${projectId}/performance`,
-    },
-    {
-      name: 'Customers',
-      status: 'healthy',
-      metric: `${metrics.find((metric) => metric.kpiName === 'activeUsers')?.value || 0}`,
-      subMetric: `Live sessions • Engaged users`,
-      icon: Users,
-      href: `/project/${projectId}/customers`,
-    },
-  ] as const;
-
-  const routeActivity = () => {
-    setLoadingAction('activity');
-    router.push(`/project/${projectId}/management/audit`);
-  };
-
-  const resolveModule = (href: string, id: string) => {
-    setLoadingAction(id);
-    router.push(href);
-  };
-
-  const resolveKpi = (kpiKey: string) => {
-    setLoadingAction(kpiKey);
-    router.push(`/project/${projectId}/kpi/${kpiKey}`);
-  };
-
   return (
-    <div className="mx-auto max-w-[1440px] space-y-8 px-4 pb-20 pt-4 sm:px-6 lg:px-8">
-      <header className="grid grid-cols-1 gap-4 border-b border-border-subtle/50 pb-4 xl:grid-cols-[1.4fr_auto] xl:items-end">
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-2xl border border-border-subtle bg-bg-surface p-2.5 text-primary shadow-sm">
-              <ShieldCheck size={22} />
-            </div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-[28px] font-semibold tracking-tight text-text-primary sm:text-[30px]">Control Tower</h1>
-              <span className="inline-flex h-2 w-2 rounded-full bg-success shadow-[0_0_0_4px_rgba(34,197,94,0.12)]" />
-            </div>
-            <span className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-success">
-              Live
-            </span>
+    <div style={pageStyle}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: '24px',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+          <div
+            style={{
+              width: '52px',
+              height: '52px',
+              borderRadius: '16px',
+              background: 'rgba(59,130,246,0.1)',
+              border: '1px solid rgba(59,130,246,0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              boxSizing: 'border-box',
+            }}
+          >
+            <LayoutDashboard style={{ width: '22px', height: '22px', color: '#3b82f6' }} />
           </div>
-          <p className="max-w-2xl text-sm leading-6 text-text-muted">
-            Unified executive observability and operational oversight for {user?.name || 'the current operator'}.
-          </p>
+
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 4px' }}>Control Tower</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', marginBottom: '8px', flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  padding: '2px 8px',
+                  borderRadius: '999px',
+                  fontSize: '10px',
+                  background: 'var(--success-bg)',
+                  color: 'var(--success-text)',
+                  fontWeight: 500,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                LIVE
+              </span>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{user?.name || '18th Super Admin'}</span>
+            </div>
+            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+              Unified executive observability and operational oversight for{' '}
+              <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{user?.name || 'the current operator'}</span>.
+            </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-          <div className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-text-muted shadow-sm">
-            <Database size={12} className="text-primary" />
-            Env {projectId.toUpperCase()}
-          </div>
-          <div className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] shadow-sm ${isExpired ? 'border-stale/20 bg-stale/10 text-stale' : 'border-success/20 bg-success/10 text-success'}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${isExpired ? 'bg-stale' : 'bg-success'} animate-pulse`} />
-            {isExpired ? 'Cached feed' : 'Live feed active'}
-          </div>
-          <TimeRangeSelector value={timeRange} onChange={setTimeRange} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {timeRangeOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => setTimeRange(option.value)}
+              style={{
+                padding: '5px 10px',
+                borderRadius: '6px',
+                fontSize: '12px',
+                border: '1px solid var(--border-card)',
+                background: timeRange === option.value ? 'var(--bg-badge-active)' : 'transparent',
+                fontWeight: timeRange === option.value ? 500 : 400,
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                boxSizing: 'border-box',
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
           <button
             type="button"
             onClick={loadData}
-            className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-border-subtle bg-bg-surface text-text-muted transition-all duration-150 hover:border-primary/25 hover:text-primary hover:shadow-md active:scale-[0.98]"
-            aria-label="Refresh control tower"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '5px 10px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              border: '1px solid var(--border-card)',
+              background: 'transparent',
+              color: 'var(--text-primary)',
+              cursor: 'pointer',
+              boxSizing: 'border-box',
+            }}
           >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw style={{ width: '14px', height: '14px', animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+            Sync
           </button>
         </div>
-      </header>
+      </div>
 
-      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.15fr_1.85fr]">
-        <Card className={`h-full rounded-3xl border-border-subtle/60 p-6 shadow-sm ${moduleToneClasses[health.tone]}`}>
-          <div className="flex h-full items-center gap-5">
-            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl border border-border-subtle bg-bg-surface shadow-sm">
-              {health.tone === 'healthy' ? <ShieldCheck size={30} className="text-success" /> : <AlertTriangle size={30} className="text-warning" />}
-            </div>
-            <div className="min-w-0 space-y-2">
-              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-text-muted">Primary Health</div>
-              <div className="text-2xl font-semibold tracking-tight text-text-primary">{health.label}</div>
-              <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted">
-                <span className="font-mono font-semibold text-text-primary">{health.score.toFixed(1)}%</span>
-                <span>All systems nominal baseline at a glance.</span>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(5, 1fr)',
+          gap: '16px',
+          overflow: 'visible',
+        }}
+      >
+        {metricCards.map((item) => {
+          const Icon = item.icon;
+          const { statusBg, statusColor } = metricStatusStyle(item.tone);
+
+          return (
+            <div
+              key={item.label}
+              style={{
+                borderRadius: '12px',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                padding: '20px 22px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                minHeight: '130px',
+                overflow: 'visible',
+                boxSizing: 'border-box',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500 }}>{item.label}</span>
+                <Icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-muted)' }} />
               </div>
-            </div>
-          </div>
-        </Card>
 
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          {[
-            { label: 'Integrations', metric: `${metrics.find((m) => m.kpiName === 'syncSuccessRate')?.value || 0}%`, status: metrics.find((m) => m.kpiName === 'syncSuccessRate')?.state || 'healthy' },
-            { label: 'Orders', metric: `${stats?.ordersPerMinute || '0.00'} RPM`, status: stats?.failedCount ? 'critical' : stats?.delayedCount ? 'warning' : 'healthy' },
-            { label: 'Performance', metric: `${metrics.find((m) => m.kpiName === 'pageLoadTime')?.value || 0}ms`, status: metrics.find((m) => m.kpiName === 'errorRatePct')?.state || 'healthy' },
-            { label: 'Customers', metric: `${metrics.find((m) => m.kpiName === 'activeUsers')?.value || 0}`, status: 'healthy' as const },
-          ].map((item) => (
-            <Card key={item.label} className="rounded-3xl border-border-subtle/60 p-5 shadow-sm">
-              <div className="flex h-full flex-col justify-between gap-4">
-                <div className="space-y-2">
-                  <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-muted">{item.label}</div>
-                  <div className="text-2xl font-black tracking-tight text-text-primary">{item.metric}</div>
-                </div>
-                <div className={`inline-flex w-fit items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${moduleToneClasses[item.status]}`}>
-                  <span className={`h-1.5 w-1.5 rounded-full ${item.status === 'healthy' ? 'bg-success' : item.status === 'warning' ? 'bg-warning' : 'bg-error'} animate-pulse`} />
+              <div style={{ fontSize: '32px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '6px 0', overflow: 'visible' }}>
+                {item.value}
+                {item.unit ? <span style={{ fontSize: '14px', color: 'var(--text-muted)', marginLeft: '4px' }}>{item.unit}</span> : null}
+              </div>
+
+              <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <span
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: '999px',
+                    fontSize: '10px',
+                    textTransform: 'uppercase',
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    background: statusBg,
+                    color: statusColor,
+                  }}
+                >
                   {item.status}
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </section>
-
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-        <div className="xl:col-span-8 space-y-4">
-          <div className="flex items-center justify-between gap-3 px-1">
-            <div className="flex items-center gap-3">
-              <div className="rounded-xl border border-border-subtle bg-bg-surface p-2 text-primary shadow-sm">
-                <Bell size={18} />
-              </div>
-              <div>
-                <div className="text-lg font-semibold tracking-tight text-text-primary">Operational Anomalies</div>
-                <div className="text-sm text-text-muted">Exceptions and alerts with direct diagnostic context.</div>
+                </span>
+                {item.contextLabel ? <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.contextLabel}</span> : null}
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Badge variant={activeAlerts.length > 0 ? 'warning' : 'success'} size="sm" className="font-black">
-                {activeAlerts.length > 0 ? `${activeAlerts.length} active` : 'clear'}
-              </Badge>
-              <Button
-                variant="outline"
-                size="sm"
-                className="rounded-full border-border-subtle bg-bg-surface px-4 text-[11px] font-black uppercase tracking-[0.16em]"
-                onClick={routeActivity}
-              >
-                AI Diagnostic History
-              </Button>
-            </div>
-          </div>
+          );
+        })}
+      </div>
 
-          <Card className="overflow-hidden rounded-3xl border-border-subtle/60 shadow-sm">
-            {activeAlerts.length === 0 ? (
-              <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 bg-success/5 px-8 py-16 text-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-success/20 bg-bg-surface text-success shadow-sm">
-                  <ShieldCheck size={30} />
-                </div>
-                <div className="space-y-2">
-                  <div className="text-xl font-semibold tracking-tight text-success">Operational integrity confirmed</div>
-                  <div className="text-sm leading-6 text-text-muted">
-                    No active anomalies detected. The control surface is stable and all monitored signals remain within expected thresholds.
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3 p-5">
-                {activeAlerts.slice(0, 6).map((alert, index) => (
-                  <button
-                    key={alert.alertId || index}
-                    type="button"
-                    onClick={routeActivity}
-                    className="group flex w-full items-start gap-4 rounded-2xl border border-border-subtle bg-bg-surface p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-lg hover:shadow-primary/5 active:scale-[0.99]"
-                  >
-                    <span className={`mt-1 h-2.5 w-2.5 rounded-full ${severityColors[alert.severity || 'medium']}`} />
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="truncate text-sm font-semibold text-text-primary">{alert.kpiName}</div>
-                        <span className="font-mono text-[11px] text-text-muted">{formatTime(alert.timestamp)}</span>
-                      </div>
-                      <div className="text-sm leading-6 text-text-secondary">{alert.message}</div>
-                    </div>
-                    <ChevronRight size={16} className="mt-1 text-text-muted transition-transform duration-200 group-hover:translate-x-1 group-hover:text-primary" />
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="flex items-center justify-between border-t border-border-subtle/60 bg-bg-muted/15 px-5 py-4">
-              <div className="flex items-center gap-2 text-[11px] font-bold text-text-muted">
-                <Clock size={14} />
-                Synchronized {lastUpdated || 'just now'}
-              </div>
-              <button
-                type="button"
-                onClick={routeActivity}
-                className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-bg-surface px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-primary transition-all duration-150 hover:shadow-md active:scale-[0.98]"
-              >
-                System audit log
-                <ArrowRight size={14} />
-              </button>
-            </div>
-          </Card>
-        </div>
-
-        <div className="xl:col-span-4 space-y-4">
-          <div className="flex items-center gap-3 px-1">
-            <div className="rounded-xl border border-border-subtle bg-bg-surface p-2 text-primary shadow-sm">
-              <Gauge size={18} />
+      <section style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'visible' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={sectionHeaderInfoStyle}>
+            <div
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                background: 'rgba(239,68,68,0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                boxSizing: 'border-box',
+              }}
+            >
+              <Bell style={{ width: '16px', height: '16px', color: '#ef4444' }} />
             </div>
             <div>
-              <div className="text-lg font-semibold tracking-tight text-text-primary">Executive KPI Surface</div>
-              <div className="text-sm text-text-muted">Independent cards with direct executive actions.</div>
+              <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 2px' }}>Operational Anomalies</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>High-fidelity signals requiring attention.</p>
             </div>
           </div>
+          <a
+            onClick={routeActivity}
+            style={{ fontSize: '12px', color: '#3b82f6', cursor: 'pointer', textDecoration: 'none' }}
+          >
+            View Audit Log →
+          </a>
+        </div>
 
-          <div className="space-y-4">
-            <KPIBlock
-              title="SLA Adherence"
-              value="99.4%"
-              subtitle="Synthetics and baseline checks remain above target across monitored endpoints."
-            />
-            <KPIBlock
-              title="Success Flow"
-              value={`${formatCount(stats?.ordersPerMinute || 0)} RPM`}
-              subtitle="Transaction flow is stable and processing volume remains predictable."
-            />
-            <KPIBlock
-              title="Project Value at Risk"
-              value={`$${formatCount((stats?.delayedCount || 0) * 850)}`}
-              subtitle="Revenue exposure is derived from delayed orders and the current exception surface."
-              ctaLabel="Resolve exceptions"
-              ctaTone="critical"
-              onCtaClick={() => resolveModule(`/project/${projectId}/orders`, 'risk')}
-            />
-          </div>
+        <div
+          style={{
+            borderRadius: '12px',
+            border: '1px solid var(--border-card)',
+            background: 'var(--bg-card)',
+            padding: activeAlerts.length === 0 ? '32px 24px' : '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: activeAlerts.length === 0 ? 'center' : 'stretch',
+            justifyContent: 'center',
+            gap: '8px',
+            overflow: 'visible',
+            boxSizing: 'border-box',
+          }}
+        >
+          {activeAlerts.length === 0 ? (
+            <>
+              <p style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>No anomalies detected</p>
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0 }}>All systems are operating within normal parameters.</p>
+              <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'space-between', width: '100%', gap: '16px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '11px', color: '#22c55e', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e' }} />
+                  ALL SYSTEMS OPERATIONAL
+                </span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>LAST UPDATED: {lastUpdated}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              {activeAlerts.slice(0, 5).map((alert, idx) => (
+                <div
+                  key={alert.alertId || idx}
+                  style={{
+                    padding: '14px 0',
+                    borderBottom: idx === Math.min(activeAlerts.length, 5) - 1 ? 'none' : '1px solid var(--border-card)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                    overflow: 'visible',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>{alert.message || 'Operational alert'}</p>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
+                    {alert.source || alert.kpiName || 'Telemetry signal'} {alert.timestamp ? `· ${alert.timestamp}` : ''}
+                  </p>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </section>
 
-      <section className="space-y-4">
-        <div className="flex items-center gap-3 px-1">
-          <div className="rounded-xl border border-border-subtle bg-bg-surface p-2 text-primary shadow-sm">
-            <LayoutDashboard size={18} />
+      <section style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'visible' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              background: 'rgba(59,130,246,0.1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              boxSizing: 'border-box',
+            }}
+          >
+            <Gauge style={{ width: '16px', height: '16px', color: '#3b82f6' }} />
           </div>
           <div>
-            <div className="text-lg font-semibold tracking-tight text-text-primary">Subsystem Snapshots</div>
-            <div className="text-sm text-text-muted">Each domain card is clickable and opens the corresponding deep-dive module.</div>
+            <p style={{ ...sectionTitleStyle, marginBottom: '2px' }}>Executive Surface</p>
+            <p style={sectionSubtitleStyle}>Key business indicators at a glance.</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {subsystemCards.map((card) => (
-            <SubsystemCard
-              key={card.name}
-              name={card.name}
-              status={card.status}
-              metric={card.metric}
-              subMetric={card.subMetric}
-              icon={card.icon}
-              onClick={() => resolveModule(card.href, card.name)}
-            />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          {executiveCards.map((item) => (
+            <div
+              key={item.label}
+              style={{
+                borderRadius: '12px',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                padding: '22px 24px',
+                minHeight: '140px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                overflow: 'visible',
+                boxSizing: 'border-box',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)' }}>{item.label}</span>
+                  <span style={{ fontSize: '12px', fontWeight: 500, color: '#22c55e' }}>{item.badge}</span>
+                </div>
+
+                <p style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 6px' }}>{item.value}</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6, margin: '0 0 14px' }}>{item.description}</p>
+              </div>
+
+              {item.actionLabel ? (
+                <button
+                  type="button"
+                  onClick={() => resolveModule(`/project/${projectId}/orders`)}
+                  style={{
+                    width: '100%',
+                    padding: '8px',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-card)',
+                    background: 'transparent',
+                    fontSize: '12px',
+                    color: 'var(--text-primary)',
+                    cursor: 'pointer',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  {item.actionLabel}
+                </button>
+              ) : null}
+            </div>
           ))}
         </div>
       </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-        <div className="xl:col-span-7 space-y-4">
-          <div className="flex items-center justify-between gap-3 px-1">
-            <div className="flex items-center gap-3">
-              <div className="rounded-xl border border-border-subtle bg-bg-surface p-2 text-primary shadow-sm">
-                <TrendingUp size={18} />
-              </div>
-              <div>
-                <div className="text-lg font-semibold tracking-tight text-text-primary">Latency Confidence Profile</div>
-                <div className="text-sm text-text-muted">Trend clarity, axis readability, and hover tooltips for fast interpretation.</div>
-              </div>
+      <section style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'visible' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={sectionHeaderInfoStyle}>
+            <div
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                background: 'rgba(245,158,11,0.12)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                boxSizing: 'border-box',
+              }}
+            >
+              <Flame style={{ width: '16px', height: '16px', color: '#f59e0b' }} />
             </div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-success">
-              <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-              Live profile
+            <div>
+              <p style={{ fontSize: '15px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 2px' }}>Latency Confidence Profile</p>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>p95 performance trends across the fleet.</p>
             </div>
           </div>
 
-          <Card className="rounded-3xl border-border-subtle/60 p-5 shadow-sm">
-            <PerformanceChart data={trends} title="" height={320} />
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-3 border-t border-border-subtle/60 pt-4">
-              {[
-                { label: 'FCP', color: 'bg-success' },
-                { label: 'LCP', color: 'bg-warning' },
-                { label: 'Page Load', color: 'bg-primary' },
-                { label: 'TTFB', color: 'bg-error' },
-              ].map((item) => (
-                <div key={item.label} className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-bg-surface px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-text-muted">
-                  <span className={`h-2 w-2 rounded-full ${item.color}`} />
-                  {item.label}
-                </div>
-              ))}
-            </div>
-          </Card>
+          <span
+            style={{
+              padding: '3px 10px',
+              borderRadius: '999px',
+              fontSize: '10px',
+              background: 'var(--bg-input)',
+              color: 'var(--text-secondary)',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            1hr Profile
+          </span>
         </div>
 
-        <div className="xl:col-span-5 space-y-4">
-          <div className="flex items-center justify-between gap-3 px-1">
-            <div className="flex items-center gap-3">
-              <div className="rounded-xl border border-border-subtle bg-bg-surface p-2 text-primary shadow-sm">
-                <Activity size={18} />
+        <div
+          style={{
+            borderRadius: '12px',
+            border: '1px solid var(--border-card)',
+            background: 'var(--bg-card)',
+            padding: '24px',
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+          }}
+        >
+          <PerformanceChart data={trends} title="" height={340} />
+
+          <div style={{ display: 'flex', gap: '20px', marginTop: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            {[
+              { label: 'FCP', color: '#10b981', value: '1.2s' },
+              { label: 'LCP', color: '#f59e0b', value: '2.4s' },
+              { label: 'LOAD TIME', color: '#3b82f6', value: '3.1s' },
+              { label: 'TTFB', color: '#ef4444', value: '240ms' },
+            ].map((item) => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: item.color, flexShrink: 0 }} />
+                {item.label}
+                <span style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{item.value}</span>
               </div>
-              <div>
-                <div className="text-lg font-semibold tracking-tight text-text-primary">Recent System Activity</div>
-                <div className="text-sm text-text-muted">Event stream and audit history for quick review.</div>
-              </div>
-            </div>
+            ))}
           </div>
-
-          <Card className="flex min-h-[420px] flex-col overflow-hidden rounded-3xl border-border-subtle/60 shadow-sm">
-            <div className="flex-1 overflow-auto">
-              {activeAlerts.length > 0 ? (
-                <div className="divide-y divide-border-subtle/60">
-                  {activeAlerts.slice(0, 6).map((item, index) => (
-                    <button
-                      key={item.alertId || index}
-                      type="button"
-                      onClick={routeActivity}
-                      className="flex w-full items-start gap-4 px-5 py-4 text-left transition-colors duration-150 hover:bg-bg-muted/20 active:scale-[0.99]"
-                    >
-                      <span className={`mt-1.5 h-2.5 w-2.5 rounded-full ${severityColors[item.severity || 'medium']}`} />
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="truncate text-sm font-semibold text-text-primary">{item.message}</div>
-                          <span className="font-mono text-[11px] text-text-muted">{formatTime(item.timestamp)}</span>
-                        </div>
-                        <div className="text-[10px] font-black uppercase tracking-[0.18em] text-text-muted">
-                          {item.kpiName || 'Activity'}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 px-8 py-16 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border-subtle bg-bg-muted text-text-muted">
-                    <Clock size={30} />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-lg font-semibold tracking-tight text-text-primary">No recent activity</div>
-                    <div className="text-sm leading-6 text-text-muted">The activity feed is quiet. Use the audit log to inspect historical events.</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={routeActivity}
-                    className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-black uppercase tracking-[0.16em] text-white transition-all duration-150 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98]"
-                  >
-                    Load more activity
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="border-t border-border-subtle/60 bg-bg-muted/15 px-5 py-4">
-              <button
-                type="button"
-                onClick={routeActivity}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-border-subtle bg-bg-surface px-4 py-2.5 text-[11px] font-black uppercase tracking-[0.16em] text-primary transition-all duration-150 hover:shadow-md active:scale-[0.98]"
-              >
-                Open audit trail
-                <ArrowRight size={14} />
-              </button>
-            </div>
-          </Card>
         </div>
       </section>
 
-      <style jsx global>{`
-        .animate-slide-up {
-          animation: slide-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-          opacity: 0;
-        }
+      <section style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'visible' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              background: 'rgba(59,130,246,0.1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              boxSizing: 'border-box',
+            }}
+          >
+            <Database style={{ width: '16px', height: '16px', color: '#3b82f6' }} />
+          </div>
+          <div>
+            <p style={{ ...sectionTitleStyle, marginBottom: '2px' }}>Domain Snapshots</p>
+            <p style={sectionSubtitleStyle}>High-density deep dives into each functional area.</p>
+          </div>
+        </div>
 
-        @keyframes slide-up {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-      `}</style>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
+          {domainSnapshots.map((domain) => {
+            const Icon = domain.icon;
+            return (
+              <div
+                key={domain.name}
+                onClick={() => resolveModule(`/project/${projectId}/${domain.path}`)}
+                style={{
+                  borderRadius: '12px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '20px 22px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                  cursor: 'pointer',
+                  overflow: 'visible',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <Icon style={{ width: '18px', height: '18px', color: 'var(--text-muted)', flexShrink: 0 }} />
+                  <span
+                    style={{
+                      padding: '3px 10px',
+                      borderRadius: '999px',
+                      fontSize: '10px',
+                      background: 'var(--success-bg)',
+                      color: 'var(--success-text)',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                    }}
+                  >
+                    ● HEALTHY
+                  </span>
+                </div>
+
+                <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>{domain.name}</p>
+
+                <p
+                  style={{
+                    fontSize: '12px',
+                    color: 'var(--text-muted)',
+                    lineHeight: 1.6,
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    margin: 0,
+                  }}
+                >
+                  {domain.description}
+                </p>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto' }}>
+                  <span style={{ fontSize: '11px', color: '#3b82f6' }}>Open Domain</span>
+                  <ChevronRight style={{ width: '16px', height: '16px', color: '#3b82f6', flexShrink: 0 }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }

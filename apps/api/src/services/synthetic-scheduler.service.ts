@@ -27,7 +27,7 @@ export class SyntheticSchedulerService {
   }
 
   private static async executeAll() {
-    const activeProjects = ['site-magento-001', 'site-shopify-002']; // Simulated active projects
+    const activeProjects = ['proj-18th-digitech']; // Targeted canonical project
     
     console.log(`[SyntheticScheduler] Executing synthetic checks for ${activeProjects.length} projects...`);
 

@@ -1,12 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
-import { SyntheticUptime } from '@/components/observability/SyntheticUptime';
-import { Card } from '@/components/ui/Card';
 import {
   Activity,
-  Terminal,
   History,
   Settings,
   ExternalLink,
@@ -15,21 +12,46 @@ import {
   Monitor,
   CheckCircle2,
   XCircle,
-  Clock,
   Camera,
-  RefreshCw
+  RefreshCw,
+  ShoppingBag,
+  TrendingUp,
+  ZapOff,
+  MousePointerClick,
+  Clock
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+
+const pageStyle: React.CSSProperties = {
+  padding: '24px 28px',
+  maxWidth: '1280px',
+  margin: '0 auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '24px',
+  overflow: 'visible',
+  minHeight: '100vh',
+  background: 'var(--bg-page)',
+  color: 'var(--text-primary)'
+};
+
+const cardStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid var(--border-card)',
+  background: 'var(--bg-card)',
+  padding: '24px',
+  overflow: 'visible'
+};
 
 export default function SyntheticMonitoringPage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
 
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState<string | null>(null);
-  const [summary, setSummary]       = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<any[]>([]);
   const [runHistory, setRunHistory] = useState<any[]>([]);
-  const [failures, setFailures]     = useState<any[]>([]);
+  const [failures, setFailures] = useState<any[]>([]);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
@@ -39,7 +61,7 @@ export default function SyntheticMonitoringPage() {
       const [dash, hist, fails] = await Promise.all([
         apiFetch(`/api/v1/dashboard/synthetic/dashboard?siteId=${projectId}`),
         apiFetch(`/api/v1/dashboard/synthetic/history?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/synthetic/failures?siteId=${projectId}`),
+        apiFetch(`/api/v1/dashboard/synthetic/failures?siteId=${projectId}`)
       ]);
       setSummary(Array.isArray(dash) ? dash : []);
       setRunHistory(Array.isArray(hist) ? hist : []);
@@ -58,21 +80,72 @@ export default function SyntheticMonitoringPage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // Derived stats
-  const passedRuns  = runHistory.filter((r: any) => r.success_status === true || r.success_status === undefined).length;
-  const totalRuns   = runHistory.length || 1;
-  const uptimePct   = Math.round((passedRuns / totalRuns) * 1000) / 10;
+  const passedRuns = runHistory.filter((r: any) => r.success_status === true || r.success_status === undefined).length;
+  const totalRuns = runHistory.length || 1;
+  const uptimePct = Math.round((passedRuns / totalRuns) * 1000) / 10;
   const lastRunPass = runHistory[0]?.success_status !== false;
   const lastRunTime = runHistory[0]?.timestamp
     ? new Date(runHistory[0].timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'N/A';
+  const firstStep = summary[0]?.totalRuns || runHistory.length || 1;
+  const degraded = summary.filter((j: any) => Number(j.successRate || 0) < 95).length;
+
+  const metricCards = useMemo(
+    () => [
+      {
+        label: 'Completion Rate',
+        value: `${uptimePct}%`,
+        badge: 'Latest rolling uptime',
+        icon: ShoppingBag
+      },
+      {
+        label: 'Total Visitors',
+        value: firstStep.toLocaleString(),
+        badge: 'Synthetic traversals',
+        icon: TrendingUp
+      },
+      {
+        label: 'Failure Events',
+        value: failures.length.toLocaleString(),
+        badge: 'Recent failed checks',
+        icon: ZapOff
+      },
+      {
+        label: 'Degraded Flows',
+        value: `${degraded}`,
+        badge: 'Journeys below 95%',
+        icon: MousePointerClick
+      }
+    ],
+    [degraded, failures.length, firstStep, uptimePct]
+  );
 
   if (loading && runHistory.length === 0) {
     return (
-      <div className="flex items-center justify-center h-screen bg-slate-950 text-slate-400">
-        <div className="flex flex-col items-center">
-          <div className="w-12 h-12 rounded-full border-4 border-t-indigo-500 border-slate-800 animate-spin mb-4" />
-          <span className="text-[10px] font-black uppercase tracking-[0.2em]">Orchestrating Proactive Checks…</span>
+      <div style={{ ...pageStyle, alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <div
+            style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '999px',
+              border: '4px solid #1f2937',
+              borderTopColor: '#22c55e',
+              marginBottom: '16px',
+              animation: 'spin 1s linear infinite'
+            }}
+          />
+          <span
+            style={{
+              fontSize: '10px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.18em',
+              color: 'var(--text-muted)'
+            }}
+          >
+            Orchestrating proactive checks...
+          </span>
         </div>
       </div>
     );
@@ -80,190 +153,563 @@ export default function SyntheticMonitoringPage() {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-slate-950 p-6 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-rose-500/10 flex items-center justify-center mb-6 border border-rose-500/20">
-          <AlertCircle className="w-8 h-8 text-rose-500" />
+      <div style={{ ...pageStyle, alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+        <div style={{ maxWidth: '36rem', width: '100%' }}>
+          <div
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '16px',
+              background: 'rgba(244,63,94,0.1)',
+              border: '1px solid rgba(244,63,94,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 24px'
+            }}
+          >
+            <AlertCircle style={{ width: '32px', height: '32px', color: '#f43f5e' }} />
+          </div>
+          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>Sync Failed</h2>
+          <p style={{ fontSize: '14px', color: 'var(--text-muted)', maxWidth: '28rem', margin: '0 auto 32px' }}>{error}</p>
+          <button
+            onClick={loadData}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              borderRadius: '999px',
+              background: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              border: '1px solid var(--border-card)'
+            }}
+          >
+            <RefreshCw style={{ width: '16px', height: '16px' }} />
+            Retry
+          </button>
         </div>
-        <h2 className="text-xl font-bold text-white mb-2">Sync Failed</h2>
-        <p className="text-slate-400 text-sm max-w-md mb-8">{error}</p>
-        <button onClick={loadData}
-          className="px-6 py-2 rounded-full bg-slate-800 text-white font-bold text-xs uppercase tracking-widest hover:bg-slate-700 transition-colors flex items-center gap-2">
-          <RefreshCw className="w-3 h-3" /> Retry
-        </button>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 bg-slate-950 min-h-screen text-slate-200">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Activity className="w-6 h-6 text-emerald-400" />
-            Synthetic Monitoring
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">Proactive availability and flow validation for {projectId as string}</p>
-        </div>
+    <>
+      <div style={pageStyle}>
+        <div style={{ marginBottom: '8px', overflow: 'visible' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+            <div
+              style={{
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
+            >
+              <Activity style={{ width: '16px', height: '16px', color: 'var(--text-secondary)' }} />
+            </div>
+            <span
+              style={{
+                fontSize: '10px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: 'var(--text-label)'
+              }}
+            >
+              Synthetic Observability
+            </span>
+          </div>
 
-        <div className="flex gap-2">
-          <button onClick={loadData}
-            className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-medium text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors">
-            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} /> Refresh
-          </button>
-          <button className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-medium text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors">
-            <Play className="w-3 h-3" /> Run Now
-          </button>
-          <button className="px-3 py-1.5 rounded-lg bg-indigo-600 text-xs font-bold text-white hover:bg-indigo-500 flex items-center gap-2 transition-colors shadow-[0_0_15px_rgba(79,70,229,0.4)]">
-            <Settings className="w-3 h-3" /> Config
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Uptime and Summary */}
-        <div className="lg:col-span-2 space-y-6">
-          <SyntheticUptime
-            percentage={uptimePct}
-            lastRunStatus={lastRunPass ? 'PASS' : 'FAIL'}
-            lastRunTime={lastRunTime}
-            history={runHistory}
-          />
-
-          <Card className="p-6 bg-slate-900/50 border-slate-800">
-            <h3 className="text-sm font-medium text-slate-400 mb-6 uppercase tracking-wider">Monitored Journeys</h3>
-            {summary.length === 0 ? (
-              <p className="text-slate-500 text-xs">No journey data yet. Ingest a synthetic run to populate.</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {summary.map((j: any) => (
-                  <div key={j.journey} className="p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 transition-colors">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="p-2 rounded-lg bg-slate-900 border border-slate-800">
-                        <Monitor className="w-4 h-4 text-indigo-400" />
-                      </div>
-                      <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase ${j.successRate >= 95 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${j.successRate >= 95 ? 'bg-emerald-400' : 'bg-rose-400'}`} />
-                        {j.successRate >= 95 ? 'Passing' : 'Degraded'}
-                      </div>
-                    </div>
-                    <h4 className="text-sm font-bold text-white mb-1">{j.journey}</h4>
-                    <div className="flex gap-4 mt-3">
-                      <div>
-                        <p className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">Success Rate</p>
-                        <p className="text-xs font-bold text-slate-200">{j.successRate}%</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">Avg Duration</p>
-                        <p className="text-xs font-bold text-slate-200">{j.avgTime ? `${(j.avgTime / 1000).toFixed(1)}s` : 'N/A'}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 0, maxWidth: '760px' }}>
+              <div style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '6px' }}>
+                Synthetic Monitoring
+                <span
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: '#22c55e',
+                    display: 'inline-block',
+                    marginLeft: '10px',
+                    verticalAlign: 'middle'
+                  }}
+                />
               </div>
-            )}
-          </Card>
-        </div>
-
-        {/* Latest Failures */}
-        <div className="space-y-6">
-          <Card className="p-6 bg-slate-900/50 border-slate-800 h-full">
-            <h3 className="text-sm font-medium text-slate-400 mb-6 uppercase tracking-wider">Recent Failure Events</h3>
-            {failures.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-3" />
-                <p className="text-slate-400 text-xs">No failures detected in recent runs.</p>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                Proactive availability and flow validation for {projectId as string}
               </div>
-            ) : (
-              <div className="space-y-4">
-                {failures.slice(0, 4).map((fail: any, i: number) => (
-                  <div key={i} className="group relative p-3 rounded-lg bg-rose-500/5 border border-rose-500/10 hover:bg-rose-500/10 transition-colors">
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-[10px] font-bold text-rose-400 uppercase tracking-widest">
-                        {fail.error_logs?.split(' ')[0] || 'FAILURE'}
-                      </span>
-                      <span className="text-[9px] text-slate-500">
-                        {fail.timestamp ? new Date(fail.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                      </span>
-                    </div>
-                    <p className="text-xs font-bold text-slate-200 mb-1">{fail.journey_name}</p>
-                    <p className="text-[10px] text-slate-500">
-                      Failed at step: <span className="text-rose-300 font-medium">{fail.step_name || 'Unknown Step'}</span>
-                    </p>
-                    <div className="mt-3 flex gap-2">
-                      {fail.screenshot_url && (
-                        <button className="flex items-center gap-1 text-[9px] font-bold text-indigo-400 uppercase hover:underline">
-                          <Camera className="w-3 h-3" /> Screenshot
-                        </button>
-                      )}
-                      <button className="flex items-center gap-1 text-[9px] font-bold text-indigo-400 uppercase hover:underline">
-                        <ExternalLink className="w-3 h-3" /> Trace
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </div>
-      </div>
+            </div>
 
-      {/* Full Run History */}
-      <Card className="p-6 bg-slate-900/50 border-slate-800">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider flex items-center gap-2">
-            <History className="w-4 h-4" /> Comprehensive Execution History
-          </h3>
-          <div className="flex gap-2">
-            <span className="px-2 py-1 rounded bg-slate-800 text-[10px] text-slate-400">{runHistory.length} runs</span>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                onClick={loadData}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0, animation: loading ? 'spin 1s linear infinite' : undefined }} />
+                Refresh
+              </button>
+              <button
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <Play style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                Run Now
+              </button>
+              <button
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(96,165,250,0.2)',
+                  background: '#60a5fa',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: 'var(--text-primary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <Settings style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                Config
+              </button>
+            </div>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-slate-800">
-                <th className="pb-4 text-xs font-semibold text-slate-500">STATUS</th>
-                <th className="pb-4 text-xs font-semibold text-slate-500">JOURNEY</th>
-                <th className="pb-4 text-xs font-semibold text-slate-500">RUN ID</th>
-                <th className="pb-4 text-xs font-semibold text-slate-500">DURATION</th>
-                <th className="pb-4 text-xs font-semibold text-slate-500">COMPLETED</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/50">
-              {runHistory.slice(0, 20).map((run: any, i: number) => (
-                <tr key={run.runId || i} className="group hover:bg-white/5 transition-colors">
-                  <td className="py-4">
-                    {run.success_status !== false ? (
-                      <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> SUCCESS
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2 text-rose-400 text-xs font-bold">
-                        <XCircle className="w-3.5 h-3.5" /> FAILED
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-4 text-sm font-medium text-slate-300">{run.journey_name || run.journey || '—'}</td>
-                  <td className="py-4 text-xs font-mono text-slate-500">{run.runId || `run_${i}`}</td>
-                  <td className="py-4 text-sm text-slate-400">
-                    {run.execution_time ? `${(run.execution_time / 1000).toFixed(1)}s` : '—'}
-                  </td>
-                  <td className="py-4 text-sm text-slate-500">
-                    {run.timestamp ? new Date(run.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
-                  </td>
-                </tr>
-              ))}
-              {runHistory.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="py-10 text-center text-slate-600 text-sm">
-                    No run history yet. Trigger a synthetic run to begin recording.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '20px',
+            overflow: 'visible'
+          }}
+        >
+          {metricCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <div
+                key={card.label}
+                style={{
+                  borderRadius: '12px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: '140px',
+                  overflow: 'visible'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                      color: 'var(--text-label)',
+                      fontWeight: 500
+                    }}
+                  >
+                    {card.label}
+                  </span>
+                  <Icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                </div>
+
+                <div style={{ fontSize: '38px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '8px 0' }}>{card.value}</div>
+
+                <div style={{ marginTop: '12px' }}>
+                  <span style={{ fontSize: '12px', color: '#22c55e' }}>{card.badge}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
-      </Card>
-    </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1.75fr) minmax(320px, 1fr)',
+            gap: '20px',
+            overflow: 'visible'
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible' }}>
+            <div style={cardStyle}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    System Availability
+                  </div>
+                  <span
+                    style={{
+                      padding: '3px 10px',
+                      borderRadius: '999px',
+                      fontSize: '10px',
+                      border: '1px solid var(--border-input)',
+                      color: 'var(--text-muted)',
+                      display: 'inline-block',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    Synthetic Uptime
+                  </span>
+                </div>
+
+                <span
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: '999px',
+                    fontSize: '10px',
+                    border: '1px solid var(--border-input)',
+                    color: lastRunPass ? '#22c55e' : '#f87171',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {lastRunPass ? 'All journeys passing' : 'Critical failure detected'}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', marginBottom: '20px' }}>
+                <div style={{ fontSize: '38px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1 }}>{uptimePct}%</div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', paddingBottom: '4px' }}>Uptime (last 24h)</div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(48, minmax(0, 1fr))', gap: '4px', marginBottom: '20px' }}>
+                {Array.from({ length: 48 }).map((_, i) => {
+                  const historyIdx = runHistory.length - 1 - (47 - i);
+                  const run = runHistory[historyIdx];
+                  const isFailing = run ? run.success_status === false : false;
+                  const hasData = !!run;
+
+                  return (
+                    <div
+                      key={i}
+                      title={hasData ? `Run ${new Date(run.timestamp).toLocaleString()}: ${isFailing ? 'Failed' : 'Passed'}` : 'No data'}
+                      style={{
+                        height: '12px',
+                        borderRadius: '999px',
+                        background: !hasData ? 'var(--bg-badge-active)' : isFailing ? '#f87171' : '#22c55e',
+                        opacity: hasData ? 1 : 0.5
+                      }}
+                    />
+                  );
+                })}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '10px', color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  <Clock style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                  Last checked: {lastRunTime}
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Check interval: 10m</div>
+              </div>
+            </div>
+
+            <div style={cardStyle}>
+              <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '20px' }}>
+                Monitored Journeys
+              </div>
+              {summary.length === 0 ? (
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                  No journey data yet. Ingest a synthetic run to populate.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '20px', overflow: 'visible' }}>
+                  {summary.map((journey: any) => (
+                    <div
+                      key={journey.journey}
+                      style={{
+                        borderRadius: '12px',
+                        border: '1px solid var(--border-card)',
+                        background: 'var(--bg-card)',
+                        padding: '24px',
+                        overflow: 'visible'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.1em',
+                            color: 'var(--text-label)',
+                            fontWeight: 500
+                          }}
+                        >
+                          Journey Status
+                        </span>
+                        <Monitor style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                      </div>
+
+                      <div style={{ fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.4, marginBottom: '12px' }}>{journey.journey}</div>
+
+                      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                        <span
+                          style={{
+                            padding: '3px 10px',
+                            borderRadius: '999px',
+                            fontSize: '10px',
+                            border: '1px solid var(--border-input)',
+                            color: Number(journey.successRate || 0) >= 95 ? '#22c55e' : '#f87171',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {Number(journey.successRate || 0) >= 95 ? 'Passing' : 'Degraded'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div>
+                          <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', marginBottom: '4px' }}>
+                            Success Rate
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{journey.successRate}%</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', marginBottom: '4px' }}>
+                            Avg Duration
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{journey.avgTime ? `${(journey.avgTime / 1000).toFixed(1)}s` : 'N/A'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible' }}>
+            <div style={cardStyle}>
+              <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '20px' }}>
+                Recent Failure Events
+              </div>
+              {failures.length === 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px 0', textAlign: 'center' }}>
+                  <CheckCircle2 style={{ width: '16px', height: '16px', color: '#22c55e', marginBottom: '12px' }} />
+                  <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px' }}>No failures detected in recent runs.</p>
+                </div>
+              ) : (
+                <div>
+                  {failures.slice(0, 4).map((fail: any, i: number) => (
+                    <div
+                      key={i}
+                      style={{
+                        padding: '14px 0',
+                        borderBottom: i === Math.min(failures.length, 4) - 1 ? 'none' : '1px solid var(--border-card)',
+                        display: 'flex',
+                        gap: '12px',
+                        alignItems: 'flex-start'
+                      }}
+                    >
+                      <AlertCircle style={{ width: '16px', height: '16px', flexShrink: 0, marginTop: '2px', color: '#f87171' }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 5px' }}>{fail.journey_name}</p>
+                        <p
+                          style={{
+                            fontSize: '11px',
+                            color: 'var(--text-muted)',
+                            lineHeight: 1.6,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.04em',
+                            margin: '0 0 8px'
+                          }}
+                        >
+                          {fail.error_logs?.split(' ')[0] || 'Failure'} · Failed at step {fail.step_name || 'Unknown Step'}
+                        </p>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>
+                            {fail.timestamp ? new Date(fail.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            {fail.screenshot_url && (
+                              <button
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  fontSize: '11px',
+                                  color: '#60a5fa',
+                                  background: 'transparent',
+                                  border: 'none',
+                                  cursor: 'pointer',
+                                  padding: 0
+                                }}
+                              >
+                                <Camera style={{ width: '16px', height: '16px' }} />
+                                Screenshot
+                              </button>
+                            )}
+                            <button
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                color: '#60a5fa',
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                padding: 0
+                              }}
+                            >
+                              <ExternalLink style={{ width: '16px', height: '16px' }} />
+                              Trace
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ overflow: 'visible' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '12px', flexWrap: 'wrap' }}>
+            <div
+              style={{
+                fontSize: '12px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: 'var(--text-muted)'
+              }}
+            >
+              Comprehensive Execution History
+            </div>
+            <span
+              style={{
+                padding: '3px 10px',
+                borderRadius: '999px',
+                fontSize: '10px',
+                border: '1px solid var(--border-input)',
+                color: 'var(--text-secondary)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {runHistory.length} runs
+            </span>
+          </div>
+
+          <div
+            style={{
+              borderRadius: '12px',
+              border: '1px solid var(--border-card)',
+              background: 'var(--bg-card)',
+              padding: '0',
+              overflow: 'visible'
+            }}
+          >
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-card)' }}>
+              <div style={{ display: 'flex', gap: '16px', alignItems: 'center', color: 'var(--text-label)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                <span style={{ width: '140px' }}>Status</span>
+                <span style={{ flex: 1 }}>Journey</span>
+                <span style={{ width: '160px' }}>Run ID</span>
+                <span style={{ width: '100px', textAlign: 'right' }}>Duration</span>
+                <span style={{ width: '110px', textAlign: 'right' }}>Completed</span>
+              </div>
+            </div>
+
+            {runHistory.slice(0, 20).map((run: any, i: number) => (
+              <div
+                key={run.runId || i}
+                style={{
+                  padding: '14px 20px',
+                  borderBottom: i === Math.min(runHistory.length, 20) - 1 ? 'none' : '1px solid var(--border-card)',
+                  display: 'flex',
+                  gap: '16px',
+                  alignItems: 'center'
+                }}
+              >
+                <div style={{ width: '140px' }}>
+                  {run.success_status !== false ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#22c55e', fontSize: '12px', fontWeight: 500 }}>
+                      <CheckCircle2 style={{ width: '16px', height: '16px' }} />
+                      Success
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#f87171', fontSize: '12px', fontWeight: 500 }}>
+                      <XCircle style={{ width: '16px', height: '16px' }} />
+                      Failed
+                    </div>
+                  )}
+                </div>
+                <div style={{ flex: 1, fontSize: '13px', color: 'var(--text-primary)', minWidth: 0 }}>{run.journey_name || run.journey || '-'}</div>
+                <div style={{ width: '160px', fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{run.runId || `run_${i}`}</div>
+                <div style={{ width: '100px', textAlign: 'right', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  {run.execution_time ? `${(run.execution_time / 1000).toFixed(1)}s` : '-'}
+                </div>
+                <div style={{ width: '110px', textAlign: 'right', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  {run.timestamp ? new Date(run.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}
+                </div>
+              </div>
+            ))}
+
+            {runHistory.length === 0 && (
+              <div style={{ padding: '20px', fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                No run history yet. Trigger a synthetic run to begin recording.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          left: '24px',
+          zIndex: 50,
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-input)',
+          borderRadius: '999px',
+          padding: '6px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '11px',
+          color: 'var(--text-muted)'
+        }}
+      >
+        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+        Live feed · System nominal
+      </div>
+    </>
   );
 }

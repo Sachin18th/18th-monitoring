@@ -1,4 +1,6 @@
 .ui-app-shell {
+  --shell-sidebar-width: 220px;
+  --shell-sidebar-collapsed-width: 56px;
   display: flex;
   min-height: 100vh;
   background:
@@ -14,15 +16,8 @@
   flex-direction: column;
   min-width: 0;
   min-height: 100vh;
-}
-
-.ui-app-shell.sidebar-hidden .shell-main {
-  margin-left: 0;
-}
-
-.ui-app-shell.sidebar-hidden .shell-content {
-  max-width: 1440px; /* Aligned with user request: Max width 1280px-1440px */
-  padding: 2rem clamp(1.5rem, 5vw, 4rem);
+  margin-left: var(--shell-sidebar-width);
+  transition: margin-left var(--transition-normal);
 }
 
 .shell-content {
@@ -32,14 +27,24 @@
   width: 100%;
   margin: 0 auto;
   overflow-x: hidden;
+  animation: fade-in 0.4s ease-out;
+}
+
+.ui-app-shell.sidebar-collapsed .shell-main {
+  margin-left: var(--shell-sidebar-collapsed-width);
+}
+
+.ui-app-shell.sidebar-hidden .shell-main {
+  margin-left: 0;
+}
+
+.ui-app-shell.sidebar-hidden .shell-content {
+  max-width: 1440px;
+  padding: 2rem clamp(1.5rem, 5vw, 4rem);
 }
 
 .sidebar-overlay {
   display: none;
-}
-
-.shell-content {
-  animation: fade-in 0.4s ease-out;
 }
 
 @keyframes fade-in {
@@ -48,6 +53,10 @@
 }
 
 @media (max-width: 1024px) {
+  .shell-main {
+    margin-left: 0;
+  }
+
   .shell-content {
     padding: var(--space-4);
   }
@@ -56,7 +65,8 @@
     display: block;
     position: fixed;
     inset: 0;
-    background: rgb(15 23 42 / 0.48);
+    background: rgb(0 0 0 / 0.4);
+    backdrop-filter: blur(4px);
     border: 0;
     opacity: 0;
     pointer-events: none;

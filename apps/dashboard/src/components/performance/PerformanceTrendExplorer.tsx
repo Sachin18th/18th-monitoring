@@ -4,11 +4,19 @@ import { PerformanceChart } from '../ui/PerformanceChart';
 import { Activity, Layers, Filter } from 'lucide-react';
 
 export interface PerformanceTrendExplorerProps {
-  data: any[];
+  data?: any[];
+  trends?: any[];
   loading?: boolean;
+  activeMetric?: string;
+  onMetricChange?: (metric: string) => void;
 }
 
-export const PerformanceTrendExplorer: React.FC<PerformanceTrendExplorerProps> = ({ data, loading }) => {
+export const PerformanceTrendExplorer: React.FC<PerformanceTrendExplorerProps> = ({ 
+  data, 
+  trends,
+  loading 
+}) => {
+  const chartData = data || trends || [];
   const [activePercentiles, setActivePercentiles] = useState(['p50', 'p95', 'p99']);
 
   const togglePercentile = (p: string) => {
@@ -53,7 +61,7 @@ export const PerformanceTrendExplorer: React.FC<PerformanceTrendExplorerProps> =
         {loading ? (
           <div className="absolute inset-0 bg-muted/20 animate-pulse rounded-xl" />
         ) : (
-          <PerformanceChart data={data} title="" />
+          <PerformanceChart data={chartData} title="" />
         )}
 
         {/* Intelligence Overlay Markers (Mocked for now) */}

@@ -1,13 +1,9 @@
 'use client';
+
 import React, { useMemo, useEffect } from 'react';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
-import {
-  AppShell,
-  NavGroup,
-  BreadcrumbItem,
-  formatBreadcrumbLabel,
-} from '@kpi-platform/ui';
+import { NavGroup, formatBreadcrumbLabel, useTheme } from '@kpi-platform/ui';
 import {
   LayoutDashboard,
   Activity,
@@ -27,21 +23,35 @@ import {
   Flame,
   Map,
   AlertCircle,
+  ChevronDown,
+  ChevronRight,
+  RefreshCw,
+  Search,
+  Home,
+  Clock3,
+  Sun,
+  Moon
 } from 'lucide-react';
+
+const SIDEBAR_WIDTH = 200;
+const TOPBAR_HEIGHT = 52;
 
 export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
   const params = useParams();
   const router = useRouter();
   const { user, logout, isLoading, apiFetch, token, setProject } = useAuth();
+  const { theme, toggleTheme, mounted } = useTheme();
 
   const projectId = (params.projectId as string) || '';
   const isProjectRoute = pathname.startsWith('/project/') && !!projectId;
+  const isDark = mounted ? theme === 'dark' : false;
 
   const [selectedEnv, setSelectedEnv] = React.useState('Production');
   const [lastRefreshed, setLastRefreshed] = React.useState(new Date().toLocaleTimeString());
   const [availableProjects, setAvailableProjects] = React.useState<any[]>([]);
   const [alertCount, setAlertCount] = React.useState<number>(0);
+  const [hoveredHref, setHoveredHref] = React.useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && user && isProjectRoute) {
@@ -71,10 +81,10 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   }, [token, user, apiFetch, isProjectRoute]);
 
   useEffect(() => {
-    if (!token || !projectId || !isProjectRoute) return;
+    if (!token || !projectId || !isProjectRoute || !user?.tenantId) return;
 
     const fetchAlerts = () => {
-      apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts?status=active`)
+      apiFetch(`/api/v1/tenants/${user.tenantId}/projects/${projectId}/alerts?status=active`)
         .then((data) => {
           const criticalCount = data?.data?.alerts?.filter((a: any) => a.severity === 'critical')?.length || 0;
           setAlertCount(criticalCount);
@@ -85,7 +95,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 60000);
     return () => clearInterval(interval);
-  }, [token, projectId, apiFetch, isProjectRoute]);
+  }, [token, projectId, apiFetch, isProjectRoute, user?.tenantId]);
 
   const navGroups = useMemo((): NavGroup[] => {
     if (!isProjectRoute) return [];
@@ -99,8 +109,8 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         items: [
           { label: 'Overview', href: `${prefix}/overview`, icon: LayoutDashboard },
           { label: 'Alert Center', href: `${prefix}/observability/alerts`, icon: Bell },
-          { label: 'Incident Center', href: `${prefix}/observability/incidents`, icon: Flame },
-        ],
+          { label: 'Incident Center', href: `${prefix}/observability/incidents`, icon: Flame }
+        ]
       },
       {
         name: 'Operational Surface',
@@ -112,16 +122,16 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
           { label: 'Journey Intel', href: `${prefix}/observability/journeys`, icon: Map },
           { label: 'Synthetic', href: `${prefix}/observability/synthetic`, icon: Activity },
           { label: 'Customers', href: `${prefix}/customers`, icon: Users },
-          { label: 'Orders', href: `${prefix}/orders`, icon: Package },
-        ],
+          { label: 'Orders', href: `${prefix}/orders`, icon: Package }
+        ]
       },
       {
-        name: 'Ecosystem',
+        name: 'System',
         items: [
           { label: 'Integrations', href: `${prefix}/integrations`, icon: Link2 },
-          { label: 'Alerts', href: `${prefix}/alerts`, icon: Bell, badge: alertCount },
-        ],
-      },
+          { label: 'Alerts', href: `${prefix}/alerts`, icon: Bell, badge: alertCount }
+        ]
+      }
     ];
 
     if (isAdmin) {
@@ -132,49 +142,46 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
             { label: 'Ingestion', href: `${prefix}/management/ingestion`, icon: Database },
             { label: 'Pipeline', href: `${prefix}/management/pipeline`, icon: GitMerge },
             { label: 'KPI Engine', href: `${prefix}/management/kpi`, icon: BarChart3 },
-            { label: 'Monitoring', href: `${prefix}/management/monitoring`, icon: ShieldAlert },
-          ],
+            { label: 'Monitoring', href: `${prefix}/management/monitoring`, icon: ShieldAlert }
+          ]
         },
         {
           name: 'Governance',
           items: [
             { label: 'Audit & Activity', href: `${prefix}/management/audit`, icon: ShieldCheck },
             { label: 'Configuration', href: `${prefix}/settings`, icon: Settings },
-            { label: 'Administration', href: `${prefix}/management/users`, icon: UserCircle },
-          ],
-        },
+            { label: 'Administration', href: `${prefix}/management/users`, icon: UserCircle }
+          ]
+        }
       );
     }
 
-    // Safety: Ensure all icons are defined or fallback to AlertCircle
-    const safeGroups = groups.map(group => ({
+    return groups.map((group) => ({
       ...group,
-      items: group.items.map(item => ({
+      items: group.items.map((item) => ({
         ...item,
         icon: item.icon || AlertCircle
       }))
     }));
-
-    return safeGroups;
   }, [projectId, user?.role, alertCount, isProjectRoute]);
 
-  const breadcrumbs = useMemo((): BreadcrumbItem[] => {
+  const breadcrumbs = useMemo(() => {
     if (!isProjectRoute) return [];
 
     const segments = pathname.split('/').filter(Boolean);
-    const items: BreadcrumbItem[] = [];
+    const items: { label: string; href: string; isLast: boolean }[] = [];
     let currentPath = '';
 
     segments.forEach((segment, index) => {
       currentPath += `/${segment}`;
       let label = formatBreadcrumbLabel(segment);
       if (segment === projectId) {
-        label = `Project: ${segment.toUpperCase()}`;
+        label = `Project ${segment.toUpperCase()}`;
       }
       items.push({
         label,
         href: currentPath,
-        isLast: index === segments.length - 1,
+        isLast: index === segments.length - 1
       });
     });
 
@@ -187,55 +194,496 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
   const isPublicPage = pathname === '/login' || pathname === '/unauthorized';
   if (isPublicPage || isLoading) return <>{children}</>;
+  if (!isProjectRoute) return <>{children}</>;
 
-  if (!isProjectRoute) {
-    return <>{children}</>;
-  }
+  const projects =
+    availableProjects.length > 0
+      ? availableProjects.map((p) => ({ id: p.id, name: p.name }))
+      : user?.assignedProjects?.map((id) => ({ id, name: id.toUpperCase() })) || [];
+  const selectedProjectName = projects.find((project) => project.id === projectId)?.name || '18th Digitech Creation';
+  const currentPage = breadcrumbs[breadcrumbs.length - 1]?.label || 'Dashboard';
+  const sectionLabel = pathname.includes('/management/')
+    ? 'Management'
+    : pathname.includes('/observability/')
+      ? 'Observability'
+      : 'Project';
+  const userBadge = user?.name?.trim()?.charAt(0)?.toUpperCase() || user?.id?.toString()?.charAt(0)?.toUpperCase() || '1';
+  const shellColors = {
+    appBg: 'var(--bg-page)',
+    appText: 'var(--text-primary)',
+    sidebarBg: 'var(--bg-sidebar)',
+    sidebarBorder: 'var(--border-sidebar)',
+    brandBorder: 'var(--border-sidebar)',
+    sectionLabel: 'var(--text-label)',
+    navText: 'var(--text-secondary)',
+    navHover: 'var(--bg-input)',
+    navActiveBg: 'var(--bg-badge-active)',
+    navActiveText: 'var(--text-primary)',
+    navbarBg: 'var(--bg-nav)',
+    navbarBorder: 'var(--border-nav)',
+    pillBorder: 'var(--border-card)',
+    pillBg: 'transparent',
+    pillText: 'var(--text-primary)',
+    mutedText: 'var(--text-muted)',
+    iconMuted: 'var(--text-secondary)',
+    searchBg: 'var(--bg-input)',
+    searchBorder: 'var(--border-input)',
+    avatarBg: 'var(--primary)'
+  };
 
   return (
-    <div className="min-h-screen bg-bg-base relative overflow-hidden">
-      <div className="fixed top-[-10%] right-[-10%] w-[40%] h-[40%] bg-primary/5 blur-[120px] rounded-full pointer-events-none" />
-      <div className="fixed bottom-[-5%] left-[-5%] w-[30%] h-[30%] bg-secondary/5 blur-[100px] rounded-full pointer-events-none" />
+    <div style={{ minHeight: '100vh', background: shellColors.appBg, color: shellColors.appText }}>
+      <style jsx global>{`
+        main > div[style*='position: fixed'][style*='bottom: 20px'][style*='border-radius: 999px'] {
+          left: 216px !important;
+        }
+      `}</style>
 
-      <AppShell
-        showSidebar={true}
-        defaultCollapsed={true}
-        navGroups={navGroups}
-        activeHref={pathname}
-        breadcrumbs={breadcrumbs}
-        user={{
-          name: user?.name || 'Administrator',
-          email: user?.email || '',
+      <aside
+        style={{
+          width: '200px',
+          minWidth: '200px',
+          height: '100vh',
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          background: shellColors.sidebarBg,
+          borderRight: `1px solid ${shellColors.sidebarBorder}`,
+          display: 'flex',
+          flexDirection: 'column',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          zIndex: 40,
+          paddingBottom: '24px'
         }}
-        onLogout={logout}
-        onNavigate={(href) => router.push(href)}
-        logo={
-          <div className="flex items-center gap-3 group cursor-pointer" onClick={() => router.push('/projects')}>
-            <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-white font-black shadow-lg shadow-primary/25 group-hover:scale-110 transition-transform duration-300">
-              <div className="absolute inset-0 rounded-xl bg-white/20 animate-pulse" />
-              <span className="relative z-10">K</span>
+      >
+        <div
+          onClick={() => router.push('/projects')}
+          style={{
+            padding: '16px 16px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            borderBottom: `1px solid ${shellColors.brandBorder}`,
+            marginBottom: '8px',
+            flexShrink: 0,
+            cursor: 'pointer'
+          }}
+        >
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '6px',
+              background: '#1d4ed8',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: '#fff',
+              fontSize: '13px',
+              fontWeight: 700
+            }}
+          >
+            18
+          </div>
+          <span style={{ fontSize: '13px', fontWeight: 500, color: shellColors.pillText, whiteSpace: 'nowrap' }}>18th Digitech</span>
+        </div>
+
+        <nav style={{ display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
+          {navGroups.map((group, groupIndex) => (
+            <div key={group.name} style={{ overflow: 'visible' }}>
+              <p
+                style={{
+                  fontSize: '10px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                  color: shellColors.sectionLabel,
+                  fontWeight: 500,
+                  padding: '0 16px',
+                  marginTop: groupIndex === 0 ? '8px' : '20px',
+                  marginBottom: '4px'
+                }}
+              >
+                {group.name}
+              </p>
+
+              {group.items.map((item) => {
+                const Icon = item.icon || AlertCircle;
+                const isActive = pathname === item.href;
+                const isHovered = hoveredHref === item.href;
+
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      router.push(item.href);
+                    }}
+                    onMouseEnter={() => setHoveredHref(item.href)}
+                    onMouseLeave={() => setHoveredHref(null)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      fontSize: '13px',
+                      color: isActive ? shellColors.navActiveText : shellColors.navText,
+                      background: isActive ? shellColors.navActiveBg : isHovered ? shellColors.navHover : 'transparent',
+                      cursor: 'pointer',
+                      textDecoration: 'none',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      margin: '0 8px',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                      marginBottom: '2px'
+                    }}
+                  >
+                    <Icon style={{ width: '15px', height: '15px', flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>
+                    {item.badge ? (
+                      <span
+                        style={{
+                          marginLeft: 'auto',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: '18px',
+                          height: '18px',
+                          borderRadius: '999px',
+                          background: 'rgba(248,113,113,0.12)',
+                          color: '#f87171',
+                          fontSize: '10px',
+                          padding: '0 6px',
+                          flexShrink: 0
+                        }}
+                      >
+                        {item.badge}
+                      </span>
+                    ) : null}
+                  </a>
+                );
+              })}
             </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-black tracking-tighter leading-none text-text-primary">GRAVITY</span>
-              <span className="text-[9px] font-bold tracking-[0.2em] text-primary uppercase">Monitor</span>
+          ))}
+        </nav>
+      </aside>
+
+      <main
+        style={{
+          marginLeft: '200px',
+          minHeight: '100vh',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        <nav
+          style={{
+            height: '52px',
+            width: '100%',
+            background: shellColors.navbarBg,
+            borderBottom: `1px solid ${shellColors.navbarBorder}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 20px',
+            position: 'sticky',
+            top: 0,
+            zIndex: 30,
+            flexShrink: 0,
+            gap: '12px'
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flexShrink: 0,
+              minWidth: 0,
+              overflow: 'hidden'
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => router.push('/projects')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                border: `1px solid ${shellColors.pillBorder}`,
+                background: shellColors.pillBg,
+                fontSize: '13px',
+                color: shellColors.pillText,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>{selectedProjectName}</span>
+              <ChevronDown style={{ width: '14px', height: '14px', color: shellColors.iconMuted, flexShrink: 0 }} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedEnv(selectedEnv === 'Production' ? 'Staging' : 'Production')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                border: `1px solid ${shellColors.pillBorder}`,
+                background: shellColors.pillBg,
+                fontSize: '13px',
+                color: shellColors.pillText,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
+            >
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: '#f59e0b',
+                  flexShrink: 0
+                }}
+              />
+              <span>{selectedEnv}</span>
+              <ChevronDown style={{ width: '14px', height: '14px', color: shellColors.iconMuted, flexShrink: 0 }} />
+            </button>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                minWidth: 0,
+                overflow: 'hidden',
+                color: shellColors.mutedText,
+                fontSize: '12px'
+              }}
+            >
+              <Home style={{ width: '14px', height: '14px', color: shellColors.mutedText, flexShrink: 0 }} />
+              {[
+                { label: 'Project', href: `/project/${projectId}/overview`, active: false },
+                { label: `Project: ${projectId.toUpperCase()}`, href: `/project/${projectId}/overview`, active: false },
+                { label: sectionLabel, href: '#', active: false },
+                { label: currentPage, href: pathname, active: true }
+              ].map((crumb, index) => (
+                <React.Fragment key={`${crumb.label}-${index}`}>
+                  <ChevronRight style={{ width: '12px', height: '12px', color: shellColors.mutedText, flexShrink: 0 }} />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!crumb.active && crumb.href !== '#') {
+                        router.push(crumb.href);
+                      }
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      padding: 0,
+                      fontSize: '12px',
+                      color: crumb.active ? shellColors.pillText : shellColors.mutedText,
+                      fontWeight: crumb.active ? 500 : 400,
+                      cursor: crumb.active || crumb.href === '#' ? 'default' : 'pointer',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
+                    }}
+                  >
+                    {crumb.label}
+                  </button>
+                </React.Fragment>
+              ))}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                minWidth: '220px',
+                padding: '6px 14px',
+                background: shellColors.searchBg,
+                border: `1px solid ${shellColors.searchBorder}`,
+                borderRadius: '999px',
+                flexShrink: 1
+              }}
+            >
+              <Search style={{ width: '14px', height: '14px', color: shellColors.mutedText, flexShrink: 0 }} />
+              <input
+                type="text"
+                placeholder="Search operational intelligence..."
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  outline: 'none',
+                  background: 'transparent',
+                  fontSize: '12px',
+                  color: shellColors.pillText
+                }}
+              />
             </div>
           </div>
-        }
-        projects={
-          availableProjects.length > 0
-            ? availableProjects.map((p) => ({ id: p.id, name: p.name }))
-            : user?.assignedProjects?.map((id) => ({ id, name: id.toUpperCase() })) || []
-        }
-        selectedProject={projectId}
-        onProjectChange={(id) => router.push(`/project/${id}/overview`)}
-        selectedEnvironment={selectedEnv}
-        onEnvironmentChange={setSelectedEnv}
-        lastUpdated={lastRefreshed}
-        onRefresh={handleRefresh}
-        freshnessStatus="healthy"
-      >
-        <div className="animate-fade-in relative z-10">{children}</div>
-      </AppShell>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+            <button
+              type="button"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                border: `1px solid ${shellColors.pillBorder}`,
+                background: shellColors.pillBg,
+                fontSize: '12px',
+                color: shellColors.pillText,
+                cursor: 'pointer',
+                flexShrink: 0
+              }}
+            >
+              <Clock3 style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+              Last 24 Hours
+            </button>
+
+            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15, flexShrink: 0 }}>
+              <span
+                style={{
+                  fontSize: '9px',
+                  color: shellColors.mutedText,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em'
+                }}
+              >
+                Last Sync
+              </span>
+              <span style={{ fontSize: '11px', color: shellColors.mutedText }}>{lastRefreshed}</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRefresh}
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                border: `1px solid ${shellColors.pillBorder}`,
+                background: shellColors.pillBg,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                flexShrink: 0
+              }}
+            >
+              <RefreshCw style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+              <span style={{ fontSize: '11px', color: '#22c55e', fontWeight: 500, letterSpacing: '0.06em' }}>HEALTHY</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={toggleTheme}
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                border: `1px solid ${shellColors.pillBorder}`,
+                background: shellColors.pillBg,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                flexShrink: 0
+              }}
+            >
+              {isDark ? (
+                <Sun style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+              ) : (
+                <Moon style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push(`/project/${projectId}/alerts`)}
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                border: `1px solid ${shellColors.pillBorder}`,
+                background: shellColors.pillBg,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                flexShrink: 0,
+                position: 'relative'
+              }}
+            >
+              <Bell style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
+                  width: '6px',
+                  height: '6px',
+                  background: '#ef4444',
+                  borderRadius: '50%'
+                }}
+              />
+            </button>
+
+            <button
+              type="button"
+              onClick={logout}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: 'transparent',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                flexShrink: 0
+              }}
+            >
+              <span
+                style={{
+                  width: '28px',
+                  height: '28px',
+                  borderRadius: '50%',
+                  background: shellColors.avatarBg,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '12px',
+                  color: '#fff',
+                  fontWeight: 500
+                }}
+              >
+                {userBadge}
+              </span>
+              <ChevronDown style={{ width: '14px', height: '14px', color: shellColors.iconMuted }} />
+            </button>
+          </div>
+        </nav>
+
+        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>{children}</div>
+      </main>
     </div>
   );
 };

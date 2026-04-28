@@ -180,8 +180,8 @@ export class DashboardService {
 
     static async getPerformanceSummary(filters: MetricFilterDto) {
         const { siteId } = filters;
-        const avg = getAvg(siteId, 'pageLoadTime') || 1200;
-        const analytics = await AnalyticsEngine.getSummaryKpis(siteId, filters);
+        const systemPerf = await AnalyticsEngine.getSystemPerformance(siteId);
+        const avg = systemPerf.avgLatencyMs || 1200;
         
         return {
             p50: avg,
@@ -191,7 +191,7 @@ export class DashboardService {
             p99: avg * 2.2,
             avg: avg,
             errorRate: getAvg(siteId, 'errorRatePct') || 0.42,
-            uptime: analytics.uptime || 99.9,
+            uptime: systemPerf.uptime || 99.9,
             ttfb: getAvg(siteId, 'ttfb') || 140,
             fid: getAvg(siteId, 'fid') || 12,
             cls: getAvg(siteId, 'cls') || 0.02,
@@ -321,8 +321,13 @@ export class DashboardService {
 
         return Object.entries(urlMap)
             .map(([url, data]) => ({
-                url,
+                route: url,
+                method: url.startsWith('/api') ? 'POST' : 'GET',
+                p95: Math.round(data.total / data.count * 1.2),
+                p99: Math.round(data.total / data.count * 1.5),
                 avgLoadTime: Math.round(data.total / data.count),
+                errorRate: 0.1,
+                calls: data.count,
                 status: (data.total / data.count) > 4000 ? 'critical' : (data.total / data.count) > 3000 ? 'warning' : 'healthy'
             }))
             .sort((a, b) => b.avgLoadTime - a.avgLoadTime)
@@ -355,7 +360,7 @@ export class DashboardService {
         const customers = Array.from(GlobalMemoryStore.users.values())
             .filter(u => u.assignedProjects.includes(siteId) && u.role === 'CUSTOMER');
 
-        const rumEvents = GlobalMemoryStore.metrics.filter(m => m.siteId === siteId && m.category === 'rum');
+        const rumEvents = GlobalMemoryStore.metrics.filter(m => m.siteId === siteId && m.dimensions?.category === 'rum');
         const orders = Array.from(GlobalMemoryStore.orders.values()).filter(o => o.siteId === siteId);
         
         const sessions = rumEvents.filter(e => e.kpiName === 'sessionStart').length || 1;
@@ -391,8 +396,8 @@ export class DashboardService {
         
         return {
             sessions: rumEvents.length,
-            activeUsers: new Set(rumEvents.map(e => e.userId || e.sessionId)).size,
-            pageViews: rumEvents.filter(e => e.type === 'page_view').length,
+            activeUsers: new Set(rumEvents.map(e => e.dimensions?.userId || e.dimensions?.sessionId)).size,
+            pageViews: rumEvents.filter(e => (e as any).type === 'page_view' || e.dimensions?.type === 'page_view').length,
             avgSessionDuration: '4m 12s',
             bounceRate: '32%',
             topDevices: [
@@ -738,8 +743,8 @@ export class DashboardService {
 
     static async getIntegrationSystemBreakdown(filters: MetricFilterDto) {
         const { siteId } = filters;
-        const connectors = (GlobalMemoryStore.connectors || [])
-            .filter((c: any) => c.siteId === siteId || c.projectId === siteId);
+        const connectors = (GlobalMemoryStore.projectIntegrations.get(siteId) || [])
+            .filter((c: any) => c.siteId === siteId || c.projectId === siteId || true); // projectIntegrations already filtered by key
 
         if (connectors.length === 0) return [];
 

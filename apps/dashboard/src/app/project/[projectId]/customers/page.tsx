@@ -1,5 +1,6 @@
 'use client';
-import React, { useCallback, useEffect, useState } from 'react';
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import {
   Users,
@@ -16,23 +17,43 @@ import {
   Globe,
   Clock,
   History,
-  Table as TableIcon
+  Fingerprint,
+  UserCheck,
+  UserPlus,
+  AlertCircle,
+  ArrowDown
 } from 'lucide-react';
-import {
-  PageLayout,
-  Typography,
-  Card,
-  Badge,
-  Button,
-  OperationalTable,
-  DiagnosticDrawer,
-  Column
-} from '@kpi-platform/ui';
+import { DiagnosticDrawer } from '@kpi-platform/ui';
 import { useAuth } from '../../../../context/AuthContext';
 
-import { CustomerDiscoveryHeader } from '../../../../components/customers/CustomerDiscoveryHeader';
-import { BehavioralFunnel } from '../../../../components/customers/BehavioralFunnel';
-import { SegmentIntelligence } from '../../../../components/customers/SegmentIntelligence';
+type IdentityRow = {
+  id: string;
+  name: string;
+  email: string;
+  state: string;
+  sessions: number;
+  lastActive: string;
+};
+
+type FunnelStage = {
+  stage: string;
+  count: number;
+  percent: number;
+};
+
+type Segment = {
+  name: string;
+  size: number;
+  active: number;
+  conversion: number;
+  growth: number;
+};
+
+type Attribution = {
+  source: string;
+  conversion: number;
+  sessions: number;
+};
 
 export default function CustomersPage() {
   const params = useParams();
@@ -75,149 +96,582 @@ export default function CustomersPage() {
     return () => clearInterval(interval);
   }, [loadData]);
 
-  const identityColumns: Column<any>[] = [
+  const metricCards = useMemo(
+    () => [
+      {
+        label: 'Audience Reach',
+        value: loading ? '...' : Number(summary.totalUsers || 0).toLocaleString(),
+        badge: '12.4% vs last 30d',
+        icon: Users
+      },
+      {
+        label: 'Identity Maturity',
+        value: loading ? '...' : `${summary.identifiedRatio || 0}%`,
+        badge: (summary.identifiedRatio || 0) > 50 ? 'Identity graph healthy' : 'Opportunity to enrich',
+        icon: Fingerprint
+      },
+      {
+        label: 'Live Engagement',
+        value: loading ? '...' : Number(summary.activeUsers || 0).toLocaleString(),
+        badge: 'Realtime active profile count',
+        icon: UserCheck
+      },
+      {
+        label: 'Acquisition Mix',
+        value: loading ? '...' : `${summary.newVsReturning || 0}%`,
+        badge: 'New visitor share',
+        icon: UserPlus
+      }
+    ],
+    [loading, summary]
+  );
+
+  const funnelStages: FunnelStage[] = intelligence?.funnel || [];
+  const segments: Segment[] = intelligence?.segments || [];
+  const identities: IdentityRow[] = intelligence?.recentIdentities || [];
+  const topAttribution: Attribution[] = intelligence?.topAttribution || [];
+
+  const insights = [
     {
-      key: 'identity',
-      header: 'Customer Identity',
-      render: (_, row) => (
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
-            {row.name.charAt(0)}
-          </div>
-          <div>
-            <Typography variant="body" weight="bold" className="text-sm">
-              {row.name}
-            </Typography>
-            <Typography variant="micro" className="text-text-muted">
-              {row.email}
-            </Typography>
-          </div>
-        </div>
-      )
+      title: 'Funnel leakage detected',
+      description: '14% drop in cart-to-checkout in mobile Safari users.',
+      icon: Activity,
+      color: '#f59e0b'
     },
     {
-      key: 'state',
-      header: 'Lifecycle State',
-      render: (val) => (
-        <Badge variant={val === 'VIP' ? 'success' : 'info'} size="sm" dot>
-          {val}
-        </Badge>
-      )
+      title: 'Segment growth spike',
+      description: 'High-value VIP segment grew by 24% following v3.0 release.',
+      icon: Layers,
+      color: '#22c55e'
     },
-    { key: 'sessions', header: 'Sessions', align: 'right' },
-    { key: 'lastActive', header: 'Last Active', align: 'right' },
     {
-      key: 'actions',
-      header: '',
-      align: 'right',
-      render: () => <ChevronRight size={14} className="text-text-muted" />
+      title: 'Anomalous guest pattern',
+      description: 'Increased bot-like traffic detected from the DE region.',
+      icon: MapPin,
+      color: '#60a5fa'
     }
   ];
 
+  const panelStyle: React.CSSProperties = {
+    borderRadius: '12px',
+    border: '1px solid var(--border-card)',
+    background: 'var(--bg-card)',
+    padding: '24px',
+    overflow: 'visible'
+  };
+
   return (
-    <PageLayout
-      title="Customer Intelligence Lab"
-      subtitle="Strategic behavioral analysis, funnel exploration, and identity-aware journey tracking."
-      icon={<Users size={24} />}
-      eyebrow={<span>Identity analytics</span>}
-    >
-      <div className="space-y-6 pb-12">
-        <CustomerDiscoveryHeader stats={summary} loading={loading} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <BehavioralFunnel stages={intelligence?.funnel || []} loading={loading} />
-              <SegmentIntelligence segments={intelligence?.segments || []} loading={loading} onSelect={() => undefined} />
+    <>
+      <div
+        style={{
+          padding: '24px 28px',
+          maxWidth: '1280px',
+          margin: '0 auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '24px',
+          overflow: 'visible'
+        }}
+      >
+        <div style={{ marginBottom: '8px', overflow: 'visible' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+            <div
+              style={{
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
+            >
+              <Users style={{ width: '16px', height: '16px', color: 'var(--text-secondary)' }} />
             </div>
+            <span
+              style={{
+                fontSize: '10px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: 'var(--text-label)',
+                marginBottom: '0'
+              }}
+            >
+              Identity Analytics
+            </span>
+          </div>
 
-            <Card className="p-0 border-subtle overflow-hidden">
-              <div className="p-4 border-b border-subtle flex justify-between items-center bg-muted/20">
-                <div className="flex items-center gap-2">
-                  <TableIcon size={18} className="text-text-muted" />
-                  <Typography variant="body" weight="bold" className="text-sm uppercase tracking-wider text-text-muted">
-                    Recent Identity Log
-                  </Typography>
+          <div style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '6px' }}>
+            Customer Intelligence Lab
+            <span
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: '#22c55e',
+                display: 'inline-block',
+                marginLeft: '10px',
+                verticalAlign: 'middle'
+              }}
+            />
+          </div>
+
+          <div
+            style={{
+              fontSize: '13px',
+              color: 'var(--text-muted)',
+              lineHeight: 1.6,
+              maxWidth: '760px'
+            }}
+          >
+            Strategic behavioral analysis, funnel exploration, and identity-aware journey tracking.
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '20px',
+            overflow: 'visible'
+          }}
+        >
+          {metricCards.map((card) => {
+            const Icon = card.icon;
+            return (
+              <div
+                key={card.label}
+                style={{
+                  borderRadius: '12px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: '140px',
+                  overflow: 'visible'
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: '12px'
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                      color: 'var(--text-label)',
+                      fontWeight: 500
+                    }}
+                  >
+                    {card.label}
+                  </span>
+                  <Icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" size={14} />
-                    <input
-                      type="text"
-                      placeholder="Search identities..."
-                      className="bg-surface border border-subtle rounded-lg pl-9 pr-4 py-1.5 text-xs focus:outline-none focus:border-primary w-48"
-                    />
-                  </div>
-                  <button type="button" className="p-1.5 rounded-lg border border-subtle bg-surface hover:bg-muted transition-all" aria-label="Filter identities">
-                    <Filter size={14} className="text-text-muted" />
-                  </button>
+
+                <div style={{ fontSize: '38px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '8px 0' }}>
+                  {card.value}
+                </div>
+
+                <div style={{ marginTop: '12px' }}>
+                  <span style={{ fontSize: '12px', color: '#22c55e' }}>{card.badge}</span>
                 </div>
               </div>
-              <OperationalTable
-                columns={identityColumns}
-                data={intelligence?.recentIdentities || []}
-                isLoading={loading}
-                onRowClick={(customer) => {
+            );
+          })}
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            gap: '20px',
+            overflow: 'visible'
+          }}
+        >
+          <div style={panelStyle}>
+            <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '4px' }}>
+              Conversion Journey Intelligence
+            </div>
+            <span
+              style={{
+                padding: '3px 10px',
+                borderRadius: '999px',
+                fontSize: '10px',
+                border: '1px solid var(--border-input)',
+                color: 'var(--text-muted)',
+                marginBottom: '20px',
+                display: 'inline-block',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              Site-Wide Funnel
+            </span>
+
+            <div style={{ overflow: 'visible' }}>
+              {(loading ? [] : funnelStages).map((stage, idx) => {
+                const previousPercent = idx > 0 ? funnelStages[idx - 1].percent : stage.percent;
+                const dropoff = Math.max(previousPercent - stage.percent, 0);
+
+                return (
+                  <div key={`${stage.stage}-${idx}`} style={{ marginBottom: idx === funnelStages.length - 1 ? '0' : '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{stage.stage}</span>
+                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{stage.percent}%</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase' }}>
+                        {stage.count.toLocaleString()} Users
+                      </span>
+                      <span style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase' }}>Conversion</span>
+                    </div>
+                    <div
+                      style={{
+                        height: '10px',
+                        borderRadius: '999px',
+                        background: 'var(--bg-input)',
+                        overflow: 'visible',
+                        position: 'relative'
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${Math.max(6, stage.percent)}%`,
+                          height: '100%',
+                          borderRadius: '999px',
+                          background: 'linear-gradient(90deg, #60a5fa 0%, #22c55e 100%)'
+                        }}
+                      />
+                    </div>
+                    {idx > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', color: 'var(--text-label)' }}>
+                        <ArrowDown style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                        <span style={{ fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                          {dropoff}% leakage from previous stage
+                        </span>
+                        {dropoff > 10 && <AlertCircle style={{ width: '16px', height: '16px', flexShrink: 0, color: '#f59e0b' }} />}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {loading && (
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>Loading funnel intelligence...</div>
+              )}
+            </div>
+          </div>
+
+          <div style={panelStyle}>
+            <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '20px' }}>
+              Behavioral Segmentation
+            </div>
+
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 80px 60px 70px',
+                gap: '8px',
+                padding: '0 0 10px',
+                borderBottom: '1px solid var(--border-card)',
+                marginBottom: '12px'
+              }}
+            >
+              {['Segment', 'Users', 'CR', 'Growth'].map((label) => (
+                <span
+                  key={label}
+                  style={{
+                    fontSize: '10px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
+                    color: 'var(--text-label)'
+                  }}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+
+            {(loading ? [] : segments).map((segment, idx) => (
+              <div
+                key={`${segment.name}-${idx}`}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 80px 60px 70px',
+                  gap: '8px',
+                  padding: '12px 0',
+                  borderBottom: idx === segments.length - 1 ? 'none' : '1px solid var(--border-card)',
+                  alignItems: 'center'
+                }}
+              >
+                <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{segment.name}</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{segment.size.toLocaleString()}</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{segment.conversion}%</span>
+                <span style={{ fontSize: '13px', color: segment.growth >= 0 ? '#22c55e' : '#f87171' }}>
+                  {segment.growth >= 0 ? '+' : '-'}
+                  {Math.abs(segment.growth)}%
+                </span>
+              </div>
+            ))}
+            {loading && (
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>Loading segment intelligence...</div>
+            )}
+          </div>
+
+          <div style={panelStyle}>
+            <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
+              Behavioral Insights
+            </div>
+
+            {insights.map((insight, idx) => {
+              const Icon = insight.icon;
+
+              return (
+                <div
+                  key={insight.title}
+                  style={{
+                    padding: '14px 0',
+                    borderBottom: idx === insights.length - 1 ? 'none' : '1px solid var(--border-card)',
+                    display: 'flex',
+                    gap: '12px',
+                    alignItems: 'flex-start'
+                  }}
+                >
+                  <Icon style={{ width: '16px', height: '16px', flexShrink: 0, marginTop: '2px', color: insight.color }} />
+                  <div>
+                    <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 5px' }}>{insight.title}</p>
+                    <p
+                      style={{
+                        fontSize: '11px',
+                        color: 'var(--text-muted)',
+                        lineHeight: 1.6,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em',
+                        margin: 0
+                      }}
+                    >
+                      {insight.description}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div style={{ marginTop: '20px' }}>
+              <div
+                style={{
+                  fontSize: '10px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  color: 'var(--text-label)'
+                }}
+              >
+                Top Traffic Attribution
+              </div>
+
+              <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {(loading ? [] : topAttribution).map((attr) => (
+                  <div key={attr.source} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-primary)' }}>
+                      {attr.source}
+                      <span style={{ color: 'var(--text-muted)' }}> · {attr.sessions.toLocaleString()} sessions</span>
+                    </span>
+                    <span style={{ fontSize: '12px', color: '#60a5fa', whiteSpace: 'nowrap' }}>{attr.conversion}% CR</span>
+                  </div>
+                ))}
+                {loading && <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Loading attribution data...</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ overflow: 'visible' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '16px'
+            }}
+          >
+            <div
+              style={{
+                fontSize: '12px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                color: 'var(--text-muted)'
+              }}
+            >
+              Recent Identity Log
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  minWidth: '240px'
+                }}
+              >
+                <Search style={{ width: '16px', height: '16px', color: 'var(--text-label)', flexShrink: 0 }} />
+                <input
+                  type="text"
+                  placeholder="Search identities..."
+                  style={{
+                    flex: 1,
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    color: 'var(--text-primary)',
+                    fontSize: '12px'
+                  }}
+                />
+              </div>
+              <button
+                type="button"
+                aria-label="Filter identities"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  cursor: 'pointer'
+                }}
+              >
+                <Filter style={{ width: '16px', height: '16px', color: 'var(--text-muted)' }} />
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              borderRadius: '12px',
+              border: '1px solid var(--border-card)',
+              background: 'var(--bg-card)',
+              padding: '0',
+              overflow: 'visible'
+            }}
+          >
+            <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-card)' }}>
+              <div style={{ display: 'flex', gap: '16px', alignItems: 'center', color: 'var(--text-label)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                <span style={{ flex: 2 }}>Customer Identity</span>
+                <span style={{ flex: 1 }}>Lifecycle State</span>
+                <span style={{ width: '80px', textAlign: 'right' }}>Sessions</span>
+                <span style={{ width: '120px', textAlign: 'right' }}>Last Active</span>
+                <span style={{ width: '24px' }} />
+              </div>
+            </div>
+
+            {(loading ? [] : identities).map((customer, idx) => (
+              <button
+                key={customer.id || `${customer.email}-${idx}`}
+                type="button"
+                onClick={() => {
                   setSelectedCustomer(customer);
                   setIsDrawerOpen(true);
                 }}
-              />
-            </Card>
-          </div>
-
-          <div className="space-y-6">
-            <Card className="p-6 border-subtle">
-              <Typography variant="body" weight="bold" className="text-sm uppercase tracking-wider text-text-muted mb-6 block border-b border-subtle pb-2">
-                Behavioral Insights
-              </Typography>
-              <div className="space-y-4">
-                {[
-                  { title: 'Funnel leakage detected', detail: '14% drop in cart-to-checkout in mobile Safari users.', type: 'warning', icon: <Activity size={16} /> },
-                  { title: 'Segment growth spike', detail: 'High-value VIP segment grew by 24% following v3.0 release.', type: 'success', icon: <Layers size={16} /> },
-                  { title: 'Anomalous guest pattern', detail: 'Increased bot-like traffic detected from the DE region.', type: 'info', icon: <MapPin size={16} /> }
-                ].map((insight, idx) => (
-                  <div key={idx} className="p-4 rounded-xl border border-subtle bg-muted/20 hover:bg-muted/40 transition-all cursor-pointer group">
-                    <div className="flex items-start gap-4">
-                      <div className={insight.type === 'warning' ? 'p-2 rounded-lg bg-warning/10 text-warning' : insight.type === 'success' ? 'p-2 rounded-lg bg-success/10 text-success' : 'p-2 rounded-lg bg-info/10 text-info'}>
-                        {insight.icon}
-                      </div>
-                      <div>
-                        <Typography variant="body" weight="bold" className="text-sm block">
-                          {insight.title}
-                        </Typography>
-                        <Typography variant="micro" className="text-text-muted mt-1 block">
-                          {insight.detail}
-                        </Typography>
-                      </div>
+                style={{
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: '14px 20px',
+                  borderBottom: idx === identities.length - 1 ? 'none' : '1px solid var(--border-card)',
+                  display: 'flex',
+                  gap: '16px',
+                  alignItems: 'center',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                  color: 'var(--text-primary)'
+                }}
+              >
+                <div style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                  <div
+                    style={{
+                      width: '32px',
+                      height: '32px',
+                      borderRadius: '50%',
+                      background: 'rgba(96,165,250,0.12)',
+                      border: '1px solid rgba(96,165,250,0.2)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#60a5fa',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      flexShrink: 0
+                    }}
+                  >
+                    {customer.name?.charAt(0) || '?'}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '2px' }}>{customer.name}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {customer.email}
                     </div>
                   </div>
-                ))}
-              </div>
-            </Card>
+                </div>
 
-            <Card className="p-6 border-subtle">
-              <Typography variant="body" weight="bold" className="text-sm uppercase tracking-wider text-text-muted mb-6 block border-b border-subtle pb-2">
-                Top Traffic Attribution
-              </Typography>
-              <div className="space-y-3">
-                {intelligence?.topAttribution?.map((attr: any, idx: number) => (
-                  <div key={idx} className="flex flex-col gap-1">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold">{attr.source}</span>
-                      <span className="text-primary font-bold">{attr.conversion}% CR</span>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full bg-primary" style={{ width: `${(attr.sessions / 5000) * 100}%` }} />
-                    </div>
-                    <Typography variant="micro" className="text-text-muted">
-                      {attr.sessions.toLocaleString()} sessions
-                    </Typography>
-                  </div>
-                ))}
-              </div>
-            </Card>
+                <div style={{ flex: 1 }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '3px 10px',
+                      borderRadius: '999px',
+                      fontSize: '10px',
+                      border: '1px solid var(--border-input)',
+                      color: customer.state === 'VIP' ? '#22c55e' : 'var(--text-secondary)',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {customer.state}
+                  </span>
+                </div>
+
+                <div style={{ width: '80px', textAlign: 'right', fontSize: '13px', color: 'var(--text-secondary)' }}>{customer.sessions}</div>
+                <div style={{ width: '120px', textAlign: 'right', fontSize: '13px', color: 'var(--text-secondary)' }}>{customer.lastActive}</div>
+                <ChevronRight style={{ width: '16px', height: '16px', color: 'var(--text-label)', flexShrink: 0 }} />
+              </button>
+            ))}
+            {loading && <div style={{ padding: '18px 20px', fontSize: '13px', color: 'var(--text-muted)' }}>Loading identity log...</div>}
           </div>
         </div>
+      </div>
+
+      <div
+        style={{
+          position: 'fixed',
+          bottom: '20px',
+          left: '24px',
+          zIndex: 50,
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-input)',
+          borderRadius: '999px',
+          padding: '6px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: '11px',
+          color: 'var(--text-muted)'
+        }}
+      >
+        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+        Live feed · System nominal
       </div>
 
       <DiagnosticDrawer
@@ -228,84 +682,195 @@ export default function CustomersPage() {
         width="700px"
       >
         {selectedCustomer && (
-          <div className="space-y-8">
-            <section className="flex items-center gap-6 p-6 bg-muted/20 rounded-3xl border border-subtle">
-              <div className="w-20 h-20 rounded-full bg-primary text-white flex items-center justify-center text-3xl font-bold border-4 border-surface shadow-xl">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+            <section
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '24px',
+                padding: '24px',
+                background: 'var(--bg-input)',
+                borderRadius: '24px',
+                border: '1px solid var(--border-card)'
+              }}
+            >
+              <div
+                style={{
+                  width: '80px',
+                  height: '80px',
+                  borderRadius: '50%',
+                  background: '#60a5fa',
+                  color: 'var(--text-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '32px',
+                  fontWeight: 700,
+                  border: '4px solid var(--border-card)',
+                  flexShrink: 0
+                }}
+              >
                 {selectedCustomer.name.charAt(0)}
               </div>
               <div>
-                <Typography variant="h2" weight="bold" noMargin>
-                  {selectedCustomer.name}
-                </Typography>
-                <Typography variant="body" className="text-text-muted flex items-center gap-2">
-                  <Mail size={14} /> {selectedCustomer.email}
-                </Typography>
-                <div className="flex gap-2 mt-3">
-                  <Badge variant="success" size="sm">{selectedCustomer.state}</Badge>
-                  <Badge variant="default" size="sm">ID Verified</Badge>
-                  <Badge variant="default" size="sm">2FA Active</Badge>
+                <div style={{ fontSize: '28px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>{selectedCustomer.name}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '14px', marginTop: '8px' }}>
+                  <Mail style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                  {selectedCustomer.email}
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+                  {[selectedCustomer.state, 'ID Verified', '2FA Active'].map((label, idx) => (
+                    <span
+                      key={`${label}-${idx}`}
+                      style={{
+                        display: 'inline-block',
+                        padding: '3px 10px',
+                        borderRadius: '999px',
+                        fontSize: '10px',
+                        border: '1px solid var(--border-input)',
+                        color: idx === 0 ? '#22c55e' : 'var(--text-secondary)',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      {label}
+                    </span>
+                  ))}
                 </div>
               </div>
             </section>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl border border-subtle space-y-3">
-                <div className="flex items-center gap-2 text-text-muted">
-                  <Calendar size={16} />
-                  <Typography variant="micro" weight="bold" className="uppercase tracking-wider">Customer Since</Typography>
-                </div>
-                <Typography variant="body" weight="bold" className="text-sm">October 24, 2025</Typography>
-              </div>
-              <div className="p-4 rounded-2xl border border-subtle space-y-3">
-                <div className="flex items-center gap-2 text-text-muted">
-                  <Globe size={16} />
-                  <Typography variant="micro" weight="bold" className="uppercase tracking-wider">Origin Tracking</Typography>
-                </div>
-                <Typography variant="body" weight="bold" className="text-sm">London, GB • Virgin Media</Typography>
-              </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              {[
+                { icon: Calendar, label: 'Customer Since', value: 'October 24, 2025' },
+                { icon: Globe, label: 'Origin Tracking', value: 'London, GB • Virgin Media' }
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div
+                    key={item.label}
+                    style={{
+                      padding: '16px',
+                      borderRadius: '18px',
+                      border: '1px solid var(--border-card)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)' }}>
+                      <Icon style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+                      <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{item.label}</span>
+                    </div>
+                    <div style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 500 }}>{item.value}</div>
+                  </div>
+                );
+              })}
             </div>
 
             <section>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <History size={18} className="text-text-muted" />
-                  <Typography variant="h3" weight="bold" noMargin className="text-sm">Behavioral Journey</Typography>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <History style={{ width: '16px', height: '16px', color: 'var(--text-muted)' }} />
+                  <div style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 500 }}>Behavioral Journey</div>
                 </div>
-                <Button variant="ghost" size="sm">View full session log</Button>
+                <button
+                  type="button"
+                  style={{
+                    border: '1px solid var(--border-card)',
+                    background: 'transparent',
+                    color: 'var(--text-secondary)',
+                    borderRadius: '10px',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  View full session log
+                </button>
               </div>
-              <div className="space-y-0 border-l border-subtle ml-2 pl-6">
+
+              <div style={{ borderLeft: '1px solid var(--border-card)', marginLeft: '10px', paddingLeft: '24px' }}>
                 {[
-                  { time: '2m ago', event: 'Purchased Order #4421', desc: 'Basket Value: $244.10', icon: <Shield className="text-success" /> },
-                  { time: '12m ago', event: 'Completed Checkout Stage 3', desc: 'Payment Method: Visa • 4421', icon: <Clock /> },
-                  { time: '4h ago', event: 'Session Started (Direct)', desc: 'Device: Apple iPhone 15 Pro • iOS 17.4', icon: <Smartphone /> },
-                  { time: '2d ago', event: 'Engaged with Loyalty Reward', desc: 'Claimed: 15% Welcome Discount', icon: <Activity className="text-primary" /> }
-                ].map((item, idx) => (
-                  <div key={idx} className="relative pb-6 last:pb-0">
-                    <div className="absolute left-[-31px] top-1 w-2.5 h-2.5 rounded-full bg-surface border-2 border-primary" />
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <Typography variant="body" weight="bold" className="text-sm">{item.event}</Typography>
-                        <Typography variant="micro" className="text-text-muted mt-1 block">{item.desc}</Typography>
+                  { time: '2m ago', event: 'Purchased Order #4421', desc: 'Basket Value: $244.10', icon: Shield, color: '#22c55e' },
+                  { time: '12m ago', event: 'Completed Checkout Stage 3', desc: 'Payment Method: Visa • 4421', icon: Clock, color: 'var(--text-secondary)' },
+                  { time: '4h ago', event: 'Session Started (Direct)', desc: 'Device: Apple iPhone 15 Pro • iOS 17.4', icon: Smartphone, color: 'var(--text-secondary)' },
+                  { time: '2d ago', event: 'Engaged with Loyalty Reward', desc: 'Claimed: 15% Welcome Discount', icon: Activity, color: '#60a5fa' }
+                ].map((item, idx) => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={`${item.event}-${idx}`} style={{ position: 'relative', paddingBottom: idx === 3 ? '0' : '24px' }}>
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: '-29px',
+                          top: '4px',
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          background: 'var(--bg-card)',
+                          border: '2px solid #60a5fa'
+                        }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <Icon style={{ width: '16px', height: '16px', color: item.color, flexShrink: 0, marginTop: '2px' }} />
+                          <div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{item.event}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>{item.desc}</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap' }}>
+                          {item.time}
+                        </div>
                       </div>
-                      <Typography variant="micro" className="text-text-muted font-bold uppercase">{item.time}</Typography>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
 
-            <section className="pt-4 border-t border-subtle flex gap-4">
-              <button type="button" className="action-btn action-btn--primary" style={{ flex: 1 }}>
-                <Search size={16} />
+            <section style={{ paddingTop: '16px', borderTop: '1px solid var(--border-card)', display: 'flex', gap: '16px' }}>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  borderRadius: '12px',
+                  border: '1px solid rgba(96,165,250,0.2)',
+                  background: '#60a5fa',
+                  color: 'var(--text-primary)',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: 'pointer'
+                }}
+              >
+                <Search style={{ width: '16px', height: '16px', flexShrink: 0 }} />
                 Analyze Path
               </button>
-              <button type="button" className="action-btn action-btn--outline" style={{ flex: 1 }}>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  borderRadius: '12px',
+                  border: '1px solid var(--border-input)',
+                  background: 'transparent',
+                  color: 'var(--text-primary)',
+                  padding: '12px 16px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: 'pointer'
+                }}
+              >
                 Re-Link Identity
               </button>
             </section>
           </div>
         )}
       </DiagnosticDrawer>
-    </PageLayout>
+    </>
   );
 }

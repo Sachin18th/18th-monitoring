@@ -4,7 +4,7 @@ import { IngestionService } from '../services/ingestion.service';
 
 export const simulationRoutes = async (fastify: FastifyInstance) => {
   fastify.post('/simulate/full-observability', async (req, reply) => {
-    const { siteId = 'test-site-001' } = req.body as any;
+    const { siteId = 'proj-18th-digitech' } = req.body as any;
 
     // 1. RUM & Performance Scenarios
     await IngestionService.processBrowserEvents(siteId, [
@@ -55,7 +55,7 @@ export const simulationRoutes = async (fastify: FastifyInstance) => {
   });
 
   fastify.post('/simulate/critical-failure', async (req, reply) => {
-    const { siteId = 'site-magento-001' } = req.body as any;
+    const { siteId = 'proj-18th-digitech' } = req.body as any;
 
     console.log(`[Simulate] Triggering CRITICAL failure scenario for ${siteId}…`);
 

@@ -1,10 +1,8 @@
 import React from 'react';
-import { Typography } from '../Typography';
-import { Card } from './index';
-import { Badge, BadgeVariant } from '../Badge';
-import { LucideIcon, TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { Badge } from '../Badge';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -19,8 +17,8 @@ export interface MetricCardProps {
     isUp: boolean;
     label?: string;
   };
-  state?: BadgeVariant;
-  icon?: LucideIcon;
+  status?: 'critical' | 'warning' | 'success' | 'default';
+  icon?: React.ComponentType<any>;
   loading?: boolean;
   className?: string;
 }
@@ -30,57 +28,59 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   value,
   unit,
   trend,
-  state = 'default',
+  status = 'default',
   icon: Icon,
   loading,
   className
 }) => {
   return (
-    <Card className={cn('ui-metric-card', className)}>
-      <div className="metric-header">
-        <Typography variant="caption" weight="semibold" className="metric-title">
-          {title}
-        </Typography>
+    <div className={cn(
+      'metric-card', 
+      status !== 'default' && `metric-card--${status}`,
+      className
+    )}>
+      <div className="metric-card__header">
+        <span className="metric-card__title">{title}</span>
         {Icon && (
-          <div className={cn('metric-icon-wrapper', `variant-${state}`)}>
+          <div className="metric-card__icon">
             <Icon size={16} />
           </div>
         )}
       </div>
 
-      <div className="metric-body">
+      <div className="metric-card__value-container">
         {loading ? (
-          <div className="skeleton h-8 w-24 mb-2" />
+          <div className="skeleton h-10 w-32" />
         ) : (
-          <div className="metric-value-container">
-            <Typography variant="h2" weight="bold" className="metric-value" noMargin>
-              {value}
-            </Typography>
-            {unit && (
-              <Typography variant="caption" weight="medium" className="metric-unit">
-                {unit}
-              </Typography>
-            )}
-          </div>
-        )}
-
-        {!loading && (trend || state !== 'default') && (
-          <div className="metric-footer">
-            {trend && (
-              <div className={cn('metric-trend', trend.isUp ? 'is-up' : 'is-down')}>
-                {trend.isUp ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                <span>{trend.value}%</span>
-                {trend.label && <span className="trend-label">{trend.label}</span>}
-              </div>
-            )}
-            {!trend && state !== 'default' && (
-              <Badge variant={state} size="sm" dot>
-                {state.toUpperCase()}
-              </Badge>
-            )}
-          </div>
+          <>
+            <span className="metric-card__value">{value}</span>
+            {unit && <span className="metric-card__unit">{unit}</span>}
+          </>
         )}
       </div>
-    </Card>
+
+      <div className="metric-card__footer">
+        {trend && !loading && (
+          <div className={cn(
+            'metric-card__trend', 
+            trend.isUp ? 'metric-card__trend--up' : 'metric-card__trend--down'
+          )}>
+            {trend.isUp ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+            <span>{trend.value}%</span>
+            {trend.label && <span className="opacity-70 ml-1">{trend.label}</span>}
+          </div>
+        )}
+        
+        {!trend && !loading && status !== 'default' && (
+          <Badge 
+            variant={status === 'critical' ? 'error' : status === 'warning' ? 'warning' : 'success'} 
+            size="sm" 
+            dot
+          >
+            {status}
+          </Badge>
+        )}
+      </div>
+    </div>
   );
 };

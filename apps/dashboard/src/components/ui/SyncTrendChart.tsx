@@ -20,9 +20,11 @@ interface ChartPoint {
 interface SyncTrendChartProps {
     data: ChartPoint[];
     title: string;
+    height?: number;
+    className?: string;
 }
 
-export const SyncTrendChart = ({ data, title }: SyncTrendChartProps) => {
+export const SyncTrendChart = ({ data, title, height = 300, className }: SyncTrendChartProps) => {
     if (!data || data.length === 0) return null;
 
     return (
@@ -39,7 +41,7 @@ export const SyncTrendChart = ({ data, title }: SyncTrendChartProps) => {
                 {title}
             </h3>
             
-            <div style={{ width: '100%', height: 300 }}>
+            <div style={{ width: '100%', height: height }}>
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                         <defs>
