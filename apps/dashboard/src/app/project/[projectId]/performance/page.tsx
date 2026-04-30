@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 
 // Intelligence Components
-import { AnomalyExplorer } from '../../../../components/performance/AnomalyExplorer';
+import { AnomalyExplorer, type PerformanceAnomaly } from '../../../../components/performance/AnomalyExplorer';
 import { PerformanceTrendExplorer } from '../../../../components/performance/PerformanceTrendExplorer';
 import { SegmentationPivot } from '../../../../components/performance/SegmentationPivot';
 
@@ -169,6 +169,28 @@ const bottleneckRowStyle: React.CSSProperties = {
     borderBottom: '1px solid var(--border-card)',
 };
 
+const normalizeSeverity = (severity: unknown): PerformanceAnomaly['severity'] => {
+    return severity === 'critical' || severity === 'warning' || severity === 'info'
+        ? severity
+        : 'warning';
+};
+
+const normalizeAnomalies = (rows: any[]): PerformanceAnomaly[] => {
+    return rows.map((row, index) => {
+        const source = row?.source || row?.platform || row?.impact || 'Performance';
+
+        return {
+            id: String(row?.id || `anomaly-${index}`),
+            metric: String(row?.metric || row?.title || row?.type || source),
+            severity: normalizeSeverity(row?.severity),
+            impact: String(row?.impact || `Source: ${source}`),
+            scope: String(row?.scope || row?.title || row?.service || 'Monitored surface'),
+            window: String(row?.window || row?.timestamp || 'Recent'),
+            deviation: String(row?.deviation || row?.value || 'Detected'),
+        };
+    });
+};
+
 export default function PerformancePage() {
     const params = useParams();
     const projectId = params.projectId as string;
@@ -180,13 +202,13 @@ export default function PerformancePage() {
         p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, errorRate: 0, affectedServices: 0, uptime: 0
     });
     const [trends, setTrends] = useState<any[]>([]);
-    const [anomalies, setAnomalies] = useState<any[]>([]);
+    const [anomalies, setAnomalies] = useState<PerformanceAnomaly[]>([]);
     const [regional, setRegional] = useState<any[]>([]);
     const [apis, setApis] = useState<any[]>([]);
     const [integrations, setIntegrations] = useState<any[]>([]);
 
     // UI State
-    const [selectedAnomaly, setSelectedAnomaly] = useState<any>(null);
+    const [selectedAnomaly, setSelectedAnomaly] = useState<PerformanceAnomaly | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [activeMetric, setActiveMetric] = useState('latency');
 
@@ -205,7 +227,7 @@ export default function PerformancePage() {
 
             setSummary(summ || summary);
             setTrends(Array.isArray(trnd) ? trnd : []);
-            setAnomalies(Array.isArray(anom) ? anom : []);
+            setAnomalies(Array.isArray(anom) ? normalizeAnomalies(anom) : []);
             setIntegrations(Array.isArray(intg) ? intg : []);
             
             // Defensive mapping for regional data
@@ -248,7 +270,7 @@ export default function PerformancePage() {
         return () => clearInterval(interval);
     }, [loadData]);
 
-    const handleAnomalyInspect = (anomaly: any) => {
+    const handleAnomalyInspect = (anomaly: PerformanceAnomaly) => {
         setSelectedAnomaly(anomaly);
         setIsDrawerOpen(true);
     };
@@ -276,7 +298,7 @@ export default function PerformancePage() {
                         <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
                             <History style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Activity
                         </button>
-                        <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid #6366f1', background: '#4f46e5', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+                        <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid rgba(96,165,250,0.2)', background: '#2563EB', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: '#fff', flexShrink: 0, cursor: 'pointer' }}>
                             <ShieldCheck style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Health Overview
                         </button>
                     </div>

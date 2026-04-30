@@ -86,8 +86,8 @@ const actionButtonStyle: React.CSSProperties = {
 const dangerButtonStyle: React.CSSProperties = {
   ...actionButtonStyle,
   border: '1px solid #fb7185',
-  background: '#e11d48',
-  color: 'var(--text-primary)',
+  background: '#dd1641f5',
+  color: '#fff',
 };
 
 const bannerStyle: React.CSSProperties = {
@@ -193,7 +193,7 @@ const incidentCardFooterStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: '16px',
   padding: '12px 20px',
-  background: '#050816',
+  background: '#f8f8f8',
 };
 
 const badgeBaseStyle: React.CSSProperties = {
@@ -309,9 +309,9 @@ export default function IncidentCenterPage() {
 
       <div style={statsGridStyle}>
         {[
-          { label: 'Availability', value: availabilityStatus, color: availabilityStatus !== 'Nominal' ? '#f87171' : '#34d399', icon: ShieldAlert },
-          { label: 'Latency', value: latencyStatus, color: latencyStatus !== 'Nominal' ? '#fbbf24' : '#34d399', icon: AlertTriangle },
-          { label: 'Errors', value: errorStatus, color: errorStatus !== 'Nominal' ? '#f87171' : '#34d399', icon: CheckCircle2 },
+          { label: 'Availability', value: availabilityStatus, color: availabilityStatus !== 'Nominal' ? '#f87171' : '#000000', icon: ShieldAlert },
+          { label: 'Latency', value: latencyStatus, color: latencyStatus !== 'Nominal' ? '#fbbf24' : '#000000', icon: AlertTriangle },
+          { label: 'Errors', value: errorStatus, color: errorStatus !== 'Nominal' ? '#f87171' : '#000000', icon: CheckCircle2 },
         ].map((stat) => (
           <div key={stat.label} style={statCardStyle}>
             <div style={statHeaderStyle}>
@@ -320,7 +320,7 @@ export default function IncidentCenterPage() {
             </div>
             <div style={statValueStyle}>{stat.value}</div>
             <div style={statBottomStyle}>
-              <span style={{ ...badgeBaseStyle, background: stat.value === 'Nominal' ? '#14532d' : stat.color === '#fbbf24' ? '#78350f' : '#450a0a', color: stat.color }}>{stat.value.toUpperCase()}</span>
+              <span style={{ ...badgeBaseStyle, background: stat.value === 'Nominal' ? '#40d27692' : stat.color === '#fbbf24' ? '#78350f' : '#450a0a', color: stat.color }}>{stat.value.toUpperCase()}</span>
               <span style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{stat.label}</span>
             </div>
           </div>
@@ -341,8 +341,8 @@ export default function IncidentCenterPage() {
             incidents.map((inc) => {
               const isInvestigating = inc.status === 'INVESTIGATING' || inc.status === 'OPEN';
               const isMonitoring = inc.status === 'MONITORING';
-              const statusBg = isInvestigating ? '#450a0a' : isMonitoring ? '#78350f' : '#064e3b';
-              const statusColor = isInvestigating ? '#f87171' : isMonitoring ? '#fbbf24' : '#34d399';
+              const statusBg = isInvestigating ? '#450a0a' : isMonitoring ? '#78350f' : '#40d27692';
+              const statusColor = isInvestigating ? '#f87171' : isMonitoring ? '#fbbf24' : '#000000';
               const severityBg = inc.severity === 'CRITICAL' ? '#7f1d1d' : '#1f2937';
               const severityColor = inc.severity === 'CRITICAL' ? '#fff' : '#9ca3af';
 
@@ -407,7 +407,7 @@ export default function IncidentCenterPage() {
                 </div>
               ))}
             </div>
-            <button style={{ width: '100%', marginTop: '32px', padding: '8px 12px', borderRadius: '8px', background: '#1f2937', border: 'none', color: 'var(--text-primary)', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer' }}>
+            <button style={{ width: '100%', marginTop: '32px', padding: '8px 12px', borderRadius: '8px', background: '#d4dce9', border: 'none', color: 'var(--text-primary)', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer' }}>
               View Status Page
             </button>
           </div>

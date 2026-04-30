@@ -60,7 +60,7 @@ export const ApiMetadataSchema = z.object({
         offset: z.number(),
         hasNext: z.boolean(),
     }).optional(),
-    filters: z.record(z.any()).optional(),
+    filters: z.record(z.string(), z.any()).optional(),
     freshness: z.enum(['fresh', 'delayed', 'stale', 'partial']).default('fresh'),
 });
 

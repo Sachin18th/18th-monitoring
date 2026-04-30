@@ -241,11 +241,11 @@ export default function JourneyIntelligencePage() {
                   gap: '8px',
                   borderRadius: '10px',
                   border: '1px solid rgba(96,165,250,0.2)',
-                  background: '#60a5fa',
+                  background: '#2563EB',
                   padding: '10px 14px',
                   fontSize: '12px',
                   fontWeight: 600,
-                  color: 'var(--text-primary)',
+                  color: '#fff',
                   cursor: 'pointer'
                 }}
               >

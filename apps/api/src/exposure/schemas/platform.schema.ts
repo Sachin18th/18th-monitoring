@@ -29,7 +29,7 @@ export const AudienceAnalyticsSchema = z.object({
     totalUsers: z.number(),
     activeUsers: z.number(),
     newVsReturning: z.number(),
-    deviceBreakdown: z.record(z.object({
+    deviceBreakdown: z.record(z.string(), z.object({
         count: z.number(),
         percentage: z.number()
     })),

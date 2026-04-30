@@ -1,4 +1,5 @@
 import { Alert, AlertRule, AlertSeverity, AlertStatus } from '../utils/alerting/types';
+import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
 import crypto from 'crypto';
 
 export class AlertEngine {
@@ -59,6 +60,32 @@ export class AlertEngine {
   static async evaluateProject(siteId: string, tenantId: string) {
     // console.log(`[AlertEngine] Evaluating project-level health for ${siteId}...`);
     // Logic for project-level health evaluation goes here
+  }
+
+  static acknowledge(alertId: string, userId = 'system') {
+    return this.updateStoredAlert(alertId, {
+      status: 'acknowledged',
+      acknowledgedAt: new Date().toISOString(),
+      acknowledgedBy: userId
+    });
+  }
+
+  static resolve(alertId: string, userId = 'system') {
+    return this.updateStoredAlert(alertId, {
+      status: 'resolved',
+      resolvedAt: new Date().toISOString(),
+      resolvedBy: userId
+    });
+  }
+
+  private static updateStoredAlert(alertId: string, updates: Record<string, any>) {
+    const alert = (GlobalMemoryStore.alerts || []).find((item: any) =>
+      item.alertId === alertId || item.id === alertId
+    );
+
+    if (!alert) return null;
+    Object.assign(alert, updates);
+    return alert;
   }
 
   private static mapEventTypeToSource(type: string): string {

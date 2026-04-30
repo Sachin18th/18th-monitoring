@@ -18,8 +18,8 @@ export default function UnauthorizedPage() {
           <Typography variant="body" color="secondary">
             This area is outside your current project permissions. Return to your portfolio or ask an administrator for access.
           </Typography>
-          <Link href="/" style={{ textDecoration: 'none' }}>
-            <Button size="lg">Return to portfolio</Button>
+          <Link href="/login" style={{ textDecoration: 'none' }}>
+            <Button size="lg">Return to login</Button>
           </Link>
         </div>
       </div>

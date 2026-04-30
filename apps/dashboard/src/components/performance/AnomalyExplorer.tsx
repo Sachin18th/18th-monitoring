@@ -19,9 +19,10 @@ export interface AnomalyExplorerProps {
 }
 
 export const AnomalyExplorer: React.FC<AnomalyExplorerProps> = ({ anomalies, onInspect, loading }) => {
-  const getIcon = (impact: string) => {
-    if (impact.includes('Region')) return <MapPin size={16} />;
-    if (impact.includes('Browser') || impact.includes('Device')) return <Smartphone size={16} />;
+  const getIcon = (impact?: string) => {
+    const normalizedImpact = impact || '';
+    if (normalizedImpact.includes('Region')) return <MapPin size={16} />;
+    if (normalizedImpact.includes('Browser') || normalizedImpact.includes('Device')) return <Smartphone size={16} />;
     return <Server size={16} />;
   };
 

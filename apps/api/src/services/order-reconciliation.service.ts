@@ -27,8 +27,7 @@ export class OrderReconciliationService {
         const externalCountResult = await db.select({ count: sql<number>`count(*)` })
             .from(ingestionEvents)
             .where(and(
-                eq(ingestionEvents.siteId, siteId),
-                eq(ingestionEvents.eventType, 'order')
+                eq(ingestionEvents.projectId, siteId)
             ));
         const externalCount = externalCountResult[0]?.count || 0;
 

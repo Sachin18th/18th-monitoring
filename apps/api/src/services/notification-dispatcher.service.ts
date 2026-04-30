@@ -1,6 +1,19 @@
 import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
-import { AlertRecord } from './alert-engine.service';
 import { env } from '../config/env';
+
+type AlertRecord = {
+    id: string;
+    siteId: string;
+    severity: string;
+    status: string;
+    message: string;
+    correlationId?: string;
+    metricRef?: string;
+    currentValue?: unknown;
+    thresholdValue?: unknown;
+    triggeredAt?: string;
+    timestamp?: string;
+};
 
 export class NotificationDispatcher {
 
@@ -32,14 +45,14 @@ export class NotificationDispatcher {
         }
 
         for (const subscription of alertSubscriptions) {
-            await this.sendWithRetry(subscription, payload, alert.correlationId);
+            await this.sendWithRetry(subscription, payload, alert.correlationId || alert.id);
         }
     }
 
     private static buildNotificationPayload(alert: AlertRecord) {
         return {
             event: 'alert.triggered',
-            correlationId: alert.correlationId,
+            correlationId: alert.correlationId || alert.id,
             alert: {
                 id: alert.id,
                 severity: alert.severity,
@@ -48,7 +61,7 @@ export class NotificationDispatcher {
                 metric: alert.metricRef,
                 value: alert.currentValue,
                 threshold: alert.thresholdValue,
-                triggeredAt: alert.triggeredAt,
+                triggeredAt: alert.triggeredAt || alert.timestamp,
                 projectId: alert.siteId
             },
             timestamp: new Date().toISOString()

@@ -316,7 +316,7 @@ export default function MonitoringDashboardPage() {
                     textTransform: 'uppercase',
                     border: 'none',
                     cursor: 'pointer',
-                    background: activeTab === tab ? '#60a5fa' : 'var(--bg-card)',
+                    background: activeTab === tab ? '#2563EB' : 'var(--bg-card)',
                     color: activeTab === tab ? '#fff' : 'var(--text-secondary)'
                   }}
                 >
