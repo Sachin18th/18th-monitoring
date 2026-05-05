@@ -6,9 +6,15 @@ export type BaseEvent = z.infer<typeof BaseEventSchema>;
 export type BrowserIngestPayload = z.infer<typeof BrowserIngestPayloadSchema>;
 export type ServerIngestPayload = z.infer<typeof ServerIngestPayloadSchema>;
 
+<<<<<<< HEAD
 export type Role = 'SUPER_ADMIN' | 'TENANT_ADMIN' | 'PROJECT_ADMIN' | 'OPERATOR' | 'VIEWER' | 'CUSTOMER';
 export type UserStatus = 'active' | 'suspended' | 'inactive';
 export type ProjectStatus = 'ACTIVE' | 'MAINTENANCE' | 'ARCHIVED';
+=======
+export type Role = 'SUPER_ADMIN' | 'ADMIN' | 'CUSTOMER';
+export type UserStatus = 'active' | 'suspended' | 'inactive';
+export type ProjectStatus = 'active' | 'maintenance' | 'archived';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 export interface UserAudit {
     createdAt: string;
@@ -23,7 +29,10 @@ export interface User {
     name: string;
     role: Role;
     status: UserStatus;
+<<<<<<< HEAD
     tenantId: string; // Every user belongs to a tenant
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     passwordHash?: string; // Stored securely
     assignedProjects: string[]; // array of siteIds
     audit: UserAudit;
@@ -31,17 +40,24 @@ export interface User {
 
 export interface Project {
     id: string; // siteId
+<<<<<<< HEAD
     tenantId: string; // Mandatory scoping
     name: string;
     slug: string; // URL-friendly identifier
+=======
+    name: string;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     description?: string;
     status: ProjectStatus;
     organizationId?: string;
     lastActivity?: string;
+<<<<<<< HEAD
     configMetadata?: Record<string, any>;
     createdBy?: string;
     createdAt: string;
     updatedAt: string;
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     metricsSummary?: {
         activeUsers: number;
         errorRate: number;
@@ -67,6 +83,7 @@ export interface PageViewMetadata {
     loadTime?: number;
 }
 
+<<<<<<< HEAD
 // --- Orders Intelligence Domain Types ---
 
 export type OrderChannel = 
@@ -705,3 +722,24 @@ export interface RawIngestionArtifact {
 
 
 
+=======
+export type OrderSource = 'online' | 'offline';
+export type OrderStatus = 'placed' | 'processed' | 'shipped' | 'cancelled' | 'refunded';
+
+export interface CanonicalOrder {
+    orderId: string;
+    externalOrderId?: string;
+    tenantId: string;
+    siteId: string;
+    orderSource: OrderSource;
+    sourceSystem: string;
+    channel: string;
+    orderType: string;
+    status: OrderStatus;
+    currency: string;
+    amount: number;
+    createdAt: string;
+    updatedAt: string;
+    metadata: Record<string, any>;
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

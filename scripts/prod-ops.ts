@@ -7,6 +7,7 @@
  *   npx tsx scripts/prod-ops.ts seed-site <siteId> <actorId>
  */
 
+<<<<<<< HEAD
 declare const require: {
     (name: string): any;
 };
@@ -20,6 +21,12 @@ const crypto = require('crypto');
 import prisma from '../packages/db/src/prisma-client';
 
 type IngestionEventRecord = Awaited<ReturnType<typeof prisma.ingestionEvent.findMany>>[number];
+=======
+import { db } from '../packages/db/src/adapters/postgres-relational.adapter';
+import { rawPayloads, siteConfigs, configVersions } from '../packages/db/src/drizzle/schema';
+import { eq } from 'drizzle-orm';
+import crypto from 'crypto';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 const command = process.argv[2];
 const arg1 = process.argv[3];
@@ -46,32 +53,51 @@ async function run() {
 
 async function listDlq() {
     console.log('[Ops] Fetching payloads with status: FAILED...');
+<<<<<<< HEAD
     const failures = await prisma.ingestionEvent.findMany({
         where: { status: 'FAILED' },
         orderBy: { receivedAt: 'desc' },
         take: 50,
     });
+=======
+    const failures = await db.select().from(rawPayloads).where(eq(rawPayloads.status, 'FAILED')).limit(50);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     
     if (failures.length === 0) {
         console.log('No failed payloads found.');
         return;
     }
 
+<<<<<<< HEAD
     console.table(failures.map((f: IngestionEventRecord) => ({
         id: f.id,
         site: f.projectId,
         error: (f.validationReport as any)?.errorSummary || 'Unknown error',
         timestamp: f.receivedAt
+=======
+    console.table(failures.map(f => ({
+        id: f.payloadId,
+        site: f.siteId,
+        error: (f.metadata as any)?.errorSummary || 'Unknown error',
+        timestamp: f.ingestedAt
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     })));
 }
 
 async function replayDlq(payloadId: string) {
     console.log(`[Ops] Replaying payload ${payloadId}...`);
+<<<<<<< HEAD
 
     await prisma.ingestionEvent.updateMany({
         where: { id: payloadId },
         data: { status: 'PENDING', updatedAt: new Date() }
     });
+=======
+    
+    const result = await db.update(rawPayloads)
+        .set({ status: 'PENDING', updatedAt: new Date() })
+        .where(eq(rawPayloads.payloadId, payloadId));
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
     console.log('Successfully reset status to PENDING. Workers will pick this up on next sweep.');
 }
@@ -88,9 +114,15 @@ async function seedSite(siteId: string, actorId: string) {
         { metricKey: "ORDERS_SYNC_FAILURES", type: "count", aggregation: "sum", granularity: "15m", alert: { threshold: 1, operator: "gt", severity: "critical"} }
     ];
 
+<<<<<<< HEAD
     await prisma.$transaction(async (tx: any) => {
         // 1. Create initial PUBLISHED version
         await tx.configVersion.create({ data: {
+=======
+    await db.transaction(async (tx) => {
+        // 1. Create initial PUBLISHED version
+        await tx.insert(configVersions).values({
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             versionId,
             siteId,
             versionNumber: 1,
@@ -99,6 +131,7 @@ async function seedSite(siteId: string, actorId: string) {
             widgetDefinitionBlob: [],
             connectorDefinitionBlob: [],
             createdBy: actorId
+<<<<<<< HEAD
         }});
 
         // 2. Link site to active version
@@ -111,10 +144,25 @@ async function seedSite(siteId: string, actorId: string) {
                 activeVersionId: versionId,
             },
             update: { activeVersionId: versionId, updatedAt: new Date() }
+=======
+        });
+
+        // 2. Link site to active version
+        await tx.insert(siteConfigs).values({
+            siteId,
+            activeVersionId: versionId,
+        }).onConflictDoUpdate({
+            target: siteConfigs.siteId,
+            set: { activeVersionId: versionId, updatedAt: new Date() }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         });
     });
 
     console.log(`✅ Site ${siteId} seeded successfully with default KPIs and Version 1.`);
 }
 
+<<<<<<< HEAD
 run().catch(console.error);
+=======
+run().catch(console.error);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

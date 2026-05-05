@@ -1,7 +1,14 @@
+<<<<<<< HEAD
 import { randomUUID } from 'crypto';
 import { prisma } from '@kpi-platform/db';
 
 const alertCache: any[] = [];
+=======
+import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
+import { DatabaseFactory } from '../../../../packages/db/src';
+
+const db = DatabaseFactory.getRelationalDb();
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 export interface AlertPayload {
     ruleId: string;
@@ -11,12 +18,16 @@ export interface AlertPayload {
     severity: string;
     status: string;
     triggeredAt: string;
+<<<<<<< HEAD
     context?: Record<string, any>;
     resolvedAt?: string;
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 }
 
 export type AlertStatus = 'triggered' | 'active' | 'acknowledged' | 'resolved';
 
+<<<<<<< HEAD
 const normalizeAlertRecord = (alert: any): any => ({
     alertId: alert.id,
     ruleId: alert.correlationId ?? alert.ruleId ?? '',
@@ -118,5 +129,22 @@ export class AlertStorage {
     // Migrated from Drizzle ORM to Prisma
     static getAll(): any[] {
         return alertCache;
+=======
+export class AlertStorage {
+    static async saveAlert(alert: AlertPayload): Promise<void> {
+        await db.saveAlertState(alert);
+    }
+
+    static async updateStatus(alertId: string, status: AlertStatus): Promise<void> {
+        const alert = GlobalMemoryStore.alerts.find(a => a.alertId === alertId);
+        if (alert) {
+            alert.status = status;
+            console.log(`[AlertStorage] Alert ${alertId} → ${status}`);
+        }
+    }
+
+    static getAll(): any[] {
+        return GlobalMemoryStore.alerts;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     }
 }

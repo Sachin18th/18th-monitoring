@@ -35,4 +35,8 @@ export const publishDraft = async (req: any, res: any) => {
     } catch (err) {
         return res.status(500).json({ error: 'Config Deployment Failure.' });
     }
+<<<<<<< HEAD
 };
+=======
+};
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

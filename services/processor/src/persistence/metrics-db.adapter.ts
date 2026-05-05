@@ -1,6 +1,10 @@
+<<<<<<< HEAD
 ﻿import { prisma } from '@kpi-platform/db';
 
 export interface MetricPayload {
+=======
+﻿export interface MetricPayload {
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     siteId: string;
     kpiName: string;
     value: number;
@@ -9,6 +13,7 @@ export interface MetricPayload {
 }
 
 export class MetricsDbAdapter {
+<<<<<<< HEAD
     // Migrated from Drizzle ORM to Prisma
     static async writeMetrics(metrics: MetricPayload[]): Promise<void> {
         if (!metrics.length) {
@@ -41,5 +46,10 @@ export class MetricsDbAdapter {
                 },
             })),
         });
+=======
+    // TODO: Implement ClickHouse or TimescaleDB insert batching
+    static async writeMetrics(metrics: MetricPayload[]): Promise<void> {
+        console.log([MetricsDB] Flushing \ metrics to Time-Series DB);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     }
 }

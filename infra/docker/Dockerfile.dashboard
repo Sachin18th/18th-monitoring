@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Finalized Dashboard Dockerfile for Production
 # Utilizing Next.js standalone output for minimal image size
 
@@ -14,6 +15,30 @@ RUN npm ci
 
 # Build dashboard
 RUN npm run build --workspace=apps/dashboard
+=======
+# Use official Node.js 20 LTS Alpine image
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependency definitions
+COPY package*.json tsconfig.base.json ./
+COPY apps/dashboard/package*.json ./apps/dashboard/
+
+# Next.js telemetry disable
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Install dependencies
+RUN npm ci
+
+# Copy source
+COPY packages/ ./packages/
+COPY apps/dashboard/ ./apps/dashboard/
+
+# Build
+WORKDIR /app/apps/dashboard
+RUN npm run build
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 # Runner Stage
 FROM node:20-alpine AS runner
@@ -23,10 +48,18 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 
+<<<<<<< HEAD
 # Copy necessary files from builder (assumes standalone output is enabled)
 COPY --from=builder /app/apps/dashboard/public ./public
 COPY --from=builder /app/apps/dashboard/.next/standalone ./
 COPY --from=builder /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
+=======
+# Copy necessary files from builder
+COPY --from=builder /app/apps/dashboard/public ./public
+# Automatically leverage output traces to reduce image size (Next.js standalone mode required in next.config.js)
+COPY --from=builder /app/apps/dashboard/.next/standalone ./
+COPY --from=builder /app/apps/dashboard/.next/static ./.next/static
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 # Run unprivileged
 USER node
@@ -35,5 +68,9 @@ EXPOSE 3000
 
 ENV HOSTNAME="0.0.0.0"
 
+<<<<<<< HEAD
 # The standalone mode generates a server.js in the root of the standalone folder
 CMD ["node", "apps/dashboard/server.js"]
+=======
+CMD ["node", "server.js"]
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

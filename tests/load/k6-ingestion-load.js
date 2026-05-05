@@ -23,4 +23,8 @@ export default function () {
     check(res, {
         'is status 200 mapping response': (r) => r.status === 200,
     });
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

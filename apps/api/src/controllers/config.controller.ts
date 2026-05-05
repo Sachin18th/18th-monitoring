@@ -17,7 +17,11 @@ export const getResolvedConfig = async (request: FastifyRequest<{ Params: { site
 export const publishConfig = async (request: FastifyRequest<{ Params: { siteId: string }, Body: any }>, reply: FastifyReply) => {
     try {
         const actorId = (request as any).user?.id || 'admin-fallback';
+<<<<<<< HEAD
         const result = await configManager.publishDraft(request.params.siteId, actorId, request.body as any);
+=======
+        const result = await configManager.publishDraft(request.params.siteId, actorId, request.body);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         
         // Emits 'CONFIG_PUBLISHED' to memory-bus to invalidate caches ideally.
         

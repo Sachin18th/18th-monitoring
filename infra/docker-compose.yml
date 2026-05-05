@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Platform Docker Compose Configuration
 # Orchestrate all services for local development and integration testing
 
@@ -62,3 +63,12 @@ services:
 
 volumes:
   pgdata:
+=======
+﻿# Local Dev Services Placeholder
+version: '3.8'
+services:
+  kafka:
+    image: bitnami/kafka:latest
+  clickhouse:
+    image: clickhouse/clickhouse-server
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

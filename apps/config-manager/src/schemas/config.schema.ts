@@ -22,4 +22,8 @@ export const PlatformConfigSchema = z.object({
     thresholds: ThresholdConfigSchema,
     // Future hooks for explicitly embedded Tenant/Regional mappings
     features: z.record(z.boolean()).optional()
+<<<<<<< HEAD
 });
+=======
+});
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

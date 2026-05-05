@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // 'use client';
 // import React from 'react';
 // import { 
@@ -103,6 +104,8 @@
 //     );
 // };
 
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 'use client';
 import React from 'react';
 import { 
@@ -125,11 +128,17 @@ interface ChartPoint {
 interface SyncTrendChartProps {
     data: ChartPoint[];
     title: string;
+<<<<<<< HEAD
     height?: number;
     className?: string;
 }
 
 export const SyncTrendChart = ({ data, title, height = 300, className }: SyncTrendChartProps) => {
+=======
+}
+
+export const SyncTrendChart = ({ data, title }: SyncTrendChartProps) => {
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     if (!data || data.length === 0) return null;
 
     return (
@@ -140,14 +149,21 @@ export const SyncTrendChart = ({ data, title, height = 300, className }: SyncTre
             padding: '24px',
             boxShadow: 'var(--shadow-sm)',
             width: '100%',
+<<<<<<< HEAD
             minWidth: 0,
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             marginBottom: '32px'
         }}>
             <h3 style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-secondary)', marginBottom: '20px', textTransform: 'uppercase', letterSpacing: '1px' }}>
                 {title}
             </h3>
             
+<<<<<<< HEAD
             <div style={{ width: '100%', height: height, minWidth: 0 }}>
+=======
+            <div style={{ width: '100%', height: 300 }}>
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                         <defs>
@@ -207,4 +223,8 @@ export const SyncTrendChart = ({ data, title, height = 300, className }: SyncTre
             </div>
         </div>
     );
+<<<<<<< HEAD
 };
+=======
+};
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

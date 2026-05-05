@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Finalized API Dockerfile for Production
 # Using multi-stage build for optimal image size and security
 
@@ -16,12 +17,41 @@ RUN npm ci
 RUN npm run build --workspace=@kpi-platform/api
 
 # Stage 2: Runner
+=======
+# Use official Node.js 20 LTS Alpine image for minimal footprint
+FROM node:20-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Enable corepack for modern package management if needed
+RUN corepack enable
+
+# Copy root configurations
+COPY package*.json tsconfig.base.json ./
+
+# Copy workspace packages and apps relevant to API
+COPY packages/ ./packages/
+COPY services/processor/ ./services/processor/
+COPY services/alert-engine/ ./services/alert-engine/
+COPY apps/api/ ./apps/api/
+
+# Install dependencies (workspaces support required)
+RUN npm ci
+
+# Build the API (if there's a build step, here using tsx directly for simplicity, but ideally compiled)
+# RUN npm run build --workspace=apps/api
+# For production, we'd compile TS to JS, but for this demo stack we'll prepare the environment
+
+# Runner Stage
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=4000
 
+<<<<<<< HEAD
 # Copy only what is needed to run the app
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
@@ -31,9 +61,25 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/api ./apps/api
 
 # Running as non-root
+=======
+# Copy node_modules and built assets from builder
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/packages ./packages
+COPY --from=builder /app/services ./services
+COPY --from=builder /app/apps/api ./apps/api
+COPY --from=builder /app/package.json ./
+
+# Run unprivileged
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 USER node
 
 EXPOSE 4000
 
+<<<<<<< HEAD
 # Command to start the API
 CMD ["node", "apps/api/dist/server.js"]
+=======
+# Production startup
+# TODO: Use compiled JS instead of tsx in final prod image 
+CMD ["npx", "tsx", "apps/api/src/server.ts"]
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

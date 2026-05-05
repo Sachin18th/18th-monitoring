@@ -7,4 +7,8 @@ export interface ConfigRepository {
     updateStatus(versionId: string, status: ConfigStatus): Promise<void>;
     
     // Future implementations tying: Rollback tracking, auditing diffs between versions
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

@@ -1,4 +1,9 @@
+<<<<<<< HEAD
 import { prisma } from '@kpi-platform/db';
+=======
+import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
+import { rawPayloads } from '../../../../packages/db/src/drizzle/schema';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 import crypto from 'crypto';
 
 export class CsvImportService {
@@ -26,6 +31,7 @@ export class CsvImportService {
             // Validate mapping
             
             // Durable store into Database immediately representing Chunk durability
+<<<<<<< HEAD
             await prisma.ingestionEvent.create({
                 data: {
                     id: payloadId,
@@ -37,6 +43,14 @@ export class CsvImportService {
                     correlationId: payloadId,
                     validationReport: { rows: chunk.length }
                 } as any
+=======
+            await db.insert(rawPayloads).values({
+                payloadId,
+                siteId,
+                connectorId,
+                status: 'PENDING',
+                rawData: chunk,
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             });
 
             // Hand-off exactly this chunk ID to the Kafka Queue internally for async workers to digest.

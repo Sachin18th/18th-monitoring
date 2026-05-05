@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
 // import { orderNormalizationService } from './order-normalization.service';
 // import crypto from 'crypto';
@@ -117,6 +118,9 @@
 
 
 import { prisma } from '@kpi-platform/db';
+=======
+import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 import { orderNormalizationService } from './order-normalization.service';
 import crypto from 'crypto';
 
@@ -135,6 +139,18 @@ export class OrderIngestionService {
         };
 
         const batchId = `csv_${Date.now()}`;
+<<<<<<< HEAD
+=======
+        const logEntry = {
+            id: batchId,
+            siteId,
+            timestamp: new Date().toISOString(),
+            type: 'csv_upload',
+            status: 'processing',
+            details: `Processing ${lines.length} rows`
+        };
+        GlobalMemoryStore.ingestionLogs.push(logEntry);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
@@ -165,11 +181,16 @@ export class OrderIngestionService {
                         sku,
                         paymentMethod,
                         amount,
+<<<<<<< HEAD
                         channel: 'POS',
+=======
+                        channel: 'offline',
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
                         orderSource: 'offline'
                     }
                 };
 
+<<<<<<< HEAD
                 const project = await prisma.project.findUnique({
                     where: { id: siteId },
                     select: { tenantId: true }
@@ -188,6 +209,15 @@ export class OrderIngestionService {
                     }
                 });
 
+=======
+                const canonical = await orderNormalizationService.normalize(rawEvent, siteId);
+                GlobalMemoryStore.orders.set(orderId, {
+                    ...canonical,
+                    siteId,
+                    ingestionType: 'csv',
+                    status: 'processed'
+                });
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
                 results.success++;
             } catch (err: any) {
                 results.failed++;
@@ -195,6 +225,15 @@ export class OrderIngestionService {
             }
         }
 
+<<<<<<< HEAD
+=======
+        const finalLog = GlobalMemoryStore.ingestionLogs.find(l => l.id === batchId);
+        if (finalLog) {
+            finalLog.status = results.failed === 0 ? 'success' : 'partial_failure';
+            finalLog.details = `Processed ${results.success} success, ${results.failed} failed.`;
+        }
+
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         return results;
     }
 
@@ -203,6 +242,17 @@ export class OrderIngestionService {
      */
     static async syncExternalSystem(siteId: string, system: 'OMS' | 'ERP' | 'POS') {
         const syncId = `sync_${Date.now()}`;
+<<<<<<< HEAD
+=======
+        const syncEntry = {
+            id: syncId,
+            siteId,
+            system,
+            timestamp: new Date().toISOString(),
+            status: 'syncing'
+        };
+        GlobalMemoryStore.integrationSyncs.push(syncEntry);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
         // Simulate network delay
         await new Promise(resolve => setTimeout(resolve, 1500));
@@ -210,6 +260,7 @@ export class OrderIngestionService {
         // Mock success with some random failure probability
         const success = Math.random() > 0.1;
 
+<<<<<<< HEAD
         // Log lifecycle event for the sync
         await prisma.connectorLifecycleEvent.create({
             data: {
@@ -227,3 +278,14 @@ export class OrderIngestionService {
         return { success, syncId };
     }
 }
+=======
+        const updatedSync = GlobalMemoryStore.integrationSyncs.find(s => s.id === syncId);
+        if (updatedSync) {
+            updatedSync.status = success ? 'success' : 'failure';
+            updatedSync.lastSyncAt = new Date().toISOString();
+        }
+
+        return { success, syncId };
+    }
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

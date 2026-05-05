@@ -43,4 +43,8 @@ export const BrowserIngestPayloadSchema = z.object({
 export const ServerIngestPayloadSchema = z.object({
     siteId: z.string(),
     events: z.array(BaseEventSchema)
+<<<<<<< HEAD
 });
+=======
+});
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

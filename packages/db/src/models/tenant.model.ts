@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 export interface Tenant {
     id: string; // UUID
     name: string;
@@ -7,6 +8,12 @@ export interface Tenant {
     settings: Record<string, any>;
     createdAt: string;
     updatedAt: string;
+=======
+﻿export interface Tenant {
+    tenantId: string;
+    name: string;
+    createdAt: string;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 }
 
 export interface SiteMetadata {
@@ -15,4 +22,8 @@ export interface SiteMetadata {
     domain: string;
     status: 'active' | 'suspended';
     config: Record<string, any>; // JSON tracking config definitions
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

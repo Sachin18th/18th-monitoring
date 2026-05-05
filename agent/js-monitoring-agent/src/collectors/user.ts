@@ -25,4 +25,8 @@ export const userCollector = {
         // TODO: Isolate Session End limits binding strictly onto 'pagehide' constraints cleanly Native
         // TODO: Extend advanced UX tracking plotting native Rage Clicks limits
     }
+<<<<<<< HEAD
 };
+=======
+};
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

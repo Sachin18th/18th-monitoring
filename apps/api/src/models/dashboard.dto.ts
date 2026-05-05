@@ -7,7 +7,10 @@ export interface KpiSummaryResponse {
     value: number;
     trendPct: number;
     state: 'healthy' | 'warning' | 'critical';
+<<<<<<< HEAD
     unit?: string;
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 }
 
 /**
@@ -16,7 +19,11 @@ export interface KpiSummaryResponse {
  */
 export interface MetricFilterDto {
     siteId: string;
+<<<<<<< HEAD
     timeRange?: '1h' | '24h' | '7d';
+=======
+    timeRange: '1h' | '24h' | '7d';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     region?: string;
     source?: string;
     limit?: number;

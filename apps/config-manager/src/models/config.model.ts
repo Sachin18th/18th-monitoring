@@ -14,4 +14,8 @@ export interface ConfigDocument {
     createdAt: string;
     updatedAt: string;
     updatedBy: string; // Capturing precise Admin User IDs for strict Audit trails
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

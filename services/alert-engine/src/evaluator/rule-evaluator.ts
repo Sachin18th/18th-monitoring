@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { prisma } from '../../../../packages/db/src';
 import { AlertStorage } from '../persistence/alert-storage';
 
@@ -34,16 +35,44 @@ export class RuleEvaluator {
 
             if (breached) {
                 console.log(`[AlertEngine] Rule "${rule.id}" breached - ${kpiName}: ${value} (threshold: ${threshold})`);
+=======
+import { DatabaseFactory } from '../../../../packages/db/src';
+import { AlertStorage } from '../persistence/alert-storage';
+
+const db = DatabaseFactory.getRelationalDb();
+
+export class RuleEvaluator {
+    static async evaluate(siteId: string, kpiName: string, value: number, _dimensions: any) {
+        const rules = await db.getAlertRules(siteId);
+        const matching = rules.filter(r => r.siteId === siteId && r.kpiName === kpiName);
+
+        for (const rule of matching) {
+            const breached =
+                (rule.type === 'gt' && value > rule.threshold) ||
+                (rule.type === 'lt' && value < rule.threshold);
+
+            if (breached) {
+                console.log(`[AlertEngine] ⚠️  Rule "${rule.id}" breached — ${kpiName}: ${value} (threshold: ${rule.threshold})`);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
                 await AlertStorage.saveAlert({
                     ruleId:      rule.id,
                     siteId,                          // ← required for per-tenant filtering
                     kpiName,
+<<<<<<< HEAD
                     message:     `${kpiName} breached threshold: value=${value}, threshold=${threshold}`,
                     severity:    (rule.severity || 'high').toLowerCase(),
+=======
+                    message:     `${kpiName} breached threshold: value=${value}, threshold=${rule.threshold}`,
+                    severity:    rule.severity || 'high',
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
                     status:      'active',
                     triggeredAt: new Date().toISOString(),
                 });
             }
         }
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

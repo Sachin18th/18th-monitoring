@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ﻿import { prisma } from '@kpi-platform/db';
 
 export class EventStoreAdapter {
@@ -25,5 +26,11 @@ export class EventStoreAdapter {
                 error: event.error,
             },
         };
+=======
+﻿export class EventStoreAdapter {
+    // TODO: Implement raw event lookups bridging S3/Elasticsearch
+    static async getEventById(eventId: string): Promise<any | null> {
+        return null;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     }
 }

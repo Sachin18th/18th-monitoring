@@ -3,6 +3,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 
+<<<<<<< HEAD
 const getConnectorBridgeResponse = (url: string) => {
     if (typeof window === 'undefined') return undefined;
 
@@ -245,13 +246,20 @@ const getConnectorBridgeResponse = (url: string) => {
 const identifiedCount = (customers: any[]) => customers.filter((customer) => !!customer.email).length;
 const activeUsersCount = (customers: any[]) => customers.filter((customer) => customer.orderCount > 0).length;
 
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 interface User {
     id: string;
     email: string;
     name: string;
+<<<<<<< HEAD
     role: 'SUPER_ADMIN' | 'TENANT_ADMIN' | 'PROJECT_ADMIN' | 'OPERATOR' | 'VIEWER' | 'CUSTOMER';
     status: 'active' | 'suspended';
     tenantId: string;
+=======
+    role: 'SUPER_ADMIN' | 'ADMIN' | 'CUSTOMER';
+    status: 'active' | 'suspended';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     assignedProjects: string[];
 }
 
@@ -270,6 +278,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+<<<<<<< HEAD
 const SESSION_STORAGE_KEYS = ['session-token', 'session-user', 'current-project'] as const;
 
 const clearStoredSession = () => {
@@ -291,6 +300,8 @@ const parseStoredUser = (storedUser: string | null): User | null => {
     }
 };
 
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [token, setToken] = useState<string | null>(null);
@@ -302,6 +313,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
+<<<<<<< HEAD
     const clearSessionState = React.useCallback(() => {
         setToken(null);
         setUser(null);
@@ -388,6 +400,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             fetchUrl = `${API_BASE}/api/v1/tenants/${user.tenantId}/projects/${currentProject}${subPath}`;
         }
 
+=======
+    useEffect(() => {
+        const storedToken = localStorage.getItem('session-token');
+        const storedUser = localStorage.getItem('session-user');
+        const storedProject = localStorage.getItem('current-project');
+
+        if (storedToken && storedUser) {
+            setToken(storedToken);
+            setUser(JSON.parse(storedUser));
+            setCurrentProject(storedProject || null);
+        }
+        setIsLoading(false);
+    }, []);
+
+    const logout = React.useCallback(() => {
+        setToken(null);
+        setUser(null);
+        setCurrentProject(null);
+        localStorage.clear();
+        router.push('/login');
+    }, [router]);
+
+    const apiFetch = React.useCallback(async (url: string, options: any = {}) => {
+        const fetchUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         const activeToken = token || localStorage.getItem('session-token');
         const cacheKey = `api_cache_${url.replace(/\W/g, '_')}`;
 
@@ -398,6 +435,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
         
         try {
+<<<<<<< HEAD
             let requestData = options.body;
             if (requestData && typeof requestData === 'string') {
                 try {
@@ -407,12 +445,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
             }
 
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             const res = await axios({
                 url: fetchUrl,
                 method: options.method || 'GET',
                 headers,
+<<<<<<< HEAD
                 data: requestData,
                 timeout: 10000 
+=======
+                data: options.body ? JSON.parse(options.body) : undefined,
+                timeout: 5000 
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             });
 
             // Cache Success
@@ -423,6 +468,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setLastUpdated(timestamp);
             }
 
+<<<<<<< HEAD
             // Automatic response unwrapping for standardized contracts
             if (res.data && typeof res.data === 'object' && 'success' in res.data) {
                 return res.data.data;
@@ -466,11 +512,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     console.warn(`[AuthContext] API 500/Outage. Serving STALE data from ${timestamp}`);
                     setOutageStatus('stale');
                     return data;
+=======
+            return res.data;
+        } catch (error: any) {
+             const status = error.response?.status;
+             
+             if (status === 401) {
+                logout();
+                throw new Error('Unauthorized');
+            }
+            
+            // Outage / Connectivity Error Handling
+            if (!status || status >= 500 || error.code === 'ECONNABORTED') {
+                const cached = localStorage.getItem(cacheKey);
+                if (cached) {
+                    const { data, timestamp } = JSON.parse(cached);
+                    const ageMs = Date.now() - new Date(timestamp).getTime();
+                    const ageHours = ageMs / (1000 * 60 * 60);
+
+                    if (ageHours < 24) {
+                        console.warn(`[AuthContext] API Outage. Serving STALE data from ${timestamp}`);
+                        if (ageHours > 1) setOutageStatus('stale');
+                        setLastUpdated(timestamp);
+                        return data;
+                    } else {
+                        console.error(`[AuthContext] API Outage. Cache EXPIRED (>24h).`);
+                        setOutageStatus('expired');
+                        return null; // Force empty state on page
+                    }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
                 }
             }
 
             if (status === 403) {
                 router.push('/unauthorized');
+<<<<<<< HEAD
                 throw new Error('Access Denied');
             }
 
@@ -481,6 +557,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             throw apiError;
         }
     }, [token, API_BASE, user?.tenantId, currentProject, router, clearSessionState]);
+=======
+                throw new Error('Forbidden');
+            }
+
+            throw new Error(error.response?.data?.message || error.message);
+        }
+    }, [token, API_BASE, router, logout]);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
     const setProject = React.useCallback((id: string) => {
         setCurrentProject(id);
@@ -490,15 +574,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const login = React.useCallback(async (email: string, password: string) => {
         try {
             const res = await axios.post(`${API_BASE}/api/v1/auth/login`, { email, password });
+<<<<<<< HEAD
             const { token: newToken, user: newUser } = res.data.data;
+=======
+            const { token: newToken, user: newUser } = res.data;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             
             setToken(newToken);
             setUser(newUser);
             localStorage.setItem('session-token', newToken);
             localStorage.setItem('session-user', JSON.stringify(newUser));
 
+<<<<<<< HEAD
             // Post-login landing is unified for every role.
             router.push('/projects');
+=======
+            if (newUser.assignedProjects.length === 1) {
+                setProject(newUser.assignedProjects[0]);
+                router.push('/');
+            } else {
+                router.push('/projects');
+            }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         } catch (error: any) {
             throw new Error(error.response?.data?.message || 'Invalid credentials');
         }

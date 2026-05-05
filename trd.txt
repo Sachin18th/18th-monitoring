@@ -1,0 +1,369 @@
+Technical PRD / Engineering Blueprint
+E-Commerce Monitoring & Reporting Platform (Lightweight Integration Model)
+1. Product Overview
+1.1 Purpose
+Build a 
+real-time monitoring and reporting platform
+ that provides visibility into:
+Website performance
+User 
+behavior
+Order lifecycle
+OMS/integration health
+Business-critical alerts
+Using a 
+lightweight, scalable integration model
+:
+Embeddable JS agent
+JSON configuration
+Standardized event ingestion APIs
+1.2 Design Principles
+Zero/Low Integration Effort
+ (script-first approach)
+Event-Driven Architecture
+Real-Time Processing
+Horizontal Scalability
+Extensible Data Model
+Business + Technical Observability Combined
+2. System Architecture
+2.1 High-Level Architecture
+Client Layer
+ 
+├
+──
+ JS Monitoring Agent (Browser)
+ └── Backend Event Emitters (Orders, OMS, CSV)
+Ingestion Layer
+ 
+├
+──
+ Browser Ingest API
+ └── Server Event API
+Streaming Layer
+ └── Event Queue (Kafka / 
+PubSub
+)
+Processing Layer
+ 
+├
+──
+ Stream Processor (Real-time KPIs)
+ └── Aggregation Engine
+Storage Layer
+ 
+├
+──
+ Time-series DB (metrics)
+ 
+├
+──
+ Event Store (raw logs)
+ └── Relational DB (metadata/config)
+Application Layer
+ 
+├
+──
+ Alert Engine
+ 
+├
+──
+ Dashboard API
+ └── Auth & Tenant Management
+Presentation Layer
+ └── Dashboard UI (Next.js)
+3. Core Modules
+3.1 JS Monitoring Agent
+Responsibilities:
+Capture browser performance metrics
+Track user sessions and events
+Capture JS errors and API failures
+Send batched events to ingest API
+Data Captured:
+Page load metrics (TTFB, FCP, LCP)
+Session start/end
+Page views
+Click events
+Errors (JS, network)
+Device + geo metadata
+3.2 JSON Configuration Engine
+Purpose:
+Central control of tracking 
+behavior
+ without redeployment.
+Capabilities:
+Enable/disable tracking modules
+Define event types
+Configure sampling rates
+Define alert thresholds
+Example Structure:
+{
+  "tracking": {
+    "performance": true,
+    "user": true,
+    "errors": true
+  },
+  "sampling": {
+    "
+sessionRate
+": 1.0
+  },
+  "thresholds": {
+    "
+pageLoadMs
+": 3000,
+    "
+errorRatePct
+": 2
+  }
+}
+3.3 Event Ingestion APIs
+A. Browser Ingest API
+Endpoint:
+ /
+i
+/browser
+Method:
+ POST
+Payload:
+{
+  "
+siteId
+": "store_001",
+  "events": [
+    {
+      "type": "
+page_view
+",
+      "timestamp": "...",
+      "
+url
+": "/product/123",
+      "
+loadTime
+": 1200
+    }
+  ]
+}
+B. Server Event API
+Endpoint:
+ /
+i
+/server
+Supported Events:
+order_placed
+order_processed
+csv_upload
+oms_sync
+3.4 Event Streaming Layer
+Tech Options:
+Kafka (preferred)
+AWS Kinesis / GCP 
+PubSub
+Responsibilities:
+Decouple ingestion and processing
+Ensure scalability and durability
+3.5 Processing Engine
+Responsibilities:
+Compute real-time KPIs
+Aggregate events
+Detect anomalies
+Processing Types:
+Stream processing (real-time)
+Batch processing (historical)
+3.6 KPI Engine
+KPI Categories:
+Performance
+Page load time
+Error rate
+Uptime
+User
+Active users
+Sessions/min
+Funnel drop-offs
+Orders
+Orders/min
+Delayed orders (>60 min)
+Online vs offline
+Integration
+Sync success rate
+API latency
+Failure rate
+3.7 Alert Engine
+Types:
+Threshold-based alerts
+Rule-based alerts
+Correlation alerts
+Example Rules:
+Page load > 3s → alert
+Orders delayed > 60 min → alert
+OMS sync failure spike → alert
+Delivery Channels:
+Email
+Slack/Webhooks
+Dashboard notifications
+3.8 Storage Layer
+Components:
+Time-Series DB
+Metrics (Prometheus / 
+ClickHouse
+ / Timescale)
+Event Store
+Raw events (S3 / 
+BigQuery
+ / Elastic)
+Relational DB
+Config, tenants, metadata
+3.9 Dashboard & API Layer
+Backend:
+REST/
+GraphQL
+ APIs
+Frontend:
+Next.js dashboard
+Features:
+Real-time metrics
+Filters (time, region, source)
+Alert views
+Drill-down capabilities
+4. Data Model
+4.1 Event Schema
+{
+  "
+eventId
+": "
+uuid
+",
+  "
+siteId
+": "string",
+  "
+eventType
+": "string",
+  "timestamp": "ISO",
+  "
+sessionId
+": "string",
+  "
+userId
+": "string",
+  "metadata": {}
+}
+4.2 Order Event Example
+{
+  "
+eventType
+": "
+order_placed
+",
+  "
+orderId
+": "ORD123",
+  "value": 2500,
+  "source": "online"
+}
+4.3 OMS Event Example
+{
+  "
+eventType
+": "
+oms_sync_failed
+",
+  "
+orderId
+": "ORD123",
+  "error": "timeout"
+}
+5. Key Workflows
+5.1 Page Load Monitoring
+JS agent captures performance
+Sends to ingest API
+Processor updates metrics
+Alert triggered if threshold exceeded
+5.2 Order Delay Detection
+order_placed
+ event received
+No 
+order_processed
+ within 60 min
+System flags delay
+Alert triggered
+5.3 OMS Failure Detection
+oms_sync_failed
+ events increase
+Failure rate threshold breached
+Alert triggered
+5.4 Funnel Drop Detection
+Track user journey
+Identify drop-off points
+Surface anomaly
+6. Implementation Plan
+Phase 1: Core Setup
+Setup ingestion APIs
+Define event schema
+Setup event streaming
+Phase 2: JS Agent
+Build tracking script
+Implement performance + user tracking
+Phase 3: Backend Events
+Define API contracts
+Integrate order & OMS events
+Phase 4: Processing & KPIs
+Implement stream processing
+Build KPI computation
+Phase 5: Alerting
+Implement rules engine
+Configure alert channels
+Phase 6: Dashboard
+Build UI
+Integrate APIs
+7. Non-Functional Requirements
+Performance
+Handle high RPS (10k+ events/sec)
+< 2 sec ingestion latency
+Scalability
+Horizontal scaling
+Multi-tenant architecture
+Reliability
+≥ 99.9% uptime
+Fault-tolerant pipelines
+Security
+API authentication (API keys)
+Data encryption
+GDPR compliance
+8. Observability (for this system itself)
+Monitor ingestion latency
+Track dropped events
+Alert on pipeline failures
+9. Testing Strategy
+Types
+Unit tests
+Integration tests
+Load testing
+Synthetic monitoring
+10. Risks & Mitigation
+Risk
+Mitigation
+Missing events
+Retry + validation
+High data volume
+Sampling + batching
+Alert noise
+Smart thresholds
+11. Future Enhancements
+AI-based anomaly detection
+Predictive alerting
+Auto root-cause analysis
+Session replay
+Deep backend integrations
+12. Definition of Done
+Script integrated on at least 1 website
+Events flowing end-to-end
+KPIs visible on dashboard
+Alerts functioning correctly
+Order delay detection working
+OMS monitoring active
+Final Note
+This blueprint is designed to ensure:
+Fast rollout (lightweight integration)
+Scalable architecture
+Business-aligned monitoring

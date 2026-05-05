@@ -62,4 +62,8 @@ export class ConfigManagerService {
         // TODO: Fire system broadcast -> 'ConfigInvalidated' across messaging bounds (Kafka)
         // Instructs: Redis Cache dropping config payloads, Alert Engines reloading definitions cleanly
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

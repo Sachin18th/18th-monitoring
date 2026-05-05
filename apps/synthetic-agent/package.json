@@ -4,7 +4,10 @@
   "private": true,
   "main": "src/index.ts",
   "scripts": {
+<<<<<<< HEAD
     "build": "tsc",
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts"
   },
