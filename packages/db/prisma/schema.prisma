@@ -1,0 +1,747 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../../node_modules/.prisma/client"
+}
+
+model Tenant {
+  id                  String                 @id @db.VarChar(36)
+  name                String                 @db.VarChar(255)
+  slug                String                 @unique @db.VarChar(255)
+  status              String                 @default("ACTIVE") @db.VarChar(50)
+  plan                String                 @default("FREE") @db.VarChar(50)
+  settings            Json                   @default("{}")
+  createdAt           DateTime               @default(now()) @map("created_at")
+  updatedAt           DateTime               @default(now()) @map("updated_at")
+
+  projects             Project[]
+  users                User[]
+  auditLogs            IamAuditLog[]
+  customerProfiles     CustomerProfile[]
+  identityLinks        IdentityLink[]
+  connectorInstances   ConnectorInstance[]
+  projectAccessKeys    ProjectAccessKey[]
+  webhookSubscriptions WebhookSubscription[]
+  connectorCredentials ConnectorCredential[]
+  connectorLifecycleEvents ConnectorLifecycleEvent[]
+  alerts               Alert[]
+  alertRules           AlertRule[]
+  systemLogs           SystemLog[]
+  performanceMetrics   PerformanceMetric[]
+  kpiValues            KpiValue[]
+  canonicalOrders      CanonicalOrder[]
+  ingestionEvents      IngestionEvent[]
+  pipelineJobs         PipelineJob[]
+  deadLetterQueues     DeadLetterQueue[]
+  recoveryJobs         RecoveryJob[]
+
+  @@map("tenants")
+}
+
+model Project {
+  id                      String                 @id @db.VarChar(255)
+  tenantId                String                 @map("tenant_id") @db.VarChar(36)
+  name                    String                 @db.VarChar(255)
+  environment             String                 @default("production") @db.VarChar(50)
+  status                  String                 @default("ACTIVE") @db.VarChar(50)
+  activeVersionId         String?                @map("active_version_id") @db.VarChar(36)
+  settings                Json                   @default("{}")
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @default(now()) @map("updated_at")
+
+  tenant                  Tenant                 @relation(fields: [tenantId], references: [id])
+  configVersions          ConfigVersion[]
+  userAccess              UserProjectAccess[]
+  customerProfiles        CustomerProfile[]
+  customerSessions        CustomerSession[]
+  customerEvents          CustomerEvent[]
+  connectorInstances      ConnectorInstance[]
+  projectAccessKeys       ProjectAccessKey[]
+  webhookSubscriptions    WebhookSubscription[]
+  connectorLifecycleEvents ConnectorLifecycleEvent[]
+  alerts                  Alert[]
+  alertRules              AlertRule[]
+  systemLogs              SystemLog[]
+  performanceMetrics      PerformanceMetric[]
+  performanceRollups      PerformanceRollup[]
+  kpiValues               KpiValue[]
+  canonicalOrders         CanonicalOrder[]
+  ingestionEvents         IngestionEvent[]
+  pipelineJobs            PipelineJob[]
+  pipelineCheckpoints      PipelineCheckpoint[]
+  deadLetterQueues        DeadLetterQueue[]
+  recoveryJobs            RecoveryJob[]
+
+  @@index([tenantId], map: "idx_project_tenant")
+  @@map("projects")
+}
+
+model User {
+  id             String                 @id @db.VarChar(36)
+  tenantId       String                 @map("tenant_id") @db.VarChar(36)
+  email          String                 @unique @db.VarChar(255)
+  name           String                 @db.VarChar(255)
+  passwordHash   String                 @map("password_hash") @db.VarChar(255)
+  role           String                 @db.VarChar(50)
+  status         String                 @default("ACTIVE") @db.VarChar(50)
+  mfaEnabled     Int?                   @default(0) @map("mfa_enabled")
+  lastLoginAt    DateTime?              @map("last_login_at")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @default(now()) @map("updated_at")
+
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id])
+  projectAccess  UserProjectAccess[]
+  sessions       UserSession[]
+
+  @@index([tenantId], map: "idx_user_tenant")
+  @@map("users")
+}
+
+model UserSession {
+  token      String   @id @db.VarChar(255)
+  userId     String   @map("user_id") @db.VarChar(36)
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  metadata   Json     @default("{}")
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_session_user")
+  @@index([expiresAt], map: "idx_session_expires")
+  @@map("user_sessions")
+}
+
+model UserProjectAccess {
+  userId       String   @map("user_id") @db.VarChar(36)
+  projectId    String   @map("project_id") @db.VarChar(255)
+  roleOverride String?  @map("role_override") @db.VarChar(50)
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+
+  user         User     @relation(fields: [userId], references: [id])
+  project      Project  @relation(fields: [projectId], references: [id])
+
+  @@id([userId, projectId])
+  @@map("user_project_access")
+}
+
+model ConfigVersion {
+  versionId               String   @id @map("version_id") @db.VarChar(36)
+  siteId                  String   @map("site_id") @db.VarChar(255)
+  versionNumber           Int      @map("version_number")
+  status                  String   @db.VarChar(50)
+  kpiDefinitionBlob       Json     @default("{}") @map("kpi_definition_blob")
+  widgetDefinitionBlob    Json     @default("{}") @map("widget_definition_blob")
+  connectorDefinitionBlob Json     @default("{}") @map("connector_definition_blob")
+  createdBy               String   @map("created_by") @db.VarChar(255)
+  createdAt               DateTime @default(now()) @map("created_at")
+
+  project                 Project  @relation(fields: [siteId], references: [id])
+
+  @@map("config_versions")
+}
+
+model IamAuditLog {
+  id         Int      @id @default(autoincrement())
+  tenantId   String   @map("tenant_id") @db.VarChar(36)
+  actorId    String   @map("actor_id") @db.VarChar(255)
+  action     String   @db.VarChar(255)
+  targetType String   @map("target_type") @db.VarChar(255)
+  targetId   String   @map("target_id") @db.VarChar(255)
+  metadata   Json     @default("{}")
+  timestamp  DateTime @default(now())
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, timestamp], map: "idx_iam_audit_tenant_ts")
+  @@map("iam_audit_logs")
+}
+
+model CustomerProfile {
+  id                 String            @id @db.VarChar(36)
+  siteId             String            @map("site_id") @db.VarChar(255)
+  tenantId           String            @map("tenant_id") @db.VarChar(36)
+  externalIds        Json              @map("external_ids") @default("{}")
+  emailHash          String?           @map("email_hash") @db.VarChar(255)
+  phoneHash          String?           @map("phone_hash") @db.VarChar(255)
+  lifecycleState     String            @map("lifecycle_state") @default("NEW_GUEST") @db.VarChar(50)
+  identityConfidence Decimal?          @map("identity_confidence")
+  firstSeenAt        DateTime          @map("first_seen_at") @default(now())
+  lastSeenAt         DateTime          @map("last_seen_at") @default(now())
+  totalLtv           Decimal?          @map("total_ltv")
+  metadata           Json              @default("{}")
+
+  project            Project           @relation(fields: [siteId], references: [id])
+  tenant             Tenant            @relation(fields: [tenantId], references: [id])
+  sessions           CustomerSession[]
+  events             CustomerEvent[]
+
+  @@index([siteId], map: "idx_cust_profile_site")
+  @@index([emailHash], map: "idx_cust_profile_email")
+  @@map("customer_profiles")
+}
+
+model CustomerSession {
+  id              String           @id @db.VarChar(36)
+  customerId      String           @map("customer_id") @db.VarChar(36)
+  siteId          String           @map("site_id") @db.VarChar(255)
+  startTime       DateTime         @map("start_time")
+  endTime         DateTime?        @map("end_time")
+  durationSeconds Int?             @map("duration_seconds")
+  device          String?          @db.VarChar(100)
+  browser         String?          @db.VarChar(100)
+  trafficSource   String?          @map("traffic_source") @db.VarChar(255)
+  isConverted     Int?             @map("is_converted") @default(0)
+  eventCount      Int?             @map("event_count") @default(0)
+
+  customer        CustomerProfile  @relation(fields: [customerId], references: [id])
+  project         Project          @relation(fields: [siteId], references: [id])
+  events          CustomerEvent[]
+
+  @@index([customerId], map: "idx_session_customer")
+  @@index([siteId], map: "idx_session_site")
+  @@map("customer_sessions")
+}
+
+model IdentityLink {
+  id                 Int      @id @default(autoincrement())
+  tenantId           String   @map("tenant_id") @db.VarChar(36)
+  primaryCustomerId  String   @map("primary_customer_id") @db.VarChar(36)
+  secondaryCustomerId String   @map("secondary_customer_id") @db.VarChar(36)
+  linkType           String   @map("link_type") @db.VarChar(50)
+  confidence         Decimal
+  createdAt          DateTime @map("created_at") @default(now())
+
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@map("identity_links")
+}
+
+model CustomerEvent {
+  id              String           @id @db.VarChar(36)
+  customerId      String           @map("customer_id") @db.VarChar(36)
+  sessionId       String?          @map("session_id") @db.VarChar(36)
+  siteId          String           @map("site_id") @db.VarChar(255)
+  eventName       String           @map("event_name") @db.VarChar(255)
+  category        String           @db.VarChar(50)
+  timestamp       DateTime         @map("timestamp")
+  utmSource       String?          @map("utm_source") @db.VarChar(100)
+  utmMedium       String?          @map("utm_medium") @db.VarChar(100)
+  utmCampaign     String?          @map("utm_campaign") @db.VarChar(100)
+  metadata        Json             @default("{}")
+
+  customer        CustomerProfile  @relation(fields: [customerId], references: [id])
+  session         CustomerSession? @relation(fields: [sessionId], references: [id])
+  project         Project          @relation(fields: [siteId], references: [id])
+
+  @@index([sessionId], map: "idx_cust_event_session")
+  @@index([customerId, timestamp], map: "idx_cust_event_cust_ts")
+  @@map("customer_events")
+}
+
+model ConnectorInstance {
+  id              String                    @id @db.VarChar(36)
+  siteId          String                    @map("site_id") @db.VarChar(255)
+  tenantId        String                    @map("tenant_id") @db.VarChar(36)
+  providerId      String                    @map("provider_id") @db.VarChar(255)
+  label           String                    @db.VarChar(255)
+  category        String                    @db.VarChar(50)
+  family          String                    @db.VarChar(50)
+  version         String?                   @default("1.0.0") @db.VarChar(50)
+  status          String                    @default("DRAFT") @db.VarChar(50)
+  lifecycleState  String                    @default("DRAFT") @map("lifecycle_state") @db.VarChar(50)
+  configVersion   String?                   @map("config_version") @db.VarChar(20)
+  healthStatus    String                    @default("HEALTHY") @map("health_status") @db.VarChar(50)
+  syncConfig      Json                      @default("{}") @map("sync_config")
+  mappingRules    Json                      @default("{}") @map("mapping_rules")
+  lastSyncAt      DateTime?                 @map("last_sync_at")
+  lastAttemptAt   DateTime?                 @map("last_attempt_at")
+  lastWebhookAt   DateTime?                 @map("last_webhook_at")
+  lastError       Json?                     @map("last_error")
+  healthScore     Int?                      @default(100) @map("health_score")
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  updatedAt       DateTime                  @default(now()) @map("updated_at")
+  disconnectedAt  DateTime?                 @map("disconnected_at")
+
+  project         Project                   @relation(fields: [siteId], references: [id])
+  tenant          Tenant                    @relation(fields: [tenantId], references: [id])
+  syncRuns        ConnectorSyncRun[]
+  credentials     ConnectorCredential[]
+  lifecycleEvents ConnectorLifecycleEvent[]
+  ingestionEvents IngestionEvent[]
+  pipelineJobs    PipelineJob[]
+  pipelineCheckpoints PipelineCheckpoint[]
+
+  @@index([siteId], map: "idx_connector_site")
+  @@index([tenantId], map: "idx_connector_tenant")
+  @@map("connector_instances")
+}
+
+model ConnectorSyncRun {
+  id                  String   @id @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  syncType            String   @map("sync_type") @db.VarChar(50)
+  status              String   @db.VarChar(50)
+  startedAt           DateTime @map("started_at")
+  finishedAt          DateTime? @map("finished_at")
+  recordsFetched      Int?     @default(0) @map("records_fetched")
+  recordsProcessed    Int?     @default(0) @map("records_processed")
+  recordsFailed       Int?     @default(0) @map("records_failed")
+  checkpointValue     String?  @map("checkpoint_value") @db.Text
+  errorSummary        Json?    @map("error_summary")
+
+  connectorInstance   ConnectorInstance @relation(fields: [connectorInstanceId], references: [id])
+
+  @@index([connectorInstanceId], map: "idx_sync_run_connector")
+  @@map("connector_sync_runs")
+}
+
+model ProjectAccessKey {
+  id         String   @id @db.VarChar(36)
+  siteId     String   @map("site_id") @db.VarChar(255)
+  tenantId   String   @map("tenant_id") @db.VarChar(36)
+  label      String   @db.VarChar(255)
+  keyPrefix  String   @map("key_prefix") @db.VarChar(20)
+  keyHash    String   @map("key_hash") @db.VarChar(255)
+  status     String   @default("ACTIVE") @db.VarChar(50)
+  scopes     Json     @default("[]")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  createdBy  String   @map("created_by") @db.VarChar(255)
+
+  project    Project  @relation(fields: [siteId], references: [id])
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId], map: "idx_key_site")
+  @@map("project_access_keys")
+}
+
+model WebhookSubscription {
+  id          String   @id @db.VarChar(36)
+  siteId      String   @map("site_id") @db.VarChar(255)
+  tenantId    String   @map("tenant_id") @db.VarChar(36)
+  label       String   @db.VarChar(255)
+  callbackUrl String   @map("callback_url") @db.Text
+  secret      String   @db.VarChar(255)
+  status      String   @default("ACTIVE") @db.VarChar(50)
+  eventTypes  Json     @default("[]") @map("event_types")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @map("updated_at")
+
+  project     Project  @relation(fields: [siteId], references: [id])
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId], map: "idx_webhook_sub_site")
+  @@map("webhook_subscriptions")
+}
+
+model ConnectorCredential {
+  id                  String   @id @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  authType            String   @map("auth_type") @db.VarChar(50)
+  vaultKey            String?  @map("vault_key") @db.VarChar(255)
+  encryptedSecret     String?  @map("encrypted_secret") @db.Text
+  expiresAt           DateTime? @map("expires_at")
+  lastRotatedAt       DateTime? @map("last_rotated_at")
+  scopes              Json?    @default("[]")
+
+  connectorInstance   ConnectorInstance @relation(fields: [connectorInstanceId], references: [id])
+  tenant              Tenant            @relation(fields: [tenantId], references: [id])
+
+  @@map("connector_credentials")
+}
+
+model ConnectorLifecycleEvent {
+  id                  String   @id @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  projectId           String   @map("project_id") @db.VarChar(255)
+  eventType           String   @map("event_type") @db.VarChar(100)
+  severity            String   @db.VarChar(20)
+  payload             Json?    @default("{}")
+  correlationId       String?   @map("correlation_id") @db.VarChar(100)
+  triggeredBy         String   @map("triggered_by") @db.VarChar(50)
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  connectorInstance   ConnectorInstance @relation(fields: [connectorInstanceId], references: [id])
+  tenant              Tenant            @relation(fields: [tenantId], references: [id])
+  project             Project           @relation(fields: [projectId], references: [id])
+
+  @@index([connectorInstanceId], map: "idx_event_connector")
+  @@index([tenantId], map: "idx_event_tenant")
+  @@map("connector_lifecycle_events")
+}
+
+model Alert {
+  id             String   @id @db.VarChar(36)
+  siteId         String   @map("site_id") @db.VarChar(255)
+  tenantId       String   @map("tenant_id") @db.VarChar(36)
+  severity       String   @db.VarChar(20)
+  status         String   @default("TRIGGERED") @db.VarChar(50)
+  module         String   @db.VarChar(50)
+  alertType      String   @map("alert_type") @db.VarChar(100)
+  message        String   @db.Text
+  context        Json     @default("{}")
+  correlationId  String?  @map("correlation_id") @db.VarChar(255)
+  triggeredAt    DateTime @default(now()) @map("triggered_at")
+  acknowledgedAt DateTime? @map("acknowledged_at")
+  acknowledgedBy String?  @map("acknowledged_by") @db.VarChar(255)
+  resolvedAt     DateTime? @map("resolved_at")
+
+  project        Project  @relation(fields: [siteId], references: [id])
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId], map: "idx_alert_site")
+  @@index([tenantId], map: "idx_alert_tenant")
+  @@index([status], map: "idx_alert_status")
+  @@map("alerts")
+}
+
+model AlertRule {
+  id                String   @id @db.VarChar(36)
+  siteId            String   @map("site_id") @db.VarChar(255)
+  tenantId          String   @map("tenant_id") @db.VarChar(36)
+  name              String   @db.VarChar(255)
+  description       String?  @db.Text
+  severity          String   @db.VarChar(20)
+  enabled           Int?     @default(1)
+  criteria          Json
+  cooldownMinutes   Int?     @map("cooldown_minutes") @default(60)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @default(now()) @map("updated_at")
+
+  project           Project  @relation(fields: [siteId], references: [id])
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId], map: "idx_alert_rule_site")
+  @@map("alert_rules")
+}
+
+model SystemLog {
+  id            Int       @id @default(autoincrement())
+  siteId        String?   @map("site_id") @db.VarChar(255)
+  tenantId      String?   @map("tenant_id") @db.VarChar(36)
+  level         String    @db.VarChar(20)
+  module        String    @db.VarChar(100)
+  message       String    @db.Text
+  metadata      Json      @default("{}")
+  correlationId String?   @map("correlation_id") @db.VarChar(255)
+  timestamp     DateTime  @default(now())
+
+  project       Project?  @relation(fields: [siteId], references: [id])
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId, timestamp], map: "idx_log_site_ts")
+  @@index([tenantId, timestamp], map: "idx_log_tenant_ts")
+  @@index([correlationId], map: "idx_log_correlation")
+  @@map("system_logs")
+}
+
+model SystemHealthMetric {
+  id          Int      @id @default(autoincrement())
+  metricName  String   @map("metric_name") @db.VarChar(255)
+  metricValue Decimal  @map("metric_value") @db.Decimal(20, 4)
+  labels      Json     @default("{}")
+  timestamp   DateTime @default(now())
+
+  @@index([metricName, timestamp], map: "idx_health_name_ts")
+  @@map("system_health_metrics")
+}
+
+model ConnectorHealthSnapshot {
+  id                  Int       @id @default(autoincrement())
+  connectorInstanceId String    @map("connector_instance_id") @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  status              String    @db.VarChar(50)
+  healthScore         Int?      @map("health_score")
+  dimensions          Json      @default("{}")
+  timestamp           DateTime  @default(now())
+
+  @@index([connectorInstanceId, timestamp], map: "idx_health_shot_connector_ts")
+  @@map("connector_health_snapshots")
+}
+
+model PerformanceMetric {
+  id            Int       @id @default(autoincrement())
+  siteId        String    @map("site_id") @db.VarChar(255)
+  tenantId      String    @map("tenant_id") @db.VarChar(36)
+  category      String    @db.VarChar(50)
+  metricName    String    @map("metric_name") @db.VarChar(100)
+  metricValue   Decimal   @map("metric_value") @db.Decimal(20, 4)
+  unit          String    @db.VarChar(20)
+  region        String?   @db.VarChar(100)
+  device        String?   @db.VarChar(100)
+  browser       String?   @db.VarChar(100)
+  route         String?   @db.VarChar(255)
+  timestamp     DateTime
+  traceId       String?   @map("trace_id") @db.VarChar(255)
+  correlationId String?   @map("correlation_id") @db.VarChar(255)
+
+  project       Project   @relation(fields: [siteId], references: [id])
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId, metricName, timestamp], map: "idx_perf_site_name_ts")
+  @@index([tenantId, timestamp], map: "idx_perf_tenant_ts")
+  @@map("performance_metrics")
+}
+
+model PerformanceRollup {
+  id          Int       @id @default(autoincrement())
+  siteId      String    @map("site_id") @db.VarChar(255)
+  metricName  String    @map("metric_name") @db.VarChar(100)
+  bucketSize  String    @map("bucket_size") @db.VarChar(20)
+  timestamp   DateTime
+  count       Int
+  min         Decimal?  @db.Decimal(20, 4)
+  max         Decimal?  @db.Decimal(20, 4)
+  sum         Decimal?  @db.Decimal(20, 4)
+  avg         Decimal?  @db.Decimal(20, 4)
+  p50         Decimal?  @db.Decimal(20, 4)
+  p90         Decimal?  @db.Decimal(20, 4)
+  p99         Decimal?  @db.Decimal(20, 4)
+  dimensions  Json      @default("{}")
+
+  project     Project   @relation(fields: [siteId], references: [id])
+
+  @@index([siteId, metricName, bucketSize, timestamp], map: "idx_perf_rollup")
+  @@map("performance_rollups")
+}
+
+model KpiValue {
+  id          Int       @id @default(autoincrement())
+  siteId      String    @map("site_id") @db.VarChar(255)
+  tenantId    String    @map("tenant_id") @db.VarChar(36)
+  kpiName     String    @map("kpi_name") @db.VarChar(100)
+  kpiValue    Decimal   @map("kpi_value") @db.Decimal(20, 4)
+  timeWindow  String    @map("time_window") @db.VarChar(20)
+  timestamp   DateTime
+  metadata    Json      @default("{}")
+  updatedAt   DateTime  @default(now()) @map("updated_at")
+
+  project     Project   @relation(fields: [siteId], references: [id])
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId, kpiName, timestamp], map: "idx_kpi_site_name_ts")
+  @@index([tenantId, timestamp], map: "idx_kpi_tenant_ts")
+  @@map("kpi_values")
+}
+
+model CanonicalOrder {
+  id                  String    @id @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  tenantId            String    @map("tenant_id") @db.VarChar(36)
+  orderId             String    @map("order_id") @db.VarChar(255)
+  externalReferenceId String?   @map("external_ref_id") @db.VarChar(255)
+  sourceSystem        String    @map("source_system") @db.VarChar(255)
+  channel             String    @db.VarChar(50)
+  lifecycleState      String    @map("lifecycle_state") @db.VarChar(50)
+  normalizedStatus    String    @map("normalized_status") @db.VarChar(50)
+  currency            String    @db.VarChar(10)
+  totalAmount         Decimal   @map("total_amount") @db.Decimal(20, 4)
+  taxAmount           Decimal?  @map("tax_amount") @db.Decimal(20, 4)
+  discountAmount      Decimal?  @map("discount_amount") @db.Decimal(20, 4)
+  paidAmount          Decimal?  @map("paid_amount") @db.Decimal(20, 4)
+  refundedAmount      Decimal?  @map("refunded_amount") @db.Decimal(20, 4)
+  placedAt            DateTime  @map("placed_at")
+  paidAt              DateTime? @map("paid_at")
+  shippedAt           DateTime? @map("shipped_at")
+  deliveredAt         DateTime? @map("delivered_at")
+  mappingVersion      String    @map("mapping_version") @db.VarChar(20)
+  ingestionEventId    String?   @map("ingestion_event_id") @db.VarChar(36)
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @map("updated_at")
+
+  project             Project   @relation(fields: [siteId], references: [id])
+  tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  snapshots           OrderSnapshot[]
+  events              OrderEvent[]
+
+  @@index([siteId], map: "idx_order_site")
+  @@index([tenantId], map: "idx_order_tenant")
+  @@index([orderId], map: "idx_order_source_id")
+  @@index([lifecycleState], map: "idx_order_lifecycle")
+  @@index([placedAt], map: "idx_order_placed_ts")
+  @@map("canonical_orders")
+}
+
+model OrderSnapshot {
+  id                Int       @id @default(autoincrement())
+  orderInternalId   String    @map("order_internal_id") @db.VarChar(36)
+  snapshotTimestamp DateTime   @default(now()) @map("snapshot_timestamp")
+  lifecycleState    String    @map("lifecycle_state") @db.VarChar(50)
+  totalAmount       Decimal?  @map("total_amount") @db.Decimal(20, 4)
+  metadata          Json?
+
+  order             CanonicalOrder @relation(fields: [orderInternalId], references: [id])
+
+  @@index([orderInternalId], map: "idx_shot_order")
+  @@map("order_snapshots")
+}
+
+model OrderEvent {
+  id               String    @id @db.VarChar(36)
+  orderInternalId  String    @map("order_internal_id") @db.VarChar(36)
+  eventType        String    @map("event_type") @db.VarChar(100)
+  timestamp        DateTime
+  payload          Json      @default("{}")
+  correlationId    String?   @map("correlation_id") @db.VarChar(255)
+
+  order            CanonicalOrder @relation(fields: [orderInternalId], references: [id])
+
+  @@index([orderInternalId], map: "idx_event_order")
+  @@index([eventType], map: "idx_event_type")
+  @@map("order_events")
+}
+
+model IngestionEvent {
+  id                String    @id @db.VarChar(36)
+  tenantId          String    @map("tenant_id") @db.VarChar(36)
+  projectId         String    @map("project_id") @db.VarChar(255)
+  integrationId     String?   @map("integration_id") @db.VarChar(36)
+  mode              String    @db.VarChar(20)
+  status            String    @db.VarChar(20)
+  sourceReferenceId String?   @map("source_reference_id") @db.VarChar(255)
+  correlationId     String    @map("correlation_id") @db.VarChar(100)
+  validationReport  Json?     @map("validation_report") @default("{}")
+  dedupeKey         String?   @map("dedupe_key") @db.VarChar(255)
+  receivedAt        DateTime  @default(now()) @map("received_at")
+  updatedAt         DateTime  @default(now()) @map("updated_at")
+  error             Json?     @default("{}")
+
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+  project           Project   @relation(fields: [projectId], references: [id])
+  integration       ConnectorInstance? @relation(fields: [integrationId], references: [id])
+  artifacts         IngestionArtifact[]
+  qualityResults    QualityGateResult[]
+
+  @@index([tenantId], map: "idx_ingest_tenant")
+  @@index([projectId], map: "idx_ingest_project")
+  @@index([correlationId], map: "idx_ingest_correlation")
+  @@index([dedupeKey], map: "idx_ingest_dedupe")
+  @@map("ingestion_events")
+}
+
+model IngestionArtifact {
+  id                String    @id @db.VarChar(36)
+  ingestionEventId  String    @map("ingestion_event_id") @db.VarChar(36)
+  type              String    @db.VarChar(50)
+  storagePath       String    @map("storage_path") @db.Text
+  contentType       String?   @map("content_type") @db.VarChar(100)
+  sizeBytes         Int?      @map("size_bytes")
+  checksum          String?   @db.VarChar(100)
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  event             IngestionEvent @relation(fields: [ingestionEventId], references: [id])
+
+  @@index([ingestionEventId], map: "idx_artifact_event")
+  @@map("ingestion_artifacts")
+}
+
+model QualityGateResult {
+  id               Int       @id @default(autoincrement())
+  ingestionEventId String    @map("ingestion_event_id") @db.VarChar(36)
+  ruleName         String    @map("rule_name") @db.VarChar(255)
+  status           String    @db.VarChar(20)
+  details          String?   @db.Text
+  confidenceScore  Decimal?  @map("confidence_score") @db.Decimal(5, 2)
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  event            IngestionEvent @relation(fields: [ingestionEventId], references: [id])
+
+  @@index([ingestionEventId], map: "idx_qgate_event")
+  @@map("quality_gate_results")
+}
+
+model PipelineJob {
+  id             String    @id @db.VarChar(36)
+  siteId         String    @map("site_id") @db.VarChar(255)
+  tenantId       String    @map("tenant_id") @db.VarChar(36)
+  integrationId  String?   @map("integration_id") @db.VarChar(36)
+  type           String    @db.VarChar(50)
+  status         String    @default("QUEUED") @db.VarChar(50)
+  correlationId  String?   @map("correlation_id") @db.VarChar(100)
+  attempts       Int?      @default(0)
+  maxRetries     Int?      @map("max_retries") @default(3)
+  payloadRef     Json      @map("payload_ref") @default("{}")
+  errorSummary   Json?     @map("error_summary")
+  startedAt      DateTime? @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  project        Project   @relation(fields: [siteId], references: [id])
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
+  integration    ConnectorInstance? @relation(fields: [integrationId], references: [id])
+  deadLetters    DeadLetterQueue[]
+
+  @@index([siteId, type, status], map: "idx_pipe_job_site_type_status")
+  @@index([correlationId], map: "idx_pipe_job_correlation")
+  @@map("pipeline_jobs")
+}
+
+model PipelineCheckpoint {
+  id             String    @id @db.VarChar(36)
+  siteId         String    @map("site_id") @db.VarChar(255)
+  integrationId  String    @map("integration_id") @db.VarChar(36)
+  entityType     String    @map("entity_type") @db.VarChar(50)
+  cursorType     String    @map("cursor_type") @db.VarChar(50)
+  cursorValue    String    @map("cursor_value") @db.VarChar(255)
+  metadata       Json      @default("{}")
+  updatedAt      DateTime  @default(now()) @map("updated_at")
+
+  project        Project   @relation(fields: [siteId], references: [id])
+  integration    ConnectorInstance @relation(fields: [integrationId], references: [id])
+
+  @@index([integrationId, entityType], map: "idx_pipe_ckpt_integration_entity")
+  @@map("pipeline_checkpoints")
+}
+
+model DeadLetterQueue {
+  id              String    @id @db.VarChar(36)
+  jobId           String    @map("job_id") @db.VarChar(36)
+  siteId          String    @map("site_id") @db.VarChar(255)
+  tenantId        String    @map("tenant_id") @db.VarChar(36)
+  failureCategory String    @map("failure_category") @db.VarChar(50)
+  reason          String    @db.Text
+  payloadSnapshot Json?     @map("payload_snapshot")
+  reviewedBy      String?   @map("reviewed_by") @db.VarChar(255)
+  actionTaken     String?   @map("action_taken") @db.VarChar(50)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @map("updated_at")
+
+  job             PipelineJob @relation(fields: [jobId], references: [id])
+  project         Project     @relation(fields: [siteId], references: [id])
+  tenant          Tenant      @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId, actionTaken], map: "idx_dlq_site_status")
+  @@map("dead_letter_queue")
+}
+
+model RecoveryJob {
+  id               String    @id @db.VarChar(36)
+  siteId           String    @map("site_id") @db.VarChar(255)
+  tenantId         String    @map("tenant_id") @db.VarChar(36)
+  jobType          String    @map("job_type") @db.VarChar(50)
+  status           String    @default("PENDING") @db.VarChar(50)
+  scope            Json
+  config           Json      @default("{}")
+  totalRecords     Int?      @map("total_records") @default(0)
+  processedRecords Int?      @map("processed_records") @default(0)
+  failedRecords    Int?      @map("failed_records") @default(0)
+  triggeredBy      String    @map("triggered_by") @db.VarChar(255)
+  reason           String?   @db.Text
+  startedAt        DateTime  @default(now()) @map("started_at")
+  updatedAt        DateTime  @default(now()) @map("updated_at")
+  finishedAt       DateTime? @map("finished_at")
+  lastError        Json?     @map("last_error")
+
+  project          Project   @relation(fields: [siteId], references: [id])
+  tenant           Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([siteId, status], map: "idx_recovery_site_status")
+  @@map("recovery_jobs")
+}

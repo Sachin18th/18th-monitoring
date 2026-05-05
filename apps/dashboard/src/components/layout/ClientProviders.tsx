@@ -31,16 +31,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
           router.push('/login');
         }
       } else {
-        const assignedProjects = user.assignedProjects || [];
         if (pathname === '/') {
-          if (user.role === 'CUSTOMER' && assignedProjects.length === 1) {
-            router.push(`/project/${assignedProjects[0]}/overview`);
-          } else {
-            router.push('/projects');
-          }
-        }
-        if (pathname === '/projects' && user.role === 'CUSTOMER' && assignedProjects.length === 1) {
-          router.push(`/project/${assignedProjects[0]}/overview`);
+          router.push('/projects');
         }
       }
     }

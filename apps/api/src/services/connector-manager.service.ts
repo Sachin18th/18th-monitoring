@@ -1,10 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { 
-    connectorInstances, 
-    connectorHealthSnapshots, 
-    connectorSyncRuns 
-} from '../../../../packages/db/src/drizzle/schema';
-import { eq, and } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 import { 
     ConnectorLifecycleState, 
     ConnectorHealthDimensions,
@@ -32,12 +26,13 @@ export class ConnectorManagerService {
     static async transitionState(instanceId: string, newState: ConnectorLifecycleState) {
         const timestamp = new Date();
         try {
-            await db.update(connectorInstances)
-                .set({ 
+            await prisma.connectorInstance.updateMany({
+                where: { id: instanceId },
+                data: {
                     lifecycleState: newState,
                     updatedAt: timestamp
-                })
-                .where(eq(connectorInstances.id, instanceId));
+                }
+            });
             
             console.log(`[ConnectorManager] Connector ${instanceId} transitioned to ${newState}`);
         } catch (err) {
@@ -52,17 +47,20 @@ export class ConnectorManagerService {
     static async startSyncRun(instanceId: string, siteId: string, syncType: 'POLL' | 'WEBHOOK' | 'BACKFILL') {
         const runId = Math.random().toString(36).substring(7);
         try {
-            await db.insert(connectorSyncRuns).values({
-                id: runId,
-                connectorInstanceId: instanceId,
-                syncType,
-                status: 'RUNNING',
-                startedAt: new Date(),
+            await prisma.connectorSyncRun.create({
+                data: {
+                    id: runId,
+                    connectorInstanceId: instanceId,
+                    syncType,
+                    status: 'RUNNING',
+                    startedAt: new Date()
+                }
             });
 
-            await db.update(connectorInstances)
-                .set({ lastAttemptAt: new Date() })
-                .where(eq(connectorInstances.id, instanceId));
+            await prisma.connectorInstance.updateMany({
+                where: { id: instanceId },
+                data: { lastAttemptAt: new Date() }
+            });
 
             return runId;
         } catch (err) {
@@ -78,13 +76,14 @@ export class ConnectorManagerService {
         const timestamp = new Date();
         try {
             // Update last successful sync
-            await db.update(connectorInstances)
-                .set({ 
+            await prisma.connectorInstance.updateMany({
+                where: { id: instanceId },
+                data: {
                     lastSyncAt: timestamp,
                     healthStatus: 'HEALTHY',
                     lifecycleState: metrics.rejected > 0 ? 'DEGRADED' : 'ACTIVE'
-                })
-                .where(eq(connectorInstances.id, instanceId));
+                }
+            });
 
             // Record success signal
             await this.recordHealthSignal(instanceId, 'sync', true);

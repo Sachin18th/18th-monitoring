@@ -1,10 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { 
-    connectorSyncRuns, 
-    pipelineCheckpoints,
-    connectorInstances 
-} from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 import { HardenedIngestionService } from './hardened-ingestion.service';
 import { ConnectorManagerService } from './connector-manager.service';
 
@@ -39,12 +33,14 @@ export class SyncEngine {
             console.log(`[SyncEngine] Starting ${options.syncType} job for ${lockKey} (RunID: ${runId})`);
 
             // 2. REGISTER RUN (Requirement 11)
-            await db.insert(connectorSyncRuns).values({
-                id: runId,
-                connectorInstanceId: options.connectorId,
-                syncType: options.syncType,
-                status: 'RUNNING',
-                startedAt: startTime,
+            await prisma.connectorSyncRun.create({
+                data: {
+                    id: runId,
+                    connectorInstanceId: options.connectorId,
+                    syncType: options.syncType,
+                    status: 'RUNNING',
+                    startedAt: startTime
+                }
             });
 
             // 3. FETCH CHECKPOINT (Requirement 9)
@@ -55,17 +51,20 @@ export class SyncEngine {
             const result = await this.runBatch(options, checkpoint);
 
             // 5. FINALIZE (Requirement 11)
-            await db.update(connectorSyncRuns).set({
-                status: result.failed === 0 ? 'SUCCESS' : 'PARTIAL',
-                finishedAt: new Date(),
-                recordsFetched: result.fetched,
-                recordsProcessed: result.processed,
-                recordsFailed: result.failed,
-                checkpointValue: result.nextCheckpoint
-            }).where(and(
-                eq(connectorSyncRuns.connectorInstanceId, options.connectorId),
-                eq(connectorSyncRuns.status, 'RUNNING') // Simplified for demo
-            ));
+            await prisma.connectorSyncRun.updateMany({
+                where: {
+                    connectorInstanceId: options.connectorId,
+                    status: 'RUNNING'
+                },
+                data: {
+                    status: result.failed === 0 ? 'SUCCESS' : 'PARTIAL',
+                    finishedAt: new Date(),
+                    recordsFetched: result.fetched,
+                    recordsProcessed: result.processed,
+                    recordsFailed: result.failed,
+                    checkpointValue: result.nextCheckpoint
+                }
+            });
 
             // Update Instance State
             await ConnectorManagerService.completeSyncRun(options.connectorId, options.siteId, {
@@ -79,14 +78,17 @@ export class SyncEngine {
         } catch (err: any) {
             console.error(`[SyncEngine] Fatal job error for ${runId}:`, err);
             
-            await db.update(connectorSyncRuns).set({
-                status: 'FAILED',
-                finishedAt: new Date(),
-                errorSummary: { message: err.message, stack: err.stack }
-            }).where(and(
-                eq(connectorSyncRuns.connectorInstanceId, options.connectorId),
-                eq(connectorSyncRuns.status, 'RUNNING')
-            ));
+            await prisma.connectorSyncRun.updateMany({
+                where: {
+                    connectorInstanceId: options.connectorId,
+                    status: 'RUNNING'
+                },
+                data: {
+                    status: 'FAILED',
+                    finishedAt: new Date(),
+                    errorSummary: { message: err.message, stack: err.stack }
+                }
+            });
 
             await ConnectorManagerService.recordHealthSignal(options.connectorId, 'sync', false, err);
             throw err;
@@ -137,37 +139,59 @@ export class SyncEngine {
     }
 
     private static async getCheckpoint(connectorId: string, siteId: string): Promise<string | null> {
-        const cp = await db.select()
-            .from(pipelineCheckpoints)
-            .where(and(
-                eq(pipelineCheckpoints.integrationId as any, connectorId) as any,
-                eq(pipelineCheckpoints.siteId as any, siteId) as any
-            ) as any)
-            .limit(1);
-        return cp.length > 0 ? cp[0].cursorValue : null;
+        const checkpoint = await prisma.pipelineCheckpoint.findFirst({
+            where: {
+                integrationId: connectorId,
+                siteId
+            },
+            orderBy: { updatedAt: 'desc' },
+            select: { cursorValue: true }
+        });
+
+        return checkpoint?.cursorValue || null;
     }
 
     private static async updateCheckpoint(connectorId: string, siteId: string, value: string) {
         try {
-            await db.insert(pipelineCheckpoints).values({
-                id: Math.random().toString(36).substring(2, 10),
-                integrationId: connectorId,
-                siteId: siteId,
-                entityType: 'ALL',
-                cursorType: 'TIMESTAMP',
-                cursorValue: value,
-                metadata: { lastUpdate: new Date().toISOString() }
-            }).onConflictDoUpdate({
-                target: [pipelineCheckpoints.integrationId as any, pipelineCheckpoints.entityType as any],
-                set: { cursorValue: value, updatedAt: new Date() }
-            }) as any;
+            const existing = await prisma.pipelineCheckpoint.findFirst({
+                where: {
+                    integrationId: connectorId,
+                    siteId
+                },
+                select: { id: true }
+            });
+
+            if (existing) {
+                await prisma.pipelineCheckpoint.updateMany({
+                    where: { id: existing.id },
+                    data: {
+                        cursorValue: value,
+                        updatedAt: new Date(),
+                        metadata: { lastUpdate: new Date().toISOString() }
+                    }
+                });
+                return;
+            }
+
+            await prisma.pipelineCheckpoint.create({
+                data: {
+                    id: Math.random().toString(36).substring(2, 10),
+                    integrationId: connectorId,
+                    siteId,
+                    entityType: 'ALL',
+                    cursorType: 'TIMESTAMP',
+                    cursorValue: value,
+                    metadata: { lastUpdate: new Date().toISOString() }
+                }
+            });
         } catch (err) {
-            await db.update(pipelineCheckpoints)
-                .set({ cursorValue: value, updatedAt: new Date() })
-                .where(and(
-                    eq(pipelineCheckpoints.integrationId as any, connectorId) as any,
-                    eq(pipelineCheckpoints.siteId as any, siteId) as any
-                ) as any);
+            await prisma.pipelineCheckpoint.updateMany({
+                where: {
+                    integrationId: connectorId,
+                    siteId
+                },
+                data: { cursorValue: value, updatedAt: new Date() }
+            });
         }
     }
 }

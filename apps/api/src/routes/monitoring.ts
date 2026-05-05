@@ -1,4 +1,4 @@
-﻿import { FastifyInstance } from 'fastify';
+﻿﻿import { FastifyInstance } from 'fastify';
 import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
 import { HealthEngine } from '../services/health-engine.service';
 import { AlertEngine } from '../services/alert-engine.service';
@@ -64,7 +64,12 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
     fastify.post('/tenants/:tenantId/projects/:siteId/alerts/:alertId/acknowledge', async (req, reply) => {
         const { alertId } = req.params as any;
         const { userId } = (req.body as any) || { userId: 'system' };
-        AlertEngine.acknowledge(alertId, userId);
+        const alert = GlobalMemoryStore.alerts.find((a: any) => a.id === alertId || a.alertId === alertId);
+        if (alert) {
+            alert.status = 'acknowledged';
+            alert.acknowledgedBy = userId;
+            alert.acknowledgedAt = new Date().toISOString();
+        }
         return reply.send(ResponseUtil.success({ alertId, status: 'acknowledged' }, {}, req.id as string));
     });
 
@@ -75,7 +80,12 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
     fastify.post('/tenants/:tenantId/projects/:siteId/alerts/:alertId/resolve', async (req, reply) => {
         const { alertId } = req.params as any;
         const { userId } = (req.body as any) || { userId: 'system' };
-        AlertEngine.resolve(alertId, userId);
+        const alert = GlobalMemoryStore.alerts.find((a: any) => a.id === alertId || a.alertId === alertId);
+        if (alert) {
+            alert.status = 'resolved';
+            alert.resolvedBy = userId;
+            alert.resolvedAt = new Date().toISOString();
+        }
         return reply.send(ResponseUtil.success({ alertId, status: 'resolved' }, {}, req.id as string));
     });
 
@@ -101,4 +111,3 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
         return reply.code(202).send(ResponseUtil.success({ evaluated: true }, {}, req.id as string));
     });
 };
-

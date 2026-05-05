@@ -1,6 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { ingestionEvents } from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, between, gte, lte } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 import { HardenedIngestionService } from './hardened-ingestion.service';
 
 export class ReplayService {
@@ -9,10 +7,8 @@ export class ReplayService {
      * Requirement 6 (Safe replay with idempotency)
      */
     static async replayEvent(eventId: string) {
-        const events = await db.select().from(ingestionEvents).where(eq(ingestionEvents.id, eventId)).limit(1);
-        if (events.length === 0) throw new Error('Event not found');
-        
-        const event = events[0];
+        const event = await prisma.ingestionEvent.findUnique({ where: { id: eventId } });
+        if (!event) throw new Error('Event not found');
         console.log(`[ReplayService] Replaying event ${eventId} for connector ${event.integrationId}`);
 
         // Re-trigger the ASYNC processing step (Step 2 of the ingestion flow)
@@ -25,7 +21,7 @@ export class ReplayService {
             connectorId: event.integrationId || 'unknown',
             sourceSystem: 'replay',
             eventType: 'REPLAY',
-            payload: {}, // event.rawPayload is in artifacts, currently using placeholder
+            payload: ((event.validationReport as any)?.rawPayload) || {},
             sourceEventId: event.id,
             metadata: {
                 correlationId: event.correlationId,
@@ -39,15 +35,21 @@ export class ReplayService {
      * Requirement 6 (Batch replay)
      */
     static async replayBatch(filters: { connectorId?: string; siteId: string; start?: Date; end?: Date; status?: string }) {
-        const query = db.select().from(ingestionEvents).where(and(
-            eq(ingestionEvents.projectId, filters.siteId),
-            filters.connectorId ? eq(ingestionEvents.integrationId, filters.connectorId) : undefined,
-            filters.status ? eq(ingestionEvents.status, filters.status) : eq(ingestionEvents.status, 'FAILED'),
-            filters.start ? gte(ingestionEvents.receivedAt, filters.start) : undefined,
-            filters.end ? lte(ingestionEvents.receivedAt, filters.end) : undefined
-        ));
-
-        const events = await query;
+        const events = await prisma.ingestionEvent.findMany({
+            where: {
+                projectId: filters.siteId,
+                ...(filters.connectorId ? { integrationId: filters.connectorId } : {}),
+                status: filters.status || 'FAILED',
+                ...(filters.start || filters.end
+                    ? {
+                        receivedAt: {
+                            ...(filters.start ? { gte: filters.start } : {}),
+                            ...(filters.end ? { lte: filters.end } : {})
+                        }
+                    }
+                    : {})
+            }
+        });
         console.log(`[ReplayService] Triggering replay for ${events.length} events...`);
 
         const results = {
@@ -60,7 +62,7 @@ export class ReplayService {
                 await this.replayEvent(event.id);
                 results.triggered++;
             } catch (err) {
-                console.error(`[ReplayService] Failed to trigger replay for ${event.eventId}:`, err);
+                console.error(`[ReplayService] Failed to trigger replay for ${event.id}:`, err);
                 results.failed++;
             }
         }

@@ -39,14 +39,14 @@ export const seed18thDigitech = (store: any) => {
         updatedAt: now
     });
 
-    // Helper for password hashing (simulating GlobalMemoryStore._p)
+    // ✅ CORRECTED: Password hashing with RANDOM salt (matching AuthService.comparePassword)
     const hashPwd = (pwd: string) => {
-        const salt = process.env.JWT_SECRET || 'hardcoded_demo_salt';
+        const salt = crypto.randomBytes(16).toString('hex');
         const hash = crypto.scryptSync(pwd, salt, 64).toString('hex');
-        return `${salt}:${hash}`;
+        return `${salt}:${hash}`;  // Format: "hexsalt:hexkey"
     };
 
-    // 3. Seed Users with specific roles
+    // 3. Seed Users with specific roles (4 test users for 18th Digitech)
     const users = [
         {
             email: 'superadmin@18thdigitech.com',
@@ -55,35 +55,46 @@ export const seed18thDigitech = (store: any) => {
             id: 'user_18th_super'
         },
         {
-            email: 'admin@18thdigitech.com',
+            email: 'projectadmin@18thdigitech.com',
             name: '18th Project Admin',
             role: 'PROJECT_ADMIN',
-            id: 'user_18th_admin'
+            id: 'user_18th_project_admin'
         },
         {
-            email: 'viewer@18thdigitech.com',
-            name: '18th Read-Only Viewer',
-            role: 'VIEWER',
-            id: 'user_18th_viewer'
-        },
-        {
-            email: 'contributor@18thdigitech.com',
-            name: '18th Ops Contributor',
+            email: 'opslead@18thdigitech.com',
+            name: '18th Ops Lead',
             role: 'OPERATOR',
-            id: 'user_18th_contributor'
+            id: 'user_18th_ops_lead'
+        },
+        {
+            email: 'analyst@18thdigitech.com',
+            name: '18th Analyst',
+            role: 'VIEWER',
+            id: 'user_18th_analyst'
         }
     ];
 
+    // Seed users (idempotent check)
     users.forEach(u => {
+        const alreadyExists = store.users.has(u.email) || 
+                             Array.from(store.users.values()).some((user: any) => user.email === u.email);
+        if (alreadyExists) {
+            console.log(`[Seeder] ⊘ User ${u.email} already exists (skipped)`);
+            return;
+        }
+
         store.users.set(u.email, {
             ...u,
-            status: 'active',
+            status: 'active',  // ⚠️ CRITICAL: Must be lowercase 'active' for login
             tenantId: tenantId,
             assignedProjects: [projectId],
             passwordHash: hashPwd('Demo@1234!'),
+            mfaEnabled: 0,
+            lastLoginAt: null,
             metadata: { source: 'demo-18th' },
-            audit: { createdAt: now, updatedAt: now }
+            audit: { createdAt: now, updatedAt: now, failedLogins: 0 }
         });
+        console.log(`[Seeder] ✓ Created ${u.role.padEnd(13)} → ${u.email}`);
     });
 
     // 4. Seed Metrics (24 hours of data)

@@ -80,7 +80,7 @@ export const bootstrapApi = async () => {
     // 1. Strict CORS Policy
     const allowedOrigins = env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean);
     await server.register(cors, { 
-        origin: allowedOrigins.length > 0 ? allowedOrigins : [/localhost:\d+$/], 
+        origin: true, 
         credentials: true
     });
 

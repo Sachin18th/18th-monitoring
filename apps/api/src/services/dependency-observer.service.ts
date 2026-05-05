@@ -1,6 +1,3 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { performanceMetrics } from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, sql } from 'drizzle-orm';
 import { PerformanceIntelligenceService } from './performance-intelligence.service';
 
 export class DependencyObserverService {

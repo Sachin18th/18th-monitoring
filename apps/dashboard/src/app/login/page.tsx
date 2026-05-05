@@ -526,22 +526,22 @@ export default function LoginPage() {
                     icon={User} 
                     title="Project Admin" 
                     description="Management" 
-                    isSelected={email === 'admin@18thdigitech.com'}
-                    onClick={() => selectDemoRole('admin@18thdigitech.com')}
+                    isSelected={email === 'projectadmin@18thdigitech.com'}
+                    onClick={() => selectDemoRole('projectadmin@18thdigitech.com')}
                   />
                   <RoleSelectorItem 
                     icon={Layers3} 
                     title="Ops Lead" 
                     description="Incident Control" 
-                    isSelected={email === 'contributor@18thdigitech.com'}
-                    onClick={() => selectDemoRole('contributor@18thdigitech.com')}
+                    isSelected={email === 'opslead@18thdigitech.com'}
+                    onClick={() => selectDemoRole('opslead@18thdigitech.com')}
                   />
                   <RoleSelectorItem 
                     icon={Eye} 
                     title="Analyst" 
                     description="ReadOnly" 
-                    isSelected={email === 'viewer@18thdigitech.com'}
-                    onClick={() => selectDemoRole('viewer@18thdigitech.com')}
+                    isSelected={email === 'analyst@18thdigitech.com'}
+                    onClick={() => selectDemoRole('analyst@18thdigitech.com')}
                   />
                 </div>
               </div>

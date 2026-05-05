@@ -1,6 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { canonicalOrders, ingestionEvents } from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, sql } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 import { ReconciliationEngine } from './reconciliation-engine.service';
 import { MismatchDetail } from '../../../../packages/shared-types/src';
 
@@ -14,22 +12,23 @@ export class OrderReconciliationService {
         const mismatches: MismatchDetail[] = [];
         
         // 1. COUNT RECONCILIATION
-        const platformCountResult = await db.select({ count: sql<number>`count(*)` })
-            .from(canonicalOrders)
-            .where(and(
-                eq(canonicalOrders.siteId, siteId),
-                eq(canonicalOrders.sourceSystem, 'shopify') // Example filter
-            ));
-        
-        const platformCount = platformCountResult[0]?.count || 0;
+        const platformCount = await prisma.canonicalOrder.count({
+            where: {
+                siteId,
+                sourceSystem: 'shopify'
+            }
+        });
 
         // Query ingestion events as the external source of truth for count comparison
-        const externalCountResult = await db.select({ count: sql<number>`count(*)` })
-            .from(ingestionEvents)
-            .where(and(
-                eq(ingestionEvents.projectId, siteId)
-            ));
-        const externalCount = externalCountResult[0]?.count || 0;
+        const externalCount = await prisma.ingestionEvent.count({
+            where: {
+                projectId: siteId,
+                receivedAt: {
+                    gte: range.start,
+                    lte: range.end
+                }
+            }
+        });
 
         if (platformCount !== externalCount) {
             mismatches.push({

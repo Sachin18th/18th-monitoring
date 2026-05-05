@@ -1,11 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { 
-    customerProfiles, 
-    customerEvents, 
-    customerSessions, 
-    identityLinks 
-} from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, sql, desc } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 import { 
     CustomerProfile, 
     CustomerEvent, 
@@ -32,14 +25,22 @@ export class CustomerIntelligenceService {
             emailHash = crypto.createHash('sha256').update(options.email.toLowerCase()).digest('hex');
         }
 
+        const project = await prisma.project.findUnique({
+            where: { id: options.siteId },
+            select: { tenantId: true }
+        });
+        const tenantId = project?.tenantId || 'tenant_001';
+
         // 1. ATTEMPT MATCH BY EMAIL HASH (Strong Link)
         if (emailHash) {
-            const existing = await db.select().from(customerProfiles).where(and(
-                eq(customerProfiles.siteId, options.siteId),
-                eq(customerProfiles.emailHash, emailHash)
-            )).limit(1);
+            const existing = await prisma.customerProfile.findFirst({
+                where: {
+                    siteId: options.siteId,
+                    emailHash
+                }
+            });
 
-            if (existing[0]) return existing[0].id;
+            if (existing) return existing.id;
         }
 
         // 2. ATTEMPT MATCH BY EXTERNAL SYSTEM ID (Requirement 1)
@@ -49,13 +50,16 @@ export class CustomerIntelligenceService {
 
         // 3. CREATE NEW PROFILE IF NO MATCH
         const newId = crypto.randomUUID();
-        await db.insert(customerProfiles).values({
-            id: newId,
-            siteId: options.siteId,
-            emailHash,
-            externalIds: options.externalId ? { [options.externalId.system]: options.externalId.id } : {},
-            lifecycleState: 'NEW_VISITOR',
-            identityConfidence: emailHash ? '1.0' : '0.5'
+        await prisma.customerProfile.create({
+            data: {
+                id: newId,
+                siteId: options.siteId,
+                tenantId,
+                emailHash,
+                externalIds: options.externalId ? { [options.externalId.system]: options.externalId.id } : {},
+                lifecycleState: 'NEW_GUEST',
+                identityConfidence: emailHash ? '1.0' : '0.5'
+            }
         });
 
         return newId;
@@ -76,18 +80,20 @@ export class CustomerIntelligenceService {
 
         // 2. STORE EVENT (Requirement 4)
         const eventId = crypto.randomUUID();
-        await db.insert(customerEvents).values({
-            id: eventId,
-            customerId,
-            sessionId,
-            siteId: event.siteId,
-            eventName: event.eventName,
-            eventCategory: event.eventCategory,
-            timestamp: new Date(event.timestamp),
-            utmSource: event.utm?.source,
-            utmMedium: event.utm?.medium,
-            utmCampaign: event.utm?.campaign,
-            metadata: event.metadata
+        await prisma.customerEvent.create({
+            data: {
+                id: eventId,
+                customerId,
+                sessionId,
+                siteId: event.siteId,
+                eventName: event.eventName,
+                category: event.eventCategory,
+                timestamp: new Date(event.timestamp),
+                utmSource: event.utm?.source,
+                utmMedium: event.utm?.medium,
+                utmCampaign: event.utm?.campaign,
+                metadata: event.metadata
+            }
         });
 
         // 3. COMPUTE LIFECYCLE PROGRESSION (Requirement 14)
@@ -98,27 +104,29 @@ export class CustomerIntelligenceService {
 
     private static async getOrCreateSession(customerId: string, siteId: string): Promise<string> {
         // Simple 30-minute timeout logic (Requirement 7)
-        const lastSession = await db.select().from(customerSessions)
-            .where(and(
-                eq(customerSessions.customerId, customerId),
-                eq(customerSessions.siteId, siteId)
-            ))
-            .orderBy(desc(customerSessions.startTime))
-            .limit(1);
+        const lastSession = await prisma.customerSession.findFirst({
+            where: {
+                customerId,
+                siteId
+            },
+            orderBy: { startTime: 'desc' }
+        });
 
         const timeoutMs = 30 * 60 * 1000;
-        if (lastSession[0] && lastSession[0].endTime && (Date.now() - new Date(lastSession[0].endTime).getTime() < timeoutMs)) {
-            return lastSession[0].id;
+        if (lastSession && lastSession.endTime && (Date.now() - new Date(lastSession.endTime).getTime() < timeoutMs)) {
+            return lastSession.id;
         }
 
         const newSessionId = crypto.randomUUID();
-        await db.insert(customerSessions).values({
-            id: newSessionId,
-            customerId,
-            siteId,
-            startTime: new Date(),
-            device: 'Unknown',
-            browser: 'Unknown'
+        await prisma.customerSession.create({
+            data: {
+                id: newSessionId,
+                customerId,
+                siteId,
+                startTime: new Date(),
+                device: 'Unknown',
+                browser: 'Unknown'
+            }
         });
         return newSessionId;
     }
@@ -129,8 +137,9 @@ export class CustomerIntelligenceService {
         if (category === 'CART') nextState = 'CART_STARTER';
         if (category === 'PURCHASE') nextState = 'PURCHASER';
 
-        await db.update(customerProfiles)
-            .set({ lifecycleState: nextState, lastSeenAt: new Date() })
-            .where(eq(customerProfiles.id, id));
+        await prisma.customerProfile.updateMany({
+            where: { id },
+            data: { lifecycleState: nextState, lastSeenAt: new Date() }
+        });
     }
 }

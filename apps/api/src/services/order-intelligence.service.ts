@@ -1,6 +1,5 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { canonicalOrders, orderSnapshots, orderEvents } from '../../../../packages/db/src/drizzle/schema';
-import { eq, and } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
+import { Prisma } from '@prisma/client';
 import { 
     CanonicalOrder, 
     CanonicalLifecycleState, 
@@ -18,6 +17,11 @@ export class OrderIntelligenceService {
      */
     static async ingestAndNormalize(raw: any, sourceSystem: string, siteId: string): Promise<string> {
         const sourceOrderId = raw.id || raw.order_number || raw.entity_id;
+        const project = await prisma.project.findUnique({
+            where: { id: siteId },
+            select: { tenantId: true }
+        });
+        const tenantId = project?.tenantId || (raw as any).tenantId || 'tenant_001';
         
         // 1. LIFECYCLE MAPPING (Requirement 2)
         const lifecycleState = this.mapToCanonicalState(raw.status || raw.state, sourceSystem);
@@ -36,30 +40,35 @@ export class OrderIntelligenceService {
             id: internalId,
             orderId: sourceOrderId.toString(),
             siteId,
+            tenantId,
             sourceSystem,
             channel,
             lifecycleState,
+            normalizedStatus: 'ACTIVE',
             currency: financials.currency,
-            grandTotal: financials.grandTotal.toString(),
+            totalAmount: financials.grandTotal.toString(),
+            taxAmount: financials.tax.toString(),
+            discountAmount: financials.discount.toString(),
             paidAmount: financials.paidAmount.toString(),
             refundedAmount: financials.refundedAmount.toString(),
-            balanceDue: financials.balanceDue.toString(),
             mappingVersion: '1.0.0',
-            createdAt: new Date(raw.created_at || Date.now()),
-            updatedAt: new Date(),
-            metadata: { originalStatus: raw.status }
+            placedAt: new Date(raw.created_at || raw.createdAt || Date.now()),
+            metadata: { originalStatus: raw.status, sourceSystem }
         };
 
         // 5. ATOMIC OPS: UPSERT ORDER + SNAPSHOT (Requirement 3)
         // Using a transaction usually, but here we'll chain
-        await db.insert(canonicalOrders).values(orderData);
-        
-        await db.insert(orderSnapshots).values({
-            snapshotId: crypto.randomUUID(),
-            orderInternalId: internalId,
-            lifecycleState,
-            financials: financials as any,
-            version: 1
+        await prisma.$transaction(async tx => {
+            await tx.canonicalOrder.create({ data: orderData });
+
+            await tx.orderSnapshot.create({
+                data: {
+                    orderInternalId: internalId,
+                    lifecycleState,
+                    totalAmount: financials.grandTotal.toString(),
+                    metadata: { financials } as unknown as Prisma.InputJsonValue
+                }
+            });
         });
 
         // 6. INTELLIGENCE RULES (Requirement 10)
@@ -129,9 +138,20 @@ export class OrderIntelligenceService {
         }
 
         if (intelligenceState !== 'HEALTHY') {
-            await db.update(canonicalOrders)
-                .set({ intelligenceState })
-                .where(eq(canonicalOrders.id, id));
+            const existing = await prisma.canonicalOrder.findUnique({
+                where: { id },
+                select: { metadata: true }
+            });
+
+            await prisma.canonicalOrder.update({
+                where: { id },
+                data: {
+                    metadata: {
+                        ...((existing?.metadata as Record<string, any>) || {}),
+                        intelligenceState
+                    }
+                }
+            });
         }
     }
 }

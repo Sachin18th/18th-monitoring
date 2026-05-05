@@ -13,9 +13,11 @@
   },
   "dependencies": {
     "@fastify/cors": "latest",
+    "@kpi-platform/db": "file:../../packages/db",
     "crypto": "latest",
     "dotenv": "latest",
     "fastify": "latest",
+    "@prisma/client": "^5.22.0",
     "pino": "latest",
     "zod": "latest"
   },

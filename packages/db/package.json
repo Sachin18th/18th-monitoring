@@ -4,15 +4,22 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts"
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "db:generate": "prisma generate --schema=./prisma/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema=./prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema=./prisma/schema.prisma",
+    "db:studio": "prisma studio --schema=./prisma/schema.prisma",
+    "db:push": "prisma db push --schema=./prisma/schema.prisma",
+    "seed:auth": "tsx src/seeders/seed-18th-auth-users.ts"
   },
   "dependencies": {
+    "@prisma/client": "^5.22.0",
     "@kpi-platform/config": "*",
     "@kpi-platform/shared-types": "*",
-    "drizzle-orm": "^0.45.2",
     "pg": "^8.11.0"
   },
   "devDependencies": {
+    "prisma": "^5.22.0",
     "@types/pg": "^8.11.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0"

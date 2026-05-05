@@ -497,12 +497,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.setItem('session-token', newToken);
             localStorage.setItem('session-user', JSON.stringify(newUser));
 
-            if (newUser.assignedProjects.length === 1 && newUser.role !== 'SUPER_ADMIN') {
-                setProject(newUser.assignedProjects[0]);
-                router.push(`/project/${newUser.assignedProjects[0]}/overview`);
-            } else {
-                router.push('/projects');
-            }
+            // Post-login landing is unified for every role.
+            router.push('/projects');
         } catch (error: any) {
             throw new Error(error.response?.data?.message || 'Invalid credentials');
         }

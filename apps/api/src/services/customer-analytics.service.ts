@@ -1,6 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { customerProfiles, customerEvents, customerSessions } from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, sql, desc, gte } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 
 export class CustomerAnalyticsService {
     
@@ -9,11 +7,15 @@ export class CustomerAnalyticsService {
      * Fetches customers acquired within a specific date range (First Seen).
      */
     static async getAcquisitionCohort(siteId: string, startDate: Date, endDate: Date) {
-        return db.select().from(customerProfiles).where(and(
-            eq(customerProfiles.siteId, siteId),
-            gte(customerProfiles.firstSeenAt, startDate),
-            sql`${customerProfiles.firstSeenAt} <= ${endDate}`
-        ));
+        return prisma.customerProfile.findMany({
+            where: {
+                siteId,
+                firstSeenAt: {
+                    gte: startDate,
+                    lte: endDate
+                }
+            }
+        });
     }
 
     /**
@@ -21,16 +23,32 @@ export class CustomerAnalyticsService {
      * Calculates the most effective traffic sources based on conversion (Sessions with isConverted=1).
      */
     static async getTrafficSourcePerformance(siteId: string) {
-        return db.select({
-            source: customerSessions.trafficSource,
-            totalSessions: sql<number>`count(*)`,
-            conversions: sql<number>`sum(is_converted)`,
-            conversionRate: sql<number>`sum(is_converted)::float / count(*)`
-        })
-        .from(customerSessions)
-        .where(eq(customerSessions.siteId, siteId))
-        .groupBy(customerSessions.trafficSource)
-        .orderBy(desc(sql`conversions`));
+        const sessions = await prisma.customerSession.findMany({
+            where: { siteId },
+            select: {
+                trafficSource: true,
+                isConverted: true
+            }
+        });
+
+        const buckets = new Map<string, { totalSessions: number; conversions: number }>();
+
+        for (const session of sessions) {
+            const source = session.trafficSource || 'unknown';
+            const bucket = buckets.get(source) || { totalSessions: 0, conversions: 0 };
+            bucket.totalSessions += 1;
+            bucket.conversions += session.isConverted || 0;
+            buckets.set(source, bucket);
+        }
+
+        return Array.from(buckets.entries())
+            .map(([source, bucket]) => ({
+                source,
+                totalSessions: bucket.totalSessions,
+                conversions: bucket.conversions,
+                conversionRate: bucket.totalSessions > 0 ? bucket.conversions / bucket.totalSessions : 0
+            }))
+            .sort((left, right) => right.conversions - left.conversions);
     }
 
     /**
@@ -38,9 +56,11 @@ export class CustomerAnalyticsService {
      * Example: segmenting 'High Value' customers (e.g. repeat purchasers).
      */
     static async getHighValueSegments(siteId: string) {
-        return db.select().from(customerProfiles).where(and(
-            eq(customerProfiles.siteId, siteId),
-            eq(customerProfiles.lifecycleState, 'REPEAT_PURCHASER')
-        ));
+        return prisma.customerProfile.findMany({
+            where: {
+                siteId,
+                lifecycleState: 'REPEAT_PURCHASER'
+            }
+        });
     }
 }

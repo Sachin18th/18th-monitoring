@@ -1,12 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { 
-    ingestionEvents, 
-    canonicalOrders, 
-    connectorSyncRuns,
-    systemHealthMetrics,
-    pipelineCheckpoints
-} from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, gte, lte, sql } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 import { 
     ReconciliationJobSummary, 
     MismatchDetail, 
@@ -97,11 +89,31 @@ export class ReconciliationEngine {
     }
 
     private static async reconcileOrderCounts(siteId: string, start: Date, end: Date) {
-        // In production, we use actual COUNT queries
-        // For MVP, we simulated the boundary overlap
+        const [raw, normalized] = await Promise.all([
+            prisma.ingestionEvent.count({
+                where: {
+                    projectId: siteId,
+                    receivedAt: {
+                        gte: start,
+                        lte: end
+                    }
+                }
+            }),
+            prisma.canonicalOrder.count({
+                where: {
+                    siteId,
+                    placedAt: {
+                        gte: start,
+                        lte: end
+                    },
+                    normalizedStatus: 'ACTIVE'
+                }
+            })
+        ]);
+
         return {
-            raw: 1540,
-            normalized: 1538
+            raw,
+            normalized
         };
     }
 
@@ -115,10 +127,12 @@ export class ReconciliationEngine {
 
     private static async recordReconMetric(summary: ReconciliationJobSummary) {
         try {
-            await db.insert(systemHealthMetrics).values({
-                metricName: `recon_confidence_${summary.domain.toLowerCase()}`,
-                metricValue: Math.round(summary.confidenceScore * 100),
-                labels: { siteId: summary.siteId, jobId: summary.jobId }
+            await prisma.systemHealthMetric.create({
+                data: {
+                    metricName: `recon_confidence_${summary.domain.toLowerCase()}`,
+                    metricValue: Math.round(summary.confidenceScore * 100),
+                    labels: { siteId: summary.siteId, jobId: summary.jobId }
+                }
             });
         } catch (err) {}
     }

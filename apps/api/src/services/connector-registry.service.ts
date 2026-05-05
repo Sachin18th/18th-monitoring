@@ -2,8 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import { externalSyncService } from './external-sync.service';
 import { ConnectorManagerService } from './connector-manager.service';
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { connectorInstances } from '../../../../packages/db/src/drizzle/schema';
 
 export class ConnectorRegistryService {
     private activeTimers: Map<string, NodeJS.Timeout> = new Map();

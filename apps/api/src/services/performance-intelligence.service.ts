@@ -1,6 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { performanceMetrics, performanceRollups } from '../../../../packages/db/src/drizzle/schema';
-import { eq, and, sql, gte, lte } from 'drizzle-orm';
+import { prisma } from '@kpi-platform/db';
 import { 
     PerformanceSignal, 
     PerformanceRollup, 
@@ -18,20 +16,22 @@ export class PerformanceIntelligenceService {
         const id = crypto.randomUUID();
         
         // 1. STORE RAW SIGNAL (Requirement 3)
-        await db.insert(performanceMetrics).values({
-            siteId: signal.siteId,
-            tenantId: (signal as any).tenantId || 'system',
-            category: 'WEB_VITALS',
-            metricName: signal.name,
-            metricValue: signal.value.toString(),
-            unit: 'ms',
-            timestamp: new Date(signal.timestamp),
-            region: signal.dimensions.region,
-            device: signal.dimensions.device,
-            browser: signal.dimensions.browser,
-            route: signal.dimensions.route,
-            traceId: (signal as any).traceId,
-            correlationId: (signal as any).correlationId
+        await prisma.performanceMetric.create({
+            data: {
+                siteId: signal.siteId,
+                tenantId: (signal as any).tenantId || 'system',
+                category: 'WEB_VITALS',
+                metricName: signal.name,
+                metricValue: signal.value.toString(),
+                unit: 'ms',
+                timestamp: new Date(signal.timestamp),
+                region: signal.dimensions.region,
+                device: signal.dimensions.device,
+                browser: signal.dimensions.browser,
+                route: signal.dimensions.route,
+                traceId: (signal as any).traceId,
+                correlationId: (signal as any).correlationId
+            }
         });
 
         // 2. REAL-TIME ANOMALY CHECK (Requirement 11)
@@ -46,12 +46,16 @@ export class PerformanceIntelligenceService {
      */
     static async computeRollup(siteId: string, metricName: PerformanceMetricName, bucket: '1m' | '5m' | '1h', from: Date, to: Date) {
         // Fetch raw data for the window
-        const signals = await db.select().from(performanceMetrics).where(and(
-            eq(performanceMetrics.siteId, siteId),
-            eq(performanceMetrics.metricName, metricName),
-            gte(performanceMetrics.timestamp, from),
-            lte(performanceMetrics.timestamp, to)
-        ));
+        const signals = await prisma.performanceMetric.findMany({
+            where: {
+                siteId,
+                metricName,
+                timestamp: {
+                    gte: from,
+                    lte: to
+                }
+            }
+        });
 
         if (signals.length === 0) return null;
 
@@ -80,20 +84,22 @@ export class PerformanceIntelligenceService {
         };
 
         // 3. STORE ROLLUP (Requirement 4)
-        await db.insert(performanceRollups).values({
-            siteId: rollup.siteId,
-            metricName: rollup.metricName,
-            bucketSize: rollup.bucketSize,
-            timestamp: new Date(rollup.timestamp),
-            count: rollup.count,
-            min: rollup.min.toString(),
-            max: rollup.max.toString(),
-            avg: rollup.avg.toString(),
-            sum: sum.toString(),
-            p50: rollup.p50.toString(),
-            p90: rollup.p90.toString(),
-            p99: rollup.p99.toString(),
-            dimensions: JSON.stringify(rollup.dimensions) as any
+        await prisma.performanceRollup.create({
+            data: {
+                siteId: rollup.siteId,
+                metricName: rollup.metricName,
+                bucketSize: rollup.bucketSize,
+                timestamp: new Date(rollup.timestamp),
+                count: rollup.count,
+                min: rollup.min.toString(),
+                max: rollup.max.toString(),
+                avg: rollup.avg.toString(),
+                sum: sum.toString(),
+                p50: rollup.p50.toString(),
+                p90: rollup.p90.toString(),
+                p99: rollup.p99.toString(),
+                dimensions: rollup.dimensions
+            }
         });
 
         return rollup;

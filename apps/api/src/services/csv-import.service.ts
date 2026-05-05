@@ -1,5 +1,4 @@
-import { db } from '../../../../packages/db/src/adapters/postgres-relational.adapter';
-import { ingestionEvents } from '../../../../packages/db/src/drizzle/schema';
+import { prisma } from '@kpi-platform/db';
 import crypto from 'crypto';
 
 export class CsvImportService {
@@ -27,15 +26,18 @@ export class CsvImportService {
             // Validate mapping
             
             // Durable store into Database immediately representing Chunk durability
-            await db.insert(ingestionEvents).values({
-                id: payloadId,
-                tenantId: 'tenant_001',
-                projectId: siteId,
-                integrationId: connectorId,
-                status: 'RECEIVED',
-                mode: 'FILE_IMPORT',
-                correlationId: payloadId,
-            } as any);
+            await prisma.ingestionEvent.create({
+                data: {
+                    id: payloadId,
+                    tenantId: 'tenant_001',
+                    projectId: siteId,
+                    integrationId: connectorId,
+                    status: 'RECEIVED',
+                    mode: 'FILE_IMPORT',
+                    correlationId: payloadId,
+                    validationReport: { rows: chunk.length }
+                } as any
+            });
 
             // Hand-off exactly this chunk ID to the Kafka Queue internally for async workers to digest.
             console.log(`[CSV Import] Enqueued chunk ${payloadId} with ${chunk.length} rows.`);

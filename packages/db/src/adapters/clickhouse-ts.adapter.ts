@@ -7,12 +7,12 @@ export class ClickHouseAdapter implements TimeSeriesRepository {
     // TODO: Define aggressive TTL retention configurations for pruning historical KPIs properly
 
     async insertBatch(metrics: MetricRecord[]): Promise<void> {
-        console.log([ClickHouseAdapter] Mock inserting \ metric properties.);
+        console.log('[ClickHouseAdapter] Mock inserting metric batch.', { count: metrics.length });
     }
 
     async queryKpi(siteId: string, kpiName: string, startTime: string, endTime: string, dimensions?: any): Promise<MetricRecord[]> {
         // Query engine routing specifically mapping for the Next.js Dashboards
-        console.log([ClickHouseAdapter] Mock querying \ for \);
+        console.log('[ClickHouseAdapter] Mock querying KPI.', { siteId, kpiName, startTime, endTime, dimensions });
         return [];
     }
 }

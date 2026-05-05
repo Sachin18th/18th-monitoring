@@ -1,10 +1,11 @@
-import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
+import { prisma } from '@kpi-platform/db';
 import crypto from 'crypto';
 
 /**
  * AuditService
  *
  * Centralized immutable audit trail for governance and compliance.
+ * Tracks all user actions for audit, compliance, and security investigations.
  */
 export class AuditService {
 
@@ -16,6 +17,7 @@ export class AuditService {
         action: string;
         tenantId?: string;
         siteId?: string;
+        projectId?: string;
         actorId?: string;
         actorRole?: string;
         targetId?: string;
@@ -25,19 +27,36 @@ export class AuditService {
         metadata?: any;
         meta?: any;
     }): Promise<void> {
-        const auditEntry = {
-            id: crypto.randomUUID(),
-            timestamp: new Date().toISOString(),
-            ...params
-        };
+        try {
+            // Only write to database if we have a valid tenantId
+            // (to avoid foreign key constraint violations)
+            if (params.tenantId) {
+                try {
+                    const projectId = params.siteId || params.projectId;
+                    
+                    await prisma.iamAuditLog.create({
+                        data: {
+                            tenantId: params.tenantId,
+                            projectId: projectId,
+                            actorId: params.actorId || 'system',
+                            action: params.action,
+                            targetType: params.entityType || 'unknown',
+                            targetId: params.entityId || params.targetId || 'unknown',
+                            metadata: params.metadata || params.meta
+                        }
+                    });
+                } catch (dbErr) {
+                    // If database is unavailable, fallback to logging only
+                    console.error('[AUDIT] Database write failed:', dbErr);
+                }
+            }
 
-        if (!GlobalMemoryStore.governanceAuditLogs) {
-            (GlobalMemoryStore as any).governanceAuditLogs = [];
+            // Always log to console regardless of DB status
+            const statusTag = params.status ? `[${params.status}]` : '';
+            console.log(`[AUDIT] ${statusTag} ${params.action} | tenant=${params.tenantId || 'platform'} | site=${params.siteId || params.projectId || params.targetId || 'global'} | actor=${params.actorId || 'system'}`);
+        } catch (err) {
+            console.error('[AUDIT] Unexpected error in log():', err);
         }
-        GlobalMemoryStore.governanceAuditLogs.push(auditEntry);
-
-        const statusTag = params.status ? `[${params.status}]` : '';
-        console.log(`[AUDIT] ${statusTag} ${params.action} | tenant=${params.tenantId || 'platform'} | site=${params.siteId || params.targetId || 'global'} | actor=${params.actorId || 'system'}`);
     }
 
     /**
@@ -45,6 +64,7 @@ export class AuditService {
      */
     public static async logAction(params: {
         siteId: string;
+        projectId?: string;
         userId: string;
         action: string;
         resource: string;
@@ -53,7 +73,8 @@ export class AuditService {
         return AuditService.log({
             action: params.action,
             actorId: params.userId,
-            siteId: params.siteId,
+            siteId: params.siteId || params.projectId,
+            projectId: params.projectId,
             entityType: 'resource',
             entityId: params.resource,
             metadata: params.details,
@@ -64,7 +85,16 @@ export class AuditService {
     /**
      * Retrieves audit trail for a project.
      */
-    public static async getTrail(siteId: string) {
-        return (GlobalMemoryStore.governanceAuditLogs || []).filter((l: any) => l.siteId === siteId);
+    public static async getTrail(tenantId: string) {
+        try {
+            return await prisma.iamAuditLog.findMany({
+                where: { tenantId },
+                orderBy: { timestamp: 'desc' },
+                take: 1000
+            });
+        } catch (err) {
+            console.error('[AUDIT] Failed to retrieve trail:', err);
+            return [];
+        }
     }
 }

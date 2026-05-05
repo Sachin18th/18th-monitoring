@@ -1,5 +1,5 @@
 import { AuthService } from '../services/auth.service';
-import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
+import { prisma } from '@kpi-platform/db';
 import { successResponse, errorResponse } from '../utils/response';
 
 export const login = async (req: any, reply: any) => {
@@ -22,17 +22,20 @@ export const getProjects = async (req: any, reply: any) => {
     const tenantId = req.user.tenantId;
     const assignedIds = req.user.assignedProjects;
     
-    const allProjects = Array.from(GlobalMemoryStore.projects.values());
-    
-    // 1. SUPER_ADMIN sees everything across all tenants
+    // Query projects from database instead of memory
+    let allProjects;
     if (userRole === 'SUPER_ADMIN') {
+        // SUPER_ADMIN sees everything across all tenants
+        allProjects = await prisma.project.findMany();
         return reply.code(200).send(successResponse(allProjects));
     }
     
-    // 2. Filter by Tenant first (Isolation)
-    let filtered = allProjects.filter(p => p.tenantId === tenantId);
+    // Filter by Tenant first (Isolation)
+    let filtered = await prisma.project.findMany({
+        where: { tenantId }
+    });
     
-    // 3. For roles other than TENANT_ADMIN, restrict to assigned projects only
+    // For roles other than TENANT_ADMIN, restrict to assigned projects only
     if (userRole !== 'TENANT_ADMIN') {
         filtered = filtered.filter(p => assignedIds.includes(p.id));
     }

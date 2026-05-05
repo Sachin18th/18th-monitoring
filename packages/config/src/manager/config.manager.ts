@@ -1,11 +1,13 @@
 import { ProjectConfigPayload } from '../../../shared-types/src';
-// Assume db exposes drizzle db instance matching schema
-import { db } from '../../../db/src/adapters/postgres-relational.adapter'; 
-import { projects, configVersions } from '../../../db/src/drizzle/schema';
-import crypto from 'crypto';
-import { eq, desc } from 'drizzle-orm';
+import prisma from '../../../db/src/prisma-client';
 import { cache, TTL } from '../../../../packages/cache/src';
 import { AuditService } from '../../../../apps/api/src/services/audit.service';
+
+declare const require: {
+    (name: string): any;
+};
+
+const crypto = require('crypto');
 
 export class ConfigManager {
     /**
@@ -17,13 +19,18 @@ export class ConfigManager {
         const hit = await cache.get<ProjectConfigPayload>(CACHE_KEY);
         if (hit) return hit;
 
-        const site = await db.select().from(projects).where(eq(projects.id, siteId)).limit(1);
-        if (!site.length || !site[0].activeVersionId) return null;
+        const site = await prisma.project.findUnique({
+            where: { id: siteId },
+            select: { activeVersionId: true }
+        });
+        if (!site || !site.activeVersionId) return null;
 
-        const version = await db.select().from(configVersions).where(eq(configVersions.versionId, site[0].activeVersionId)).limit(1);
-        if (!version.length) return null;
+        const version = await prisma.configVersion.findUnique({
+            where: { versionId: site.activeVersionId }
+        });
+        if (!version) return null;
 
-        const v = version[0];
+        const v = version;
         const result: ProjectConfigPayload = {
             tracking: {},
             sampling: { rate: 100 },
@@ -41,20 +48,20 @@ export class ConfigManager {
      * Commits a draft payload to a new version and marks it active.
      */
     async publishDraft(siteId: string, actorId: string, payload: ProjectConfigPayload) {
-        const result = await db.transaction(async (tx: any) => {
+        const result = await prisma.$transaction(async (tx: any) => {
             const versionId = crypto.randomUUID();
 
             // Fetch latest version number
-            const latest = await tx.select()
-                .from(configVersions)
-                .where(eq(configVersions.siteId, siteId))
-                .orderBy(desc(configVersions.versionNumber))
-                .limit(1);
+            const latest = await tx.configVersion.findFirst({
+                where: { siteId },
+                orderBy: { versionNumber: 'desc' },
+                select: { versionNumber: true }
+            });
 
-            const nextVersion = latest.length > 0 ? latest[0].versionNumber + 1 : 1;
+            const nextVersion = latest ? latest.versionNumber + 1 : 1;
 
             // Insert new version
-            await tx.insert(configVersions).values({
+            await tx.configVersion.create({ data: {
                 versionId,
                 siteId,
                 versionNumber: nextVersion,
@@ -63,15 +70,21 @@ export class ConfigManager {
                 widgetDefinitionBlob: payload.widgets,
                 connectorDefinitionBlob: payload.connectors,
                 createdBy: actorId
-            });
+            }});
 
             // Update active site pointer safely using ON CONFLICT (upsert paradigm)
-            await tx.insert(projects).values({
-                id: siteId,
-                activeVersionId: versionId,
-            }).onConflictDoUpdate({
-                target: projects.id,
-                set: { activeVersionId: versionId, updatedAt: new Date() }
+            await tx.project.upsert({
+                where: { id: siteId },
+                create: {
+                    id: siteId,
+                    tenantId: 'tenant_001',
+                    name: siteId,
+                    activeVersionId: versionId,
+                },
+                update: {
+                    activeVersionId: versionId,
+                    updatedAt: new Date(),
+                }
             });
 
             // Write audit trail
@@ -96,13 +109,17 @@ export class ConfigManager {
      * Reverts to a historic version ID.
      */
     async rollbackToVersion(siteId: string, actorId: string, targetVersionId: string) {
-        const result = await db.transaction(async (tx: any) => {
-            const version = await tx.select().from(configVersions).where(eq(configVersions.versionId, targetVersionId)).limit(1);
-            if (!version.length) throw new Error('Target version not found');
+        const result = await prisma.$transaction(async (tx: any) => {
+            const version = await tx.configVersion.findUnique({
+                where: { versionId: targetVersionId },
+                select: { versionNumber: true }
+            });
+            if (!version) throw new Error('Target version not found');
 
-            await tx.update(projects)
-                    .set({ activeVersionId: targetVersionId, updatedAt: new Date() })
-                    .where(eq(projects.id, siteId));
+            await tx.project.updateMany({
+                where: { id: siteId },
+                data: { activeVersionId: targetVersionId, updatedAt: new Date() }
+            });
 
             await AuditService.log({
                 action: 'CONFIG_ROLLBACK',
@@ -110,10 +127,10 @@ export class ConfigManager {
                 siteId,
                 entityType: 'config_version',
                 entityId: targetVersionId,
-                metadata: { rollbackToNumber: version[0].versionNumber }
+                metadata: { rollbackToNumber: version.versionNumber }
             });
 
-            return { success: true, activeVersion: version[0].versionNumber };
+            return { success: true, activeVersion: version.versionNumber };
         });
 
         // Invalidate cache immediately after transaction
