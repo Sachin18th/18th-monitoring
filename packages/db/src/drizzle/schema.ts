@@ -1,3 +1,16 @@
+<<<<<<< HEAD
+// ─── DOMAIN-DRIVEN SCHEMA ENTRY POINT ─────────────────────────────────────────
+
+export * from './domains/iam';
+export * from './domains/integrations';
+export * from './domains/ingestion';
+export * from './domains/orders';
+export * from './domains/analytics';
+export * from './domains/customers';
+export * from './domains/observability';
+export * from './domains/recovery';
+export * from './domains/pipeline';
+=======
 import { pgTable, varchar, timestamp, jsonb, serial, integer, index } from 'drizzle-orm/pg-core';
 
 export const siteConfigs = pgTable('site_configs', {
@@ -75,3 +88,4 @@ export const syncLogs = pgTable('sync_logs', {
     connectorSiteIdx: index('sync_logs_connector_site_idx').on(table.connectorId, table.siteId),
 }));
 
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

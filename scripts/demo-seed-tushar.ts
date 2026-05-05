@@ -1,7 +1,13 @@
 /**
+<<<<<<< HEAD
+ * Demo Seeder: "Tushar's Creation" (tc_demo_004)
+ * Injects comprehensive, realistic dummy data across all KPI dimensions.
+ * Run: npx tsx scripts/demo-seed-tushar.ts
+=======
  * Demo Seeder: "Sachin's Creation" (tc_demo_004)
  * Injects comprehensive, realistic dummy data across all KPI dimensions.
  * Run: npx tsx scripts/demo-seed-Sachin.ts
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
  */
 
 import { IngestionService } from '../apps/api/src/services/ingestion.service';
@@ -23,12 +29,21 @@ async function seedBrowserEvents() {
 
     // Active user sessions (desktop, mobile, tablet)
     const SESSIONS = [
+<<<<<<< HEAD
+        { id: 's_d_1', device: 'desktop', browser: 'chrome',  userId: 'tc_u1', isCustomer: true },
+        { id: 's_d_2', device: 'desktop', browser: 'edge',    userId: 'tc_u2', isCustomer: true },
+        { id: 's_m_1', device: 'mobile',  browser: 'safari',  userId: 'tc_u3', isCustomer: true },
+        { id: 's_m_2', device: 'mobile',  browser: 'chrome',  userId: 'tc_u4', isCustomer: false },
+        { id: 's_m_3', device: 'mobile',  browser: 'chrome',  userId: 'tc_u5', isCustomer: false },
+        { id: 's_t_1', device: 'tablet',  browser: 'safari',  userId: null,    isCustomer: false },
+=======
         { id: 's_d_1', device: 'desktop', browser: 'chrome', userId: 'tc_u1', isCustomer: true },
         { id: 's_d_2', device: 'desktop', browser: 'edge', userId: 'tc_u2', isCustomer: true },
         { id: 's_m_1', device: 'mobile', browser: 'safari', userId: 'tc_u3', isCustomer: true },
         { id: 's_m_2', device: 'mobile', browser: 'chrome', userId: 'tc_u4', isCustomer: false },
         { id: 's_m_3', device: 'mobile', browser: 'chrome', userId: 'tc_u5', isCustomer: false },
         { id: 's_t_1', device: 'tablet', browser: 'safari', userId: null, isCustomer: false },
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     ];
 
     // Start all sessions
@@ -283,7 +298,11 @@ async function seedCatalogAndInventory() {
 
 async function run() {
     console.log('\n══════════════════════════════════════════════════════════');
+<<<<<<< HEAD
+    console.log('  🚀 Demo Seeder: "Tushar\'s Creation" (tc_demo_004)');
+=======
     console.log('  🚀 Demo Seeder: "Sachin\'s Creation" (tc_demo_004)');
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     console.log('  Injecting comprehensive, realistic demo data...');
     console.log('══════════════════════════════════════════════════════════\n');
 

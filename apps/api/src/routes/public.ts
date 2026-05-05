@@ -1,4 +1,8 @@
+<<<<<<< HEAD
+﻿import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+=======
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 import { listKpis, getKpi, getSourceBreakdown } from '../controllers/kpi.controller';
 import { rateLimiter } from '../middlewares/rate-limiter.middleware';
 import { metricCatalogService } from '../services/metric-catalog.service';
@@ -37,8 +41,13 @@ export async function publicRoutes(server: FastifyInstance) {
     // For now, we apply the guard if it's applicable.
     server.addHook('preHandler', tenantIsolationGuard);
 
+<<<<<<< HEAD
+    // â”€â”€ KPI Catalog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // GET /api/v1/projects/:siteId/kpis  (Phase 1 â€” kept for backwards compat)
+=======
     // ── KPI Catalog ─────────────────────────────────────────────────────────
     // GET /api/v1/projects/:siteId/kpis  (Phase 1 — kept for backwards compat)
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     server.get('/projects/:siteId/kpis', listKpis);
     server.get('/projects/:siteId/kpis/:metricKey', getKpi);
 
@@ -51,7 +60,11 @@ export async function publicRoutes(server: FastifyInstance) {
         }
     );
 
+<<<<<<< HEAD
+    // POST /api/v1/projects/:siteId/metrics/query  (Phase 2/3 spec â€” dynamic filter query)
+=======
     // POST /api/v1/projects/:siteId/metrics/query  (Phase 2/3 spec — dynamic filter query)
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     server.post(
         '/projects/:siteId/metrics/query',
         async (
@@ -71,10 +84,17 @@ export async function publicRoutes(server: FastifyInstance) {
         }
     );
 
+<<<<<<< HEAD
+    // â”€â”€ Orders â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    server.get('/projects/:siteId/orders/source-breakdown', getSourceBreakdown);
+
+    // â”€â”€ Integration Status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+=======
     // ── Orders ──────────────────────────────────────────────────────────────
     server.get('/projects/:siteId/orders/source-breakdown', getSourceBreakdown);
 
     // ── Integration Status ──────────────────────────────────────────────────
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     // GET /api/v1/projects/:siteId/integrations/status  (Phase 3 spec)
     server.get(
         '/projects/:siteId/integrations/status',
@@ -88,3 +108,7 @@ export async function publicRoutes(server: FastifyInstance) {
         }
     );
 }
+<<<<<<< HEAD
+
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

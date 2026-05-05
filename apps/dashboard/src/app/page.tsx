@@ -1,3 +1,27 @@
+<<<<<<< HEAD
+'use client';
+import React from 'react';
+import MonitoringLandingPage from '../components/landing/LandingSections';
+
+export default function LandingPage() {
+  return (
+    <>
+      <MonitoringLandingPage />
+      <style jsx global>{`
+        .landing-page {
+          background-color: var(--bg-base);
+          min-height: 100vh;
+        }
+
+        /* Prevent layout shift when header becomes sticky */
+        body {
+          padding-top: 0;
+        }
+      `}</style>
+    </>
+  );
+}
+=======
 'use client';
 import { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
@@ -25,3 +49,4 @@ export default function RootPage() {
     </div>
   );
 }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

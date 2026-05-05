@@ -36,4 +36,8 @@ export const KpiAgent = {
     }
 };
 
+<<<<<<< HEAD
 (window as any).KpiAgent = KpiAgent;
+=======
+(window as any).KpiAgent = KpiAgent;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

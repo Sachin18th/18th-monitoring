@@ -1,11 +1,20 @@
 /**
+<<<<<<< HEAD
+ * HTTP-Based Demo Seeder for "Tushar's Creation" (tc_demo_004)
+=======
  * HTTP-Based Demo Seeder for "Sachin's Creation" (tc_demo_004)
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
  * Injects all data via the RUNNING API server's ingestion endpoints.
  * Run: npx tsx scripts/demo-http-seed.ts
  */
 
+<<<<<<< HEAD
+const BASE   = 'http://127.0.0.1:4000/api/v1';
+const SITE   = 'tc_demo_004';
+=======
 const BASE = 'http://127.0.0.1:4000/api/v1';
 const SITE = 'tc_demo_004';
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 let TOKEN = '';
 
@@ -51,11 +60,19 @@ async function seedBrowserEvents() {
 
     const sessions = ['s_d_1', 's_d_2', 's_m_1', 's_m_2', 's_m_3', 's_t_1'];
     const pages = [
+<<<<<<< HEAD
+        { url: '/',             loadTime: rand(900,  1400) },
+        { url: '/products',     loadTime: rand(1200, 2100) },
+        { url: '/cart',         loadTime: rand(600,  1000) },
+        { url: '/checkout',     loadTime: rand(1800, 3200) },
+        { url: '/account',      loadTime: rand(700,  1100) },
+=======
         { url: '/', loadTime: rand(900, 1400) },
         { url: '/products', loadTime: rand(1200, 2100) },
         { url: '/cart', loadTime: rand(600, 1000) },
         { url: '/checkout', loadTime: rand(1800, 3200) },
         { url: '/account', loadTime: rand(700, 1100) },
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         { url: '/search?q=tee', loadTime: rand(1100, 2000) },
     ];
 
@@ -114,8 +131,13 @@ async function seedBrowserEvents() {
     for (let i = 0; i < 12; i++) {
         browserEvents.push({
             eventId: uuid(), eventType: 'click', siteId: SITE,
+<<<<<<< HEAD
+            timestamp: ago(rand(0, 20)), sessionId: sessions[rand(0, sessions.length-1)],
+            metadata: { elementId: 'add-to-cart-btn', productId: `PROD-${rand(100,200)}` }
+=======
             timestamp: ago(rand(0, 20)), sessionId: sessions[rand(0, sessions.length - 1)],
             metadata: { elementId: 'add-to-cart-btn', productId: `PROD-${rand(100, 200)}` }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         });
     }
 
@@ -136,20 +158,44 @@ async function seedOrders() {
         const orderId = `TC-ONL-${1000 + i}`;
         const value = parseFloat((rand(50, 400) + Math.random()).toFixed(2));
         serverEvents.push(
+<<<<<<< HEAD
+            { eventId: uuid(), eventType: 'order_placed',    siteId: SITE, timestamp: ago(rand(5, 120)), sessionId: `s_ord_${i}`, userId: `tc_u${rand(1,5)}`, metadata: { orderId, value, channel: 'web', paymentStatus: 'success', sku: `SKU-${rand(100,999)}` } },
+            { eventId: uuid(), eventType: 'order_processed', siteId: SITE, timestamp: ago(rand(1, 80)),  metadata: { orderId, processingStatus: 'completed' } }
+=======
             { eventId: uuid(), eventType: 'order_placed', siteId: SITE, timestamp: ago(rand(5, 120)), sessionId: `s_ord_${i}`, userId: `tc_u${rand(1, 5)}`, metadata: { orderId, value, channel: 'web', paymentStatus: 'success', sku: `SKU-${rand(100, 999)}` } },
             { eventId: uuid(), eventType: 'order_processed', siteId: SITE, timestamp: ago(rand(1, 80)), metadata: { orderId, processingStatus: 'completed' } }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         );
     }
     // 8 POS offline
     for (let i = 1; i <= 8; i++) {
         const orderId = `TC-POS-${4000 + i}`;
         serverEvents.push(
+<<<<<<< HEAD
+            { eventId: uuid(), eventType: 'order_placed',    siteId: SITE, timestamp: ago(rand(10, 200)), metadata: { orderId, value: rand(30, 150), channel: 'pos', store: `STORE-${rand(1,5)}` } },
+            { eventId: uuid(), eventType: 'order_processed', siteId: SITE, timestamp: ago(rand(1, 180)),  metadata: { orderId, processingStatus: 'completed' } }
+=======
             { eventId: uuid(), eventType: 'order_placed', siteId: SITE, timestamp: ago(rand(10, 200)), metadata: { orderId, value: rand(30, 150), channel: 'pos', store: `STORE-${rand(1, 5)}` } },
             { eventId: uuid(), eventType: 'order_processed', siteId: SITE, timestamp: ago(rand(1, 180)), metadata: { orderId, processingStatus: 'completed' } }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         );
     }
     // 4 pending
     for (let i = 1; i <= 4; i++) {
+<<<<<<< HEAD
+        serverEvents.push({ eventId: uuid(), eventType: 'order_placed', siteId: SITE, timestamp: ago(rand(1,15)), metadata: { orderId: `TC-PEND-${2000+i}`, value: rand(50,250), channel: 'mobile', paymentStatus: 'pending' } });
+    }
+    // 2 failed
+    for (let i = 1; i <= 2; i++) {
+        serverEvents.push({ eventId: uuid(), eventType: 'order_placed', siteId: SITE, timestamp: ago(rand(10,60)), metadata: { orderId: `TC-FAIL-${3000+i}`, value: rand(80,200), channel: 'web', paymentStatus: 'failed' } });
+    }
+    // Integration syncs — ERP, OMS, Marketing
+    for (let i = 0; i < 12; i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync', siteId: SITE, timestamp: ago(i * 5), metadata: { system: 'SAP-ERP' } });
+    for (let i = 0; i < 8;  i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync', siteId: SITE, timestamp: ago(i * 8), metadata: { system: 'IBM-Sterling-OMS' } });
+    for (let i = 0; i < 3;  i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync_failed', siteId: SITE, timestamp: ago(rand(1,30)), metadata: { error: 'Connection timeout after 30s', system: 'IBM-Sterling-OMS', retryCount: i + 1 } });
+    for (let i = 0; i < 5;  i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync', siteId: SITE, timestamp: ago(i * 12), metadata: { system: 'DotDigital' } });
+    for (let i = 0; i < 5;  i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync', siteId: SITE, timestamp: ago(i * 15), metadata: { system: 'MoEngage' } });
+=======
         serverEvents.push({ eventId: uuid(), eventType: 'order_placed', siteId: SITE, timestamp: ago(rand(1, 15)), metadata: { orderId: `TC-PEND-${2000 + i}`, value: rand(50, 250), channel: 'mobile', paymentStatus: 'pending' } });
     }
     // 2 failed
@@ -162,6 +208,7 @@ async function seedOrders() {
     for (let i = 0; i < 3; i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync_failed', siteId: SITE, timestamp: ago(rand(1, 30)), metadata: { error: 'Connection timeout after 30s', system: 'IBM-Sterling-OMS', retryCount: i + 1 } });
     for (let i = 0; i < 5; i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync', siteId: SITE, timestamp: ago(i * 12), metadata: { system: 'DotDigital' } });
     for (let i = 0; i < 5; i++) serverEvents.push({ eventId: uuid(), eventType: 'oms_sync', siteId: SITE, timestamp: ago(i * 15), metadata: { system: 'MoEngage' } });
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     // Catalog
     serverEvents.push({ eventId: uuid(), eventType: 'csv_upload', siteId: SITE, timestamp: ago(45), metadata: { filename: 'catalog_14Apr.csv', rows: 156, success: true } });
 
@@ -180,16 +227,28 @@ async function verifyResultsViaAPI() {
         return res.json();
     };
 
+<<<<<<< HEAD
+    const projects   = await get('/projects') as any[];
+    const kpis       = await get('/dashboard/summaries?siteId=tc_demo_004') as any[];
+    const orders     = await get('/dashboard/orders/summary?siteId=tc_demo_004') as any;
+    const intHealth  = await get('/dashboard/integrations/summary?siteId=tc_demo_004') as any;
+    const instances  = await get('/config/p/tc_demo_004/integrations/instances') as any[];
+=======
     const projects = await get('/projects') as any[];
     const kpis = await get('/dashboard/summaries?siteId=tc_demo_004') as any[];
     const orders = await get('/dashboard/orders/summary?siteId=tc_demo_004') as any;
     const intHealth = await get('/dashboard/integrations/summary?siteId=tc_demo_004') as any;
     const instances = await get('/config/p/tc_demo_004/integrations/instances') as any[];
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
     const tcProject = projects.find((p: any) => p.id === 'tc_demo_004');
 
     console.log('\n══════════════════════════════════════════════════════════');
+<<<<<<< HEAD
+    console.log("  ✅ DEMO ENV LIVE: \"Tushar's Creation\" (tc_demo_004)");
+=======
     console.log("  ✅ DEMO ENV LIVE: \"Sachin's Creation\" (tc_demo_004)");
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     console.log('══════════════════════════════════════════════════════════');
     console.log(`\n📁 Project: ${tcProject?.name} — ${tcProject?.status}`);
     console.log(`   Revenue: $${tcProject?.metricsSummary?.revenue?.toLocaleString()}`);

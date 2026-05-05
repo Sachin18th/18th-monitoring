@@ -22,7 +22,11 @@ export const ingestRunResults = async (req: any, res: any) => {
         
         // Trigger alert if success_status is false
         if (!payload.success_status) {
+<<<<<<< HEAD
+            const alert: any = {
+=======
             const alert = {
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
                 ruleId: 'rule_synthetic_fail',
                 siteId,
                 kpiName: 'syntheticFailure',

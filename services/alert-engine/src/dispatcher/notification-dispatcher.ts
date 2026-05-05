@@ -27,4 +27,8 @@ export class NotificationDispatcher {
         await Promise.all(operations);
         console.log([NotificationDispatcher] Delivered trace: \);
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

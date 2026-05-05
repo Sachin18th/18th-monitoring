@@ -1,6 +1,43 @@
 import fs from 'fs';
 import path from 'path';
 import { externalSyncService } from './external-sync.service';
+<<<<<<< HEAD
+import { ConnectorManagerService } from './connector-manager.service';
+
+export class ConnectorRegistryService {
+    private activeTimers: Map<string, NodeJS.Timeout> = new Map();
+
+    public listConnectors() {
+        const configPath = path.join(__dirname, '../config/connectors/connector-registry.schema.json');
+        try {
+            const raw = fs.readFileSync(configPath, 'utf8');
+            return JSON.parse(raw).connectors;
+        } catch { return []; }
+    }
+
+    /**
+     * Starts all enabled pollers from the database.
+     * Requirement 5 (Polling and sync orchestration)
+     */
+    public async startAllPollers(siteId: string) {
+        // In production, we'd query enabled connectors from DB
+        // For MVP hardening, we'll continue using the registry file but wrap calls in tracking
+        const configPath = path.join(__dirname, '../config/connectors/connector-registry.schema.json');
+        let registryConnectors = [];
+        try {
+            const raw = fs.readFileSync(configPath, 'utf8');
+            registryConnectors = JSON.parse(raw).connectors;
+        } catch { return; }
+
+        const pollConnectors = registryConnectors.filter((c: any) => c.type === 'api_poll');
+        
+        for (const connector of pollConnectors) {
+            const intervalMs = connector.pollIntervalMs ?? 15 * 60 * 1000;
+            
+            // Register Instance if not exists (Governance)
+            // await this.ensureInstanceExists(siteId, connector);
+
+=======
 
 interface ConnectorSchedule {
     connectorId: string;
@@ -33,13 +70,21 @@ export class ConnectorRegistryService {
         for (const connector of pollConnectors) {
             const intervalMs = connector.pollIntervalMs ?? 15 * 60 * 1000; // default 15 min
             console.log(`[ConnectorRegistry] Scheduling poller for "${connector.label}" every ${intervalMs / 1000}s`);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             const timer = setInterval(async () => {
                 try {
                     await externalSyncService.pollConnector(connector.connectorId);
                 } catch (err) {
+<<<<<<< HEAD
+                    console.error(`[ConnectorRegistry] Poller fatal trigger error for ${connector.connectorId}:`, err);
+                }
+            }, intervalMs);
+            
+=======
                     console.error(`[ConnectorRegistry] Poller error for ${connector.connectorId}:`, err);
                 }
             }, intervalMs);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             this.activeTimers.set(connector.connectorId, timer);
         }
     }
@@ -47,11 +92,23 @@ export class ConnectorRegistryService {
     public stopAllPollers() {
         for (const [id, timer] of this.activeTimers.entries()) {
             clearInterval(timer);
+<<<<<<< HEAD
+=======
             console.log(`[ConnectorRegistry] Stopped poller: ${id}`);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
         }
         this.activeTimers.clear();
     }
 
+<<<<<<< HEAD
+    public async pollExternalAPI(siteId: string, connectorId: string) {
+        return externalSyncService.pollConnector(connectorId);
+    }
+}
+
+export const connectorRegistryService = new ConnectorRegistryService();
+
+=======
     /** On-demand manual trigger for a specific connector (used by the sync API route) */
     public async pollExternalAPI(siteId: string, connectorId: string) {
         console.log(`[ConnectorRegistry] Manual poll triggered: ${connectorId} (site: ${siteId})`);
@@ -70,3 +127,4 @@ export class ConnectorRegistryService {
 }
 
 export const connectorRegistryService = new ConnectorRegistryService();
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

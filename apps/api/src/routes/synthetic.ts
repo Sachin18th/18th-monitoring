@@ -1,4 +1,8 @@
+<<<<<<< HEAD
+﻿import { 
+=======
 import { 
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     ingestRunResults, 
     getDashboardSummary, 
     getHistoryOptions, 
@@ -18,3 +22,7 @@ export const syntheticRoutes = async (fastify: any) => {
     fastify.get('/history', getHistoryOptions);
     fastify.get('/failures', getFailures);
 };
+<<<<<<< HEAD
+
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

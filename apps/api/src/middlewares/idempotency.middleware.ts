@@ -59,6 +59,12 @@ export const idempotencyGuard = async (req: FastifyRequest, reply: FastifyReply)
     // Mark as in-progress
     store.set(idempotencyKey, { status: 'IN_PROGRESS', timestamp: Date.now() });
 
+<<<<<<< HEAD
+    // Note: Response caching for idempotent requests would typically require a formal 
+    // Fastify plugin to hook into the 'onSend' lifecycle correctly.
+    // For MVP hardening, we track the Key to prevent concurrent processing.
+
+=======
     // Hook into response lifecycle to capture and cache the response
     reply.addHook?.('onSend', async (_req: any, _reply: any, payload: any) => {
         store.set(idempotencyKey, {
@@ -68,4 +74,5 @@ export const idempotencyGuard = async (req: FastifyRequest, reply: FastifyReply)
         });
         return payload;
     });
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 };

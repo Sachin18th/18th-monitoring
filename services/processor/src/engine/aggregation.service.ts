@@ -21,7 +21,11 @@ export class AggregationService {
         // For counts, we use the total count in memory.
         let valToEvaluate = value;
         if (kpiName === 'errorRatePct' || kpiName === 'oms_sync_failed_count') {
+<<<<<<< HEAD
+            const records = GlobalMemoryStore.metrics.filter((m: MetricRecord) => m.siteId === siteId && m.kpiName === kpiName);
+=======
             const records = GlobalMemoryStore.metrics.filter(m => m.siteId === siteId && m.kpiName === kpiName);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             valToEvaluate = records.length + 1; // +1 because current metric isn't flushed yet
         }
 
@@ -44,4 +48,8 @@ export class AggregationService {
             this.buffer = [];
         }
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

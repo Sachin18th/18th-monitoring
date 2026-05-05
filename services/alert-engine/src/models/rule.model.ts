@@ -9,4 +9,8 @@ export interface AlertRule {
     severity: 'low' | 'medium' | 'high' | 'critical';
     enabled: boolean;
     description: string;
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

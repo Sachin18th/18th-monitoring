@@ -14,4 +14,8 @@ export class IntegrationHandler {
             await KpiEngine.recordApiLatency(siteId, metadata?.latencyMs || 0); // Simplified integration failure tracking
         }
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

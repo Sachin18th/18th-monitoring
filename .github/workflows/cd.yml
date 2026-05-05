@@ -1,0 +1,64 @@
+name: Continuous Deployment
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-push:
+    name: Build & Push Docker Images
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      # Example: Login to AWS ECR (requires AWS credentials in secrets)
+      # - name: Configure AWS Credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #     aws-region: us-east-1
+
+      # - name: Login to Amazon ECR
+      #   id: login-ecr
+      #   uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push API
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infra/docker/Dockerfile.api
+          push: false # Set to true once registry is configured
+          tags: kpi-platform-api:latest
+
+      - name: Build and Push Dashboard
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infra/docker/Dockerfile.dashboard
+          push: false
+          tags: kpi-platform-dashboard:latest
+          
+      - name: Build and Push Worker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infra/docker/Dockerfile.worker
+          push: false
+          tags: kpi-platform-worker:latest
+
+  # For actual deployment to EKS/ECS
+  # deploy:
+  #   needs: build-and-push
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Update Service
+  #       run: |
+  #         aws ecs update-service --cluster kpi-platform-cluster --service api-service --force-new-deployment
+# ...

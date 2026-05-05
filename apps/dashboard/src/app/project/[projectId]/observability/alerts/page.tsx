@@ -1,0 +1,323 @@
+'use client';
+
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useParams } from 'next/navigation';
+import {
+  Bell,
+  Search,
+  ShieldAlert,
+  AlertTriangle,
+  CheckCircle2,
+  Settings,
+  History,
+  RefreshCw,
+  AlertCircle
+} from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+
+const pageStyle: React.CSSProperties = {
+  padding: '24px 28px',
+  maxWidth: '1280px',
+  margin: '0 auto',
+  display: 'block',
+  overflow: 'visible',
+};
+
+const sectionSpacingStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '24px',
+  overflow: 'visible',
+};
+
+const metricGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(4, 1fr)',
+  gap: '24px',
+  marginBottom: '24px',
+  overflow: 'visible',
+};
+
+const metricCardStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid var(--border-card)',
+  background: 'var(--bg-card)',
+  padding: '24px',
+  paddingTop: '24px',
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'space-between',
+  minHeight: '140px',
+  overflow: 'visible',
+};
+
+const metricTopRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginBottom: '12px',
+};
+
+const metricLabelStyle: React.CSSProperties = {
+  fontSize: '10px',
+  textTransform: 'uppercase',
+  letterSpacing: '0.1em',
+  color: 'var(--text-muted)',
+  fontWeight: 500,
+  maxWidth: '100%',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+
+const metricValueStyle: React.CSSProperties = {
+  fontSize: '38px',
+  fontWeight: 500,
+  color: 'var(--text-primary)',
+  lineHeight: 1,
+  padding: '8px 0',
+  overflow: 'visible',
+};
+
+const metricBottomRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  marginTop: '12px',
+};
+
+const panelGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '260px 1fr',
+  gap: '24px',
+  overflow: 'visible',
+};
+
+const leftColumnStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '16px',
+};
+
+const filterPanelStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid var(--border-card)',
+  background: 'var(--bg-card)',
+  padding: '24px',
+  overflow: 'visible',
+};
+
+const filterTitleStyle: React.CSSProperties = {
+  fontSize: '10px',
+  textTransform: 'uppercase',
+  letterSpacing: '0.1em',
+  color: 'var(--text-label)',
+  marginBottom: '16px',
+  fontWeight: 500,
+};
+
+const alertPanelStyle: React.CSSProperties = {
+  borderRadius: '12px',
+  border: '1px solid var(--border-card)',
+  background: 'var(--bg-card)',
+  padding: '24px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '12px',
+  overflow: 'visible',
+};
+
+const alertRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  justifyContent: 'space-between',
+  gap: '16px',
+  padding: '14px 16px',
+  borderRadius: '8px',
+  border: '1px solid var(--border-card)',
+  background: 'var(--bg-input)',
+};
+
+export default function AlertCenterPage() {
+  const { projectId } = useParams();
+  const { apiFetch, token } = useAuth();
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const [alerts, setAlerts]   = useState<any[]>([]);
+
+  const loadData = useCallback(async () => {
+    if (!token || !projectId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/v1/dashboard/alerts?siteId=${projectId}`);
+      // Handle both {alerts:[]} and plain []
+      const list = Array.isArray(res) ? res : (res?.alerts ?? []);
+      setAlerts(list);
+    } catch (err: any) {
+      console.error('[AlertCenter] Load failed', err);
+      setError('Failed to synchronize operational signals.');
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch, projectId, token]);
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 30_000);
+    return () => clearInterval(interval);
+  }, [loadData]);
+
+  // Derive stats from live alerts
+  const stats = useMemo(() => {
+    const active   = alerts.filter(a => a.status === 'active');
+    const critical = active.filter(a => a.severity === 'critical');
+    const resolved = alerts.filter(a => a.status === 'resolved');
+    return { active: active.length, critical: critical.length, resolved: resolved.length };
+  }, [alerts]);
+
+  // Map backend alert shape → AlertList component shape
+  const mappedAlerts = useMemo(() => alerts.map(a => ({
+    id: a.alertId || a.id,
+    title: a.message || a.kpiName || 'Alert',
+    severity: (a.severity?.toUpperCase() as any) || 'HIGH',
+    status: a.status === 'active' ? ('ACTIVE' as const) : ('RESOLVED' as const),
+    timestamp: a.triggeredAt ? new Date(a.triggeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
+    source: a.module || a.affectedEntity || 'System',
+  })), [alerts]);
+
+  if (loading && alerts.length === 0) {
+    return (
+      <div style={{ ...pageStyle, ...sectionSpacingStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="flex flex-col items-center">
+          <div className="w-12 h-12 rounded-full border-4 border-t-indigo-500 border-slate-800 animate-spin mb-4" />
+          <span className="text-[10px] font-black uppercase tracking-[0.2em]">Synchronizing Operational Signals…</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...pageStyle, ...sectionSpacingStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ maxWidth: '42rem', minWidth: 0 }}>
+          <h1 style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', fontSize: '20px', lineHeight: 1.25, fontWeight: 500, color: 'var(--text-primary)' }}>
+            <Bell style={{ width: '20px', height: '20px', color: '#818cf8', flexShrink: 0 }} />
+            <span>Alert Center</span>
+          </h1>
+          <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>Real-time operational alerts and threshold monitoring for {projectId as string}</p>
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+          <button onClick={loadData} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+            <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0 }} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+          <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+            <History style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Audit Log
+          </button>
+          <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid rgba(96,165,250,0.2)', background: '#2563EB', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: '#fff', flexShrink: 0, cursor: 'pointer' }}>
+            <Settings style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Rule Config
+          </button>
+        </div>
+      </div>
+
+      {/* Error banner */}
+      {error && (
+        <div style={{ marginBottom: '20px', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', borderRadius: '8px', border: '1px solid rgba(244,63,94,0.2)', background: 'rgba(244,63,94,0.1)', padding: '12px 16px', color: '#fb7185', overflow: 'visible' }}>
+          <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: '12px' }}>
+            <AlertCircle style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+            <span style={{ fontSize: '14px', textAlign: 'center', overflowWrap: 'anywhere' }}>{error}</span>
+          </div>
+          <button onClick={loadData} style={{ marginLeft: '8px', flexShrink: 0, fontSize: '14px', fontWeight: 500, textDecoration: 'underline', color: '#fb7185', cursor: 'pointer', background: 'transparent', border: 'none' }}>Retry</button>
+        </div>
+      )}
+
+      {/* Quick Stats */}
+      <div style={metricGridStyle}>
+        {[
+          { label: 'Active Alerts',   value: String(stats.active),   color: 'text-rose-400',    icon: ShieldAlert },
+          { label: 'Critical',        value: String(stats.critical),  color: 'text-rose-500',    icon: AlertTriangle },
+          { label: 'Resolved (live)', value: String(stats.resolved),  color: 'text-emerald-400', icon: CheckCircle2 },
+          { label: 'Total Signals',   value: String(alerts.length),   color: 'text-indigo-400',  icon: Search },
+        ].map((stat) => (
+          <div key={stat.label} style={metricCardStyle}>
+            <div style={metricTopRowStyle}>
+              <span style={metricLabelStyle}>{stat.label}</span>
+              <stat.icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+            </div>
+            <div style={metricValueStyle}>{stat.value}</div>
+            <div style={metricBottomRowStyle}>
+              <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: stat.label === 'Critical' ? 'var(--error-bg)' : 'var(--success-bg)', color: stat.label === 'Critical' ? 'var(--error-text)' : 'var(--success-text)' }}>{stat.label === 'Resolved (live)' ? 'RESOLVED' : stat.label === 'Total Signals' ? 'TOTAL' : stat.label === 'Active Alerts' ? 'ACTIVE' : 'CRITICAL'}</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{stat.label}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={panelGridStyle}>
+        {/* Sidebar Filters */}
+        <div style={leftColumnStyle}>
+          <div style={filterPanelStyle}>
+            <p style={filterTitleStyle}>Severity Filter</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {['Critical', 'High', 'Medium', 'Low'].map((s) => (
+                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  <input type="checkbox" style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }} />
+                  {s}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div style={filterPanelStyle}>
+            <p style={filterTitleStyle}>Signal Source</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {['Backend API', 'Frontend RUM', 'Synthetic', 'Journey Engine'].map((s) => (
+                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                  <input type="checkbox" style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }} />
+                  {s}
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Alert List */}
+        <div style={alertPanelStyle}>
+          {mappedAlerts.length === 0 && !loading ? (
+            <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
+              <CheckCircle2 style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#10b981', flexShrink: 0 }} />
+              <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>All Clear</h3>
+              <p style={{ maxWidth: '20rem', fontSize: '14px', lineHeight: 1.625, color: 'var(--text-muted)' }}>No active alerts. All thresholds are within acceptable bounds.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {mappedAlerts.map((alert) => {
+                const isCritical = alert.severity === 'CRITICAL';
+                const rowIcon = alert.status === 'ACTIVE' ? ShieldAlert : CheckCircle2;
+                return (
+                  <div key={alert.id} style={alertRowStyle}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
+                      {React.createElement(rowIcon, { style: { width: '16px', height: '16px', marginTop: '2px', flexShrink: 0, color: isCritical ? '#f87171' : '#4ade80' } })}
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{alert.title}</p>
+                        <p style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.08em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{alert.source}</p>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, minWidth: 0 }}>
+                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', background: isCritical ? 'var(--error-bg)' : 'var(--success-bg)', color: isCritical ? 'var(--error-text)' : 'var(--success-text)', whiteSpace: 'nowrap', flexShrink: 0 }}>{alert.severity}</span>
+                      <span style={{ fontSize: '11px', color: 'var(--text-label)', whiteSpace: 'nowrap', flexShrink: 0 }}>{alert.timestamp}</span>
+                      <button style={{ fontSize: '11px', color: '#60a5fa', fontWeight: 500, letterSpacing: '0.05em', whiteSpace: 'nowrap', flexShrink: 0, background: 'transparent', border: 'none', cursor: 'pointer' }}>INVESTIGATE</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,9 +1,30 @@
 import React from 'react';
+<<<<<<< HEAD
+import { Badge, BadgeVariant } from '@kpi-platform/ui';
+=======
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 interface StatusBadgeProps {
   status: 'healthy' | 'warning' | 'critical' | 'active' | 'resolved';
 }
 
+<<<<<<< HEAD
+const STATUS_MAP: Record<StatusBadgeProps['status'], { variant: BadgeVariant; label: string }> = {
+  healthy: { variant: 'success', label: 'Healthy' },
+  warning: { variant: 'warning', label: 'Warning' },
+  critical: { variant: 'error', label: 'Critical' },
+  active: { variant: 'processing', label: 'Active' },
+  resolved: { variant: 'stale', label: 'Resolved' },
+};
+
+export const StatusBadge = ({ status }: StatusBadgeProps) => {
+  const config = STATUS_MAP[status] || { variant: 'default' as BadgeVariant, label: status };
+
+  return (
+    <Badge variant={config.variant} size="sm" dot>
+      {config.label}
+    </Badge>
+=======
 export const StatusBadge = ({ status }: StatusBadgeProps) => {
   const styles = {
     healthy: {
@@ -56,5 +77,6 @@ export const StatusBadge = ({ status }: StatusBadgeProps) => {
       }} />
       {styles.label}
     </div>
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
   );
 };

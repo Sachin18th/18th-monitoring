@@ -30,4 +30,8 @@ export const handleBrowserIngest = async (req: any, res: any) => {
         console.error('[BrowserController] Validation or internal error', err);
         return res.status(500).json({ error: 'Internal Server Error' });
     }
+<<<<<<< HEAD
 };
+=======
+};
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

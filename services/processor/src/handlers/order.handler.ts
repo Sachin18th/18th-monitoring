@@ -9,7 +9,12 @@ export class OrderHandler {
         if (!orderId) return;
 
         if (eventType === 'order_placed') {
+<<<<<<< HEAD
+            const tenantId = GlobalMemoryStore.projects.get(siteId)?.tenantId || 'system';
+            const canonicalOrder = await orderNormalizationService.normalize(metadata?.providerId || 'web', event.value, siteId, tenantId);
+=======
             const canonicalOrder = await orderNormalizationService.normalize(event.value, siteId);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
             GlobalMemoryStore.orders.set(orderId, {
                 ...canonicalOrder,
                 siteId,
@@ -29,4 +34,8 @@ export class OrderHandler {
             }
         }
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

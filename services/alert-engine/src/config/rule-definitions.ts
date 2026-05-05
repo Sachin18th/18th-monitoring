@@ -50,4 +50,8 @@ export const SAMPLE_RULES: AlertRule[] = [
         enabled: true,
         description: 'API Latency Threshold bounds exceeded'
     }
+<<<<<<< HEAD
 ];
+=======
+];
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

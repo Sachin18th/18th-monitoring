@@ -6,7 +6,11 @@ export class ElasticEventAdapter implements EventStoreRepository {
     // TODO: Provide cold storage backup workflows for dropped indices
 
     async appendEvent(eventId: string, siteId: string, payload: any): Promise<void> {
+<<<<<<< HEAD
+        console.log('[EventStore] Appending raw payload.', { eventId, siteId, payload });
+=======
         console.log([EventStore] Appending raw payload array: \);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     }
 
     async getEvent(eventId: string): Promise<any | null> {

@@ -10,4 +10,8 @@ export const FilterBar = () => (
         </div>
         <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded transition">Apply Filters</button>
     </div>
+<<<<<<< HEAD
 );
+=======
+);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

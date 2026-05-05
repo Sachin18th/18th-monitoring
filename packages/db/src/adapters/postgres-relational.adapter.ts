@@ -1,3 +1,8 @@
+<<<<<<< HEAD
+import prisma from '../prisma-client';
+
+export const db = prisma;
+=======
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from '../drizzle/schema';
@@ -38,13 +43,26 @@ if (isVerification) {
 }
 
 export const db = dbInstance;
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
 
 /**
  * Legacy PostgresAdapter (Phase 1/2) - for backwards compatibility
  * with existing interfaces.
  */
 export class PostgresAdapter {
+<<<<<<< HEAD
+    // Migrated from Drizzle ORM to Prisma
+    async updateSiteConfig(siteId: string, config: any): Promise<void> {
+        await prisma.project.updateMany({
+            where: { id: siteId },
+            data: {
+                settings: config,
+                updatedAt: new Date(),
+            },
+        });
+=======
     async updateSiteConfig(siteId: string, config: any): Promise<void> {
         console.log(`[PostgresAdapter] Updated master configuration for ${siteId}`);
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
     }
 }

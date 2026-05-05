@@ -111,4 +111,8 @@ export class KpiEngine {
     static async recordFID(siteId: string, value: number) {
         await AggregationService.recordKpi(siteId, 'fid', value);
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb

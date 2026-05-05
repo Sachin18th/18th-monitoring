@@ -1,3 +1,11 @@
+<<<<<<< HEAD
+import React from 'react';
+
+export default function ProjectLayout({ children }: { children: React.ReactNode }) {
+	return <>{children}</>;
+}
+
+=======
 'use client';
 import React from 'react';
 import { useParams } from 'next/navigation';
@@ -20,3 +28,4 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
     </div>
   );
 }
+>>>>>>> dc8ac95f2b4e1fe67c5b24cfb539e5ac10164acb
