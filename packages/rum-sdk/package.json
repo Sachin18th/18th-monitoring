@@ -1,0 +1,24 @@
+{
+  "name": "@kpi-platform/rum-sdk",
+  "version": "1.0.0",
+  "description": "Production-grade Frontend Telemetry (RUM) SDK",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "browser": "dist/index.global.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm,iife --global-name MonitoringSDK --minify --dts",
+    "dev": "tsup src/index.ts --format cjs,esm,iife --global-name MonitoringSDK --watch --dts"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}

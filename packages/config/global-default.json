@@ -1,0 +1,14 @@
+{
+  "tracking": {
+    "performance": true,
+    "user": true,
+    "errors": true
+  },
+  "sampling": {
+    "sessionRate": 1.0
+  },
+  "thresholds": {
+    "pageLoadMs": 3000,
+    "errorRatePct": 2.0
+  }
+}

@@ -1,0 +1,64 @@
+# Platform Docker Compose Configuration
+# Orchestrate all services for local development and integration testing
+
+services:
+  # Database
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: kpi_platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: development_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # Cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # API Service
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    environment:
+      DATABASE_URL: postgres://postgres:development_password@postgres:5432/kpi_platform
+      REDIS_URL: redis://redis:6379
+      PORT: 4000
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "4000:4000"
+
+  # Dashboard Service
+  dashboard:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.dashboard
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:4000
+      PORT: 3000
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+
+#  # Processing Worker
+#  worker:
+#    build:
+#      context: ../..
+#      dockerfile: infra/docker/Dockerfile.worker
+#    environment:
+#      DATABASE_URL: postgres://postgres:development_password@postgres:5432/kpi_platform
+#      REDIS_URL: redis://redis:6379
+#    depends_on:
+#      - postgres
+#      - redis
+
+volumes:
+  pgdata:

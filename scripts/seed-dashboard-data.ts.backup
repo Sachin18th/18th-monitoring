@@ -1,0 +1,492 @@
+import { PrismaClient } from '@prisma/client';
+import { Decimal } from '@prisma/client/runtime/library';
+
+const prisma = new PrismaClient();
+
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+interface SeedConfig {
+  tenantId: string;
+  projectId: string;
+  ordersCount?: number;
+  sessionsCount?: number;
+}
+
+async function seedOrders(config: SeedConfig) {
+  console.log(`[SEED] Seeding ${config.ordersCount || 50} orders...`);
+  
+  // First get connector instances to link orders to them
+  const connectors = await prisma.connectorInstance.findMany({
+    where: { tenantId: config.tenantId, siteId: config.projectId },
+    select: { id: true, providerId: true }
+  });
+  
+  if (connectors.length === 0) {
+    console.log('⚠️  No connector instances found, skipping order seeding');
+    return [];
+  }
+  
+  const statuses = ['placed', 'processing', 'paid', 'shipped', 'delivered', 'cancelled', 'failed'];
+  const channels = ['shopify', 'adobe_commerce', 'custom_api', 'marketplace'];
+  const sourceInformations = ['Shopify Store', 'Adobe Commerce', 'Direct Order API', 'Third-party Marketplace'];
+  const currencies = ['USD', 'EUR', 'GBP'];
+  
+  const orders = [];
+  const now = new Date();
+  
+  for (let i = 0; i < (config.ordersCount || 50); i++) {
+    const placedAt = new Date(now.getTime() - Math.random() * 30 * 24 * 60 * 60 * 1000);
+    const baseAmount = 50 + Math.random() * 500;
+    const status = statuses[Math.floor(Math.random() * statuses.length)];
+    const channel = channels[Math.floor(Math.random() * channels.length)];
+    
+    // Create ingestion event for this order
+    const connector = connectors[Math.floor(Math.random() * connectors.length)];
+    const ingestionEvent = await prisma.ingestionEvent.create({
+      data: {
+        id: uuidv4(),
+        tenantId: config.tenantId,
+        projectId: config.projectId,
+        integrationId: connector.id,
+        mode: 'FULL_SYNC',
+        status: 'COMPLETED',
+        sourceReferenceId: `order-${i}`,
+        correlationId: uuidv4().substring(0, 8),
+        receivedAt: placedAt,
+        updatedAt: placedAt,
+      }
+    });
+    
+    const order = {
+      id: uuidv4(),
+      siteId: config.projectId,
+      tenantId: config.tenantId,
+      orderId: `ORD-${Date.now()}-${i}`,
+      externalReferenceId: `EXT-${uuidv4().substring(0, 8)}`,
+      sourceSystem: sourceInformations[Math.floor(Math.random() * sourceInformations.length)],
+      channel,
+      lifecycleState: status === 'cancelled' ? 'CANCELLED' : (status === 'delivered' ? 'DELIVERED' : 'IN_PROGRESS'),
+      normalizedStatus: status,
+      currency: currencies[Math.floor(Math.random() * currencies.length)],
+      totalAmount: new Decimal(baseAmount.toFixed(2)),
+      taxAmount: new Decimal((baseAmount * 0.1).toFixed(2)),
+      discountAmount: new Decimal((Math.random() > 0.7 ? baseAmount * 0.05 : 0).toFixed(2)),
+      paidAmount: status !== 'placed' ? new Decimal(baseAmount.toFixed(2)) : null,
+      refundedAmount: status === 'cancelled' ? new Decimal(baseAmount.toFixed(2)) : null,
+      placedAt,
+      paidAt: ['paid', 'shipped', 'delivered'].includes(status) ? new Date(placedAt.getTime() + 60000) : null,
+      shippedAt: ['shipped', 'delivered'].includes(status) ? new Date(placedAt.getTime() + 3600000) : null,
+      deliveredAt: status === 'delivered' ? new Date(placedAt.getTime() + 7 * 24 * 3600000) : null,
+      mappingVersion: '1.0.0',
+      ingestionEventId: ingestionEvent.id,
+      metadata: {
+        customerId: `CUST-${uuidv4().substring(0, 8)}`,
+        customerEmail: `customer-${i}@example.com`,
+        itemCount: Math.floor(Math.random() * 10) + 1,
+        source: channel,
+        lastSyncStatus: Math.random() > 0.1 ? 'synced' : 'error'
+      },
+    };
+    
+    orders.push(order);
+  }
+  
+  // Use nested createMany or individual creates (depending on Prisma version)
+  for (const order of orders) {
+    await prisma.canonicalOrder.upsert({
+      where: { id: order.id },
+      update: order,
+      create: order as any,
+    });
+  }
+  
+  console.log(`✓ Seeded ${orders.length} orders linked to ${connectors.length} connector instances`);
+  return orders;
+}
+
+async function seedPerformanceMetrics(config: SeedConfig) {
+  console.log(`[SEED] Seeding performance metrics...`);
+
+  const routes = ['/', '/products', '/cart', '/checkout', '/account', '/dashboard', '/api/v1/orders', '/api/v1/customers'];
+  const devices = ['desktop', 'mobile', 'tablet'];
+  const browsers = ['Chrome', 'Firefox', 'Safari', 'Edge'];
+  const regions = ['US-WEST', 'US-EAST', 'EU-CENTRAL', 'ASIA-PACIFIC'];
+  const metrics: any[] = [];
+  const now = Date.now();
+
+  for (let i = 0; i < 72; i++) {
+    const timestamp = new Date(now - i * 15 * 60 * 1000);
+    const route = routes[Math.floor(Math.random() * routes.length)];
+    const device = devices[Math.floor(Math.random() * devices.length)];
+    const browser = browsers[Math.floor(Math.random() * browsers.length)];
+    const pageLoadTime = 1200 + Math.random() * 3200;
+
+    metrics.push(
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'web_vitals',
+        metricName: 'pageLoadTime',
+        metricValue: new Decimal(pageLoadTime.toFixed(2)),
+        unit: 'ms',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'web_vitals',
+        metricName: 'ttfb',
+        metricValue: new Decimal((pageLoadTime * 0.14).toFixed(2)),
+        unit: 'ms',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'web_vitals',
+        metricName: 'lcp',
+        metricValue: new Decimal((pageLoadTime * 0.45).toFixed(2)),
+        unit: 'ms',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'web_vitals',
+        metricName: 'fid',
+        metricValue: new Decimal((20 + Math.random() * 120).toFixed(2)),
+        unit: 'ms',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'web_vitals',
+        metricName: 'cls',
+        metricValue: new Decimal((Math.random() * 0.12).toFixed(4)),
+        unit: '',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'web_vitals',
+        metricName: 'pageView',
+        metricValue: new Decimal(1),
+        unit: 'count',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'audience',
+        metricName: 'sessionStart',
+        metricValue: new Decimal(1),
+        unit: 'count',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'audience',
+        metricName: 'usersByDevice',
+        metricValue: new Decimal(1),
+        unit: 'count',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      },
+      {
+        siteId: config.projectId,
+        tenantId: config.tenantId,
+        category: 'audience',
+        metricName: 'userAgent',
+        metricValue: new Decimal(1),
+        unit: 'count',
+        region: regions[Math.floor(Math.random() * regions.length)],
+        device,
+        browser,
+        route,
+        timestamp,
+        traceId: uuidv4(),
+        correlationId: uuidv4()
+      }
+    );
+  }
+
+  await prisma.performanceMetric.createMany({ data: metrics as any, skipDuplicates: true });
+  console.log(`✓ Seeded ${metrics.length} performance metrics`);
+  return metrics;
+}
+
+async function seedConnectorInstances(config: SeedConfig) {
+  console.log(`[SEED] Seeding connector instances...`);
+  
+  const connectors = [
+    {
+      id: uuidv4(),
+      label: 'Main Shopify Store',
+      providerId: 'shopify',
+      family: 'ecommerce',
+      category: 'order_management',
+      status: 'ACTIVE',
+      healthStatus: 'HEALTHY',
+      healthScore: 95,
+      syncConfig: { storeUrl: 'https://main-store.myshopify.com', apiVersion: '2024-01' }
+    },
+    {
+      id: uuidv4(),
+      label: 'Adobe Commerce Enterprise',
+      providerId: 'adobe_commerce',
+      family: 'ecommerce',
+      category: 'order_management',
+      status: 'ACTIVE',
+      healthStatus: 'HEALTHY',
+      healthScore: 88,
+      syncConfig: { storeUrl: 'https://enterprise-store.com', apiVersion: '2.4' }
+    },
+    {
+      id: uuidv4(),
+      label: 'Backup Shopify Store',
+      providerId: 'shopify',
+      family: 'ecommerce',
+      category: 'order_management',
+      status: 'ACTIVE',
+      healthStatus: 'DEGRADED',
+      healthScore: 72,
+      syncConfig: { storeUrl: 'https://backup-store.myshopify.com', apiVersion: '2024-01' }
+    }
+  ];
+
+  for (const connector of connectors) {
+    await prisma.connectorInstance.upsert({
+      where: { id: connector.id },
+      update: connector,
+      create: {
+        ...connector,
+        tenantId: config.tenantId,
+        siteId: config.projectId,
+        lastSyncAt: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000),
+        lastAttemptAt: new Date(Date.now() - Math.random() * 2 * 60 * 60 * 1000),
+        lifecycleState: 'ACTIVE'
+      } as any,
+    });
+  }
+
+  console.log(`✓ Seeded ${connectors.length} connector instances`);
+  return connectors;
+}
+
+async function main() {
+  
+  const now = new Date();
+  const customers = [];
+  const sessions = [];
+  const events = [];
+  
+  // Create 20 customer profiles
+  for (let i = 0; i < 20; i++) {
+    const customerId = uuidv4();
+    
+    const customer = {
+      id: customerId,
+      siteId: config.projectId,
+      tenantId: config.tenantId,
+      externalIds: { shopify: `gid://shopify/Customer/${i}`, adobe: `customer_${i}` },
+      emailHash: `email_${i}_hash`,
+      phoneHash: `phone_${i}_hash`,
+      lifecycleState: i < 5 ? 'VIP_CUSTOMER' : (i < 15 ? 'ACTIVE' : 'AT_RISK'),
+      identityConfidence: new Decimal((0.7 + Math.random() * 0.3).toFixed(2)),
+      firstSeenAt: new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000),
+      lastSeenAt: new Date(now.getTime() - Math.random() * 7 * 24 * 60 * 60 * 1000),
+      totalLtv: new Decimal((500 + Math.random() * 5000).toFixed(2)),
+      metadata: {
+        customerName: `Customer ${i}`,
+        email: `customer${i}@example.com`,
+        signupSource: ['organic', 'paid_search', 'social', 'referral'][Math.floor(Math.random() * 4)],
+        segment: ['high_value', 'growth', 'at_risk', 'churned'][Math.floor(Math.random() * 4)],
+      },
+    };
+    
+    await prisma.customerProfile.upsert({
+      where: { id: customerId },
+      update: customer,
+      create: customer as any,
+    });
+    
+    customers.push(customer);
+    
+    // Create 3-5 sessions per customer
+    const sessionCount = 3 + Math.floor(Math.random() * 3);
+    for (let j = 0; j < sessionCount; j++) {
+      const sessionStart = new Date(now.getTime() - Math.random() * 30 * 24 * 60 * 60 * 1000);
+      const sessionId = uuidv4();
+      
+      const session = {
+        id: sessionId,
+        customerId,
+        siteId: config.projectId,
+        startTime: sessionStart,
+        endTime: new Date(sessionStart.getTime() + 15 * 60 * 1000),
+        durationSeconds: 15 * 60 + Math.floor(Math.random() * 30 * 60),
+        device: ['desktop', 'mobile', 'tablet'][Math.floor(Math.random() * 3)],
+        browser: ['Chrome', 'Firefox', 'Safari'][Math.floor(Math.random() * 3)],
+        trafficSource: ['organic', 'direct', 'paid_search', 'social', 'referral'][Math.floor(Math.random() * 5)],
+        isConverted: Math.random() > 0.7 ? 1 : 0,
+        eventCount: 5 + Math.floor(Math.random() * 50),
+      };
+      
+      await prisma.customerSession.upsert({
+        where: { id: sessionId },
+        update: session,
+        create: session as any,
+      });
+      
+      sessions.push(session);
+      
+      // Create 5-20 events per session
+      const eventCount = 5 + Math.floor(Math.random() * 15);
+      for (let k = 0; k < eventCount; k++) {
+        const eventTime = new Date(sessionStart.getTime() + Math.random() * session.durationSeconds * 1000);
+        
+        const event = {
+          id: uuidv4(),
+          customerId,
+          sessionId,
+          siteId: config.projectId,
+          eventName: ['pageview', 'click', 'scroll', 'form_submit', 'add_to_cart', 'purchase'][
+            Math.floor(Math.random() * 6)
+          ],
+          category: ['engagement', 'conversion', 'navigation', 'error'][Math.floor(Math.random() * 4)],
+          timestamp: eventTime,
+          utmSource: Math.random() > 0.3 ? ['google', 'facebook', 'direct'][Math.floor(Math.random() * 3)] : null,
+          utmMedium: Math.random() > 0.3 ? ['cpc', 'organic', 'social'][Math.floor(Math.random() * 3)] : null,
+          utmCampaign: Math.random() > 0.5 ? `campaign_${Math.floor(Math.random() * 10)}` : null,
+          metadata: {
+            url: ['/', '/products', '/cart', '/checkout'][Math.floor(Math.random() * 4)],
+            referrer: Math.random() > 0.5 ? 'google.com' : null,
+          },
+        };
+        
+        await prisma.customerEvent.create({ data: event as any });
+        events.push(event);
+      }
+    }
+  }
+  
+  console.log(`✓ Seeded ${customers.length} customers, ${sessions.length} sessions, ${events.length} events`);
+  return { customers, sessions, events };
+}
+
+async function main() {
+  try {
+    // Get or create tenant and project
+    const tenantId = 'default-tenant';
+    const projectId = 'default-project';
+    
+    // Ensure tenant exists
+    const tenant = await prisma.tenant.upsert({
+      where: { id: tenantId },
+      update: {},
+      create: {
+        id: tenantId,
+        name: 'Default Tenant',
+        slug: 'default-tenant',
+        plan: 'PROFESSIONAL',
+      },
+    });
+    
+    // Ensure project exists
+    const project = await prisma.project.upsert({
+      where: { id: projectId },
+      update: {},
+      create: {
+        id: projectId,
+        tenantId,
+        name: 'Default Project',
+        slug: 'default-project',
+        environment: 'production',
+      },
+    });
+    
+    console.log(`\n🌱 Starting database seed...`);
+    console.log(`   Tenant: ${tenant.name}`);
+    console.log(`   Project: ${project.name}\n`);
+    
+    const config: SeedConfig = {
+      tenantId,
+      projectId,
+      ordersCount: 50,
+      sessionsCount: 20,
+    };
+    
+    // Seed data
+    const connectors = await seedConnectorInstances(config);
+    await seedOrders(config);
+    await seedPerformanceMetrics(config);
+    // await seedCustomerData(config);
+    
+    console.log(`\n✨ Database seeding completed successfully!\n`);
+    
+  } catch (error) {
+    console.error('❌ Seeding failed:', error);
+    const nodeProcess = (globalThis as any).process;
+    nodeProcess?.exit?.(1);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+main();

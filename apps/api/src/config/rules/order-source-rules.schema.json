@@ -1,0 +1,22 @@
+{
+  "rules": [
+    {
+      "id": "rule_pos_offline",
+      "priority": 1,
+      "conditions": [
+        { "field": "sourceSystem", "operator": "equals", "value": "POS" },
+        { "field": "channel", "operator": "equals", "value": "instore" }
+      ],
+      "result": { "orderSource": "offline" }
+    },
+    {
+      "id": "rule_web_online",
+      "priority": 2,
+      "conditions": [
+        { "field": "channel", "operator": "in", "value": ["web", "mobile", "app"] }
+      ],
+      "result": { "orderSource": "online" }
+    }
+  ],
+  "default": "online"
+}

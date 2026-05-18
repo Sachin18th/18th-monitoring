@@ -1,0 +1,63 @@
+{
+  "categories": [
+    { "id": "oms", "label": "OMS", "description": "Order Management Systems", "icon": "package" },
+    { "id": "erp", "label": "ERP", "description": "Enterprise Resource Planning", "icon": "layers" },
+    { "id": "crm", "label": "CRM", "description": "Customer Relationship Management", "icon": "users" },
+    { "id": "logistics", "label": "Shipping", "description": "Logistics & Shipping Gateways", "icon": "truck" },
+    { "id": "payments", "label": "Payments", "description": "Payment Processors & Gateways", "icon": "credit-card" },
+    { "id": "middleware", "label": "3rd Party / Middleware", "description": "iPaaS and Middleware Integrations", "icon": "share-2" },
+    { "id": "custom", "label": "Custom Integrations", "description": "Direct API / Webhook Endpoints", "icon": "code" }
+  ],
+  "connectors": [
+    { "connectorId": "ibm_sterling", "label": "IBM Sterling OMS", "category": "oms" },
+    { "connectorId": "manhattan", "label": "Manhattan OMS", "category": "oms" },
+    { "connectorId": "oracle_oms", "label": "Oracle OMS", "category": "oms" },
+    { "connectorId": "salesforce_om", "label": "Salesforce Order Management", "category": "oms" },
+    { "connectorId": "fluent", "label": "Fluent Commerce", "category": "oms" },
+    { "connectorId": "unicommerce", "label": "Unicommerce", "category": "oms" },
+    { "connectorId": "vinculum", "label": "Vinculum", "category": "oms" },
+    { "connectorId": "orderhive", "label": "Cin7 / Orderhive", "category": "oms" },
+
+    { "connectorId": "sap", "label": "SAP S/4HANA", "category": "erp" },
+    { "connectorId": "netsuite", "label": "Oracle NetSuite", "category": "erp" },
+    { "connectorId": "dynamics_365", "label": "MS Dynamics 365", "category": "erp" },
+    { "connectorId": "odoo", "label": "Odoo ERP", "category": "erp" },
+    { "connectorId": "infor", "label": "Infor", "category": "erp" },
+    { "connectorId": "epicor", "label": "Epicor", "category": "erp" },
+    { "connectorId": "zoho_erp", "label": "Zoho ERP", "category": "erp" },
+    { "connectorId": "tally", "label": "Tally", "category": "erp" },
+
+    { "connectorId": "salesforce_crm", "label": "Salesforce CRM", "category": "crm" },
+    { "connectorId": "hubspot", "label": "HubSpot", "category": "crm" },
+    { "connectorId": "zoho_crm", "label": "Zoho CRM", "category": "crm" },
+    { "connectorId": "zendesk", "label": "Zendesk", "category": "crm" },
+    { "connectorId": "gorgias", "label": "Gorgias", "category": "crm" },
+    { "connectorId": "intercom", "label": "Intercom", "category": "crm" },
+    { "connectorId": "freshsales", "label": "Freshsales", "category": "crm" },
+
+    { "connectorId": "shiprocket", "label": "Shiprocket", "category": "logistics" },
+    { "connectorId": "pickrr", "label": "Pickrr", "category": "logistics" },
+    { "connectorId": "clickpost", "label": "ClickPost", "category": "logistics" },
+    { "connectorId": "shipstation", "label": "ShipStation", "category": "logistics" },
+    { "connectorId": "delhivery", "label": "Delhivery", "category": "logistics" },
+    { "connectorId": "dhl", "label": "DHL Express", "category": "logistics" },
+    { "connectorId": "fedex", "label": "FedEx", "category": "logistics" },
+
+    { "connectorId": "razorpay", "label": "Razorpay", "category": "payments" },
+    { "connectorId": "stripe", "label": "Stripe", "category": "payments" },
+    { "connectorId": "paypal", "label": "PayPal", "category": "payments" },
+    { "connectorId": "adyen", "label": "Adyen", "category": "payments" },
+    { "connectorId": "braintree", "label": "Braintree", "category": "payments" },
+    { "connectorId": "klarna", "label": "Klarna", "category": "payments" },
+    { "connectorId": "amazon_pay", "label": "Amazon Pay", "category": "payments" },
+    { "connectorId": "payu", "label": "PayU", "category": "payments" },
+
+    { "connectorId": "celigo", "label": "Celigo", "category": "middleware" },
+    { "connectorId": "mulesoft", "label": "MuleSoft", "category": "middleware" },
+    { "connectorId": "boomi", "label": "Boomi", "category": "middleware" },
+    { "connectorId": "zapier", "label": "Zapier", "category": "middleware" },
+    
+    { "connectorId": "custom_api", "label": "Custom REST API", "category": "custom" },
+    { "connectorId": "custom_webhook", "label": "Incoming Webhook", "category": "custom" }
+  ]
+}

@@ -1,0 +1,16 @@
+﻿{
+  "compilerOptions": {
+    "types": ["node"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@kpi-platform/*": ["../*/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

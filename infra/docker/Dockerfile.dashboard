@@ -1,0 +1,39 @@
+# Finalized Dashboard Dockerfile for Production
+# Utilizing Next.js standalone output for minimal image size
+
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+# Enable standalone mode in next.config.js usually required
+# Environment variable to disable telemetry
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY . .
+RUN npm ci
+
+# Build dashboard
+RUN npm run build --workspace=apps/dashboard
+
+# Runner Stage
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+
+# Copy necessary files from builder (assumes standalone output is enabled)
+COPY --from=builder /app/apps/dashboard/public ./public
+COPY --from=builder /app/apps/dashboard/.next/standalone ./
+COPY --from=builder /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
+
+# Run unprivileged
+USER node
+
+EXPOSE 3000
+
+ENV HOSTNAME="0.0.0.0"
+
+# The standalone mode generates a server.js in the root of the standalone folder
+CMD ["node", "apps/dashboard/server.js"]
