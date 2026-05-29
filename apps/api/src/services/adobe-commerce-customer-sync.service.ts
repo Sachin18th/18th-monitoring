@@ -253,6 +253,7 @@ export class AdobeCommerceCustomerSyncService {
             id: crypto.randomUUID(),
             siteId: instance.siteId,
             tenantId: instance.tenantId,
+            connectorInstanceId: instance.id,
             externalIds: {
                 adobe_commerce: customerId
             } as Prisma.InputJsonValue,

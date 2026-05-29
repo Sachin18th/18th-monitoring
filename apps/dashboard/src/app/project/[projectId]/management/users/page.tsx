@@ -5,11 +5,18 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button, Input, Typography } from '@kpi-platform/ui';
 import { Plus, RefreshCw, ShieldCheck, UserPlus, UserX, Users, X } from 'lucide-react';
+import { PROJECT_PAGE_ACCESS_OPTIONS, PROJECT_PAGE_KEYS } from '@kpi-platform/shared-types';
 import { useAuth } from '../../../../../context/AuthContext';
 import { RoleGuard } from '../../../../../components/auth/RoleGuard';
 import { MonitoringFilterBar } from '../../../../../components/ui/MonitoringFilterBar';
 import { SectionHeader } from '../../../../../components/ui/SectionHeader';
 import { SortableTable } from '../../../../../components/ui/SortableTable';
+
+const PROJECT_ROLE_OPTIONS = [
+  { value: 'PROJECT_ADMIN', label: 'Project Admin', description: 'Can manage project settings, access, and users.' },
+  { value: 'OPERATOR', label: 'Operator', description: 'Can work the project without changing governance settings.' },
+  { value: 'VIEWER', label: 'Viewer', description: 'Read-only access to the assigned project.' },
+] as const;
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -141,17 +148,34 @@ const errorTextStyle: React.CSSProperties = {
   overflowWrap: 'anywhere',
 };
 
+const normalizeStatus = (status: string | undefined) => String(status || '').trim().toUpperCase();
+
+const emptyFormState = {
+  name: '',
+  email: '',
+  password: 'password123',
+  role: 'VIEWER',
+  status: 'ACTIVE',
+};
+
+const PROJECT_PERMISSION_STORAGE_PREFIX = 'project-page-permissions';
+
 export default function UserManagementPage() {
   const params = useParams();
   const projectId = params.projectId as string;
-  const { apiFetch } = useAuth();
+  const { apiFetch, user } = useAuth();
 
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [modalMode, setModalMode] = useState<'create' | 'edit' | 'access'>('create');
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: 'password123', role: 'CUSTOMER' });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formUser, setFormUser] = useState({ ...emptyFormState });
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [selectedPageKeys, setSelectedPageKeys] = useState<string[]>(PROJECT_PAGE_KEYS.slice());
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -171,41 +195,89 @@ export default function UserManagementPage() {
     loadUsers();
   }, [loadUsers]);
 
+  const visibleUsers = useMemo(() => {
+    return users.filter((user) => String(user.role || '').trim().toUpperCase() !== 'SUPER_ADMIN');
+  }, [users]);
+
   const stats = useMemo(() => {
-    const activeUsers = users.filter((user) => user.status === 'active');
-    const inactiveUsers = users.filter((user) => user.status !== 'active');
-    const adminUsers = users.filter((user) => String(user.role || '').toUpperCase().includes('ADMIN'));
+    const activeUsers = visibleUsers.filter((user) => normalizeStatus(user.status) === 'ACTIVE');
+    const inactiveUsers = visibleUsers.filter((user) => normalizeStatus(user.status) !== 'ACTIVE');
+    const adminUsers = visibleUsers.filter((user) => String(user.role || '').toUpperCase().includes('ADMIN'));
 
     return {
-      total: users.length,
+      total: visibleUsers.length,
       active: activeUsers.length,
       inactive: inactiveUsers.length,
       admins: adminUsers.length,
     };
-  }, [users]);
+  }, [visibleUsers]);
 
-  const handleCreate = async (event: React.FormEvent) => {
+  const openCreateModal = () => {
+    setModalMode('create');
+    setEditingUserId(null);
+    setFormUser({ ...emptyFormState });
+    setSelectedPageKeys(PROJECT_PAGE_KEYS.slice());
+    setFormError(null);
+    setShowModal(true);
+  };
+
+  const getPermissionSelection = (user: any) => {
+    const permissions = Array.isArray(user?.pagePermissions) ? user.pagePermissions : [];
+    const allowed = permissions.filter((permission) => permission?.isAllowed !== false).map((permission) => String(permission.pageKey));
+    return permissions.length === 0 ? PROJECT_PAGE_KEYS.slice() : allowed;
+  };
+
+  const handleEditAccess = (user: any) => {
+    setModalMode('access');
+    setEditingUserId(user.id);
+    setFormError(null);
+    setFormUser({
+      name: user.name || '',
+      email: user.email || '',
+      password: 'password123',
+      role: String(user.role || 'VIEWER').toUpperCase(),
+      status: normalizeStatus(user.status) || 'ACTIVE',
+    });
+    setSelectedPageKeys(getPermissionSelection(user));
+    setShowModal(true);
+  };
+
+  const saveUser = async (event: React.FormEvent) => {
     event.preventDefault();
     setIsSaving(true);
+    setFormError(null);
 
     try {
-      await apiFetch(`/api/v1/admin/projects/${projectId}/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUser),
-      });
+      if (modalMode === 'create') {
+        await apiFetch(`/api/v1/admin/invite`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            projectId,
+            name: formUser.name,
+            email: formUser.email,
+            password: formUser.password,
+            role: formUser.role,
+            pageKeys: selectedPageKeys,
+          }),
+        });
+      }
+
       setShowModal(false);
-      setNewUser({ name: '', email: '', password: 'password123', role: 'CUSTOMER' });
+      setEditingUserId(null);
+      setFormUser({ ...emptyFormState });
       await loadUsers();
-    } catch (createError: any) {
-      alert(createError.message || 'Failed to create user');
+    } catch (saveError: any) {
+      const message = saveError?.message || 'Failed to save user';
+      setFormError(message);
     } finally {
       setIsSaving(false);
     }
   };
 
   const toggleStatus = async (uid: string, currentStatus: string) => {
-    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    const normalizedCurrentStatus = normalizeStatus(currentStatus);
+    const newStatus = normalizedCurrentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     try {
       await apiFetch(`/api/v1/admin/users/${uid}/status`, {
         method: 'PATCH',
@@ -218,8 +290,112 @@ export default function UserManagementPage() {
     }
   };
 
+  const handleDeleteUser = async (user: any) => {
+    const role = String(user.role || '').trim().toUpperCase();
+
+    if (role === 'SUPER_ADMIN') {
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete ${user.name || user.email || 'this user'} from this project?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingUserId(user.id);
+
+    try {
+      await apiFetch(`/api/v1/admin/projects/${projectId}/users/${user.id}`, {
+        method: 'DELETE',
+      });
+      await loadUsers();
+    } catch (deleteError: any) {
+      alert(deleteError?.message || 'Failed to delete user');
+    } finally {
+      setDeletingUserId(null);
+    }
+  };
+
+  const saveAccessPermissions = async (event: React.FormEvent) => {
+    event.preventDefault();
+
+    if (!editingUserId) {
+      return;
+    }
+
+    setIsSaving(true);
+    setFormError(null);
+
+    try {
+      await apiFetch(`/api/v1/admin/projects/${projectId}/users/${editingUserId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formUser.name,
+          email: formUser.email,
+          role: formUser.role,
+          status: formUser.status,
+        }),
+      });
+
+      await apiFetch(`/api/v1/admin/users/${editingUserId}/permissions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          pageKeys: selectedPageKeys,
+        }),
+      });
+
+      if (typeof window !== 'undefined' && editingUserId === user?.id) {
+        const cacheKey = `${PROJECT_PERMISSION_STORAGE_PREFIX}:${user.id}:${projectId}`;
+        window.localStorage.setItem(
+          cacheKey,
+          JSON.stringify({
+            allowedPageKeys: selectedPageKeys,
+            updatedAt: Date.now(),
+          }),
+        );
+        window.dispatchEvent(
+          new CustomEvent('kpi:project-permissions-updated', {
+            detail: {
+              cacheKey,
+              userId: user.id,
+              projectId,
+              allowedPageKeys: selectedPageKeys,
+            },
+          }),
+        );
+      }
+
+      setShowModal(false);
+      setEditingUserId(null);
+      await loadUsers();
+    } catch (saveError: any) {
+      const message = saveError?.message || 'Failed to save user access';
+      setFormError(message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const togglePageKey = (pageKey: string) => {
+    setSelectedPageKeys((current) => {
+      if (current.includes(pageKey)) {
+        return current.filter((key) => key !== pageKey);
+      }
+
+      return [...current, pageKey];
+    });
+  };
+
+  const toggleAllPageKeys = () => {
+    setSelectedPageKeys((current) => current.length === PROJECT_PAGE_KEYS.length ? [] : PROJECT_PAGE_KEYS.slice());
+  };
+
   return (
-    <RoleGuard allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+    <RoleGuard allowedRoles={['SUPER_ADMIN']}>
       <div style={{ minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
         <div style={{ ...pageStyle, ...sectionSpacingStyle }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -238,7 +414,7 @@ export default function UserManagementPage() {
                 <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0 }} className={loading ? 'animate-spin' : ''} /> Refresh
               </button>
               <button
-                onClick={() => setShowModal(true)}
+                onClick={openCreateModal}
                 style={{ ...headerActionButtonStyle, border: 'none', background: '#2563EB', color: '#fff' }}
               >
                 <Plus style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Invite user
@@ -311,7 +487,7 @@ export default function UserManagementPage() {
 
               <SortableTable
                 loading={loading}
-                data={users}
+                data={visibleUsers}
                 emptyMessage="No users have been added to this project yet."
                 columns={[
                   {
@@ -336,8 +512,8 @@ export default function UserManagementPage() {
                     label: 'Status',
                     sortable: true,
                     render: (value) => (
-                      <span className={`dashboard-inline-status ${value === 'active' ? 'is-success' : 'is-danger'}`}>
-                        {value}
+                      <span className={`dashboard-inline-status ${normalizeStatus(value) === 'ACTIVE' ? 'is-success' : 'is-danger'}`}>
+                        {normalizeStatus(value)}
                       </span>
                     ),
                   },
@@ -352,9 +528,22 @@ export default function UserManagementPage() {
                     label: 'Actions',
                     align: 'right',
                     render: (_value, row) => (
-                      <Button variant="outline" size="sm" onClick={() => toggleStatus(row.email, row.status)}>
-                        {row.status === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}
-                      </Button>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
+                        <Button variant="outline" size="sm" onClick={() => handleEditAccess(row)}>
+                          Edit user access
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => toggleStatus(row.id, row.status)}>
+                          {normalizeStatus(row.status) === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}
+                        </Button>
+                        {/* <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleDeleteUser(row)}
+                          disabled={deletingUserId === row.id || String(row.role || '').trim().toUpperCase() === 'SUPER_ADMIN'}
+                        >
+                          Delete user
+                        </Button> */}
+                      </div>
                     ),
                   },
                 ]}
@@ -369,10 +558,12 @@ export default function UserManagementPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'flex-start' }}>
                     <div>
                       <Typography variant="h2" noMargin id="invite-user-title">
-                        Invite project user
+                        {modalMode === 'create' ? 'Invite project user' : 'Edit project user'}
                       </Typography>
                       <Typography variant="body" color="secondary">
-                        Add a new workspace user for {projectId}. They will be prompted to update their password after first login.
+                        {modalMode === 'create'
+                          ? `Add a new workspace user for ${projectId}. They will be prompted to update their password after first login.`
+                          : 'Update the user profile, access role, and account status.'}
                       </Typography>
                     </div>
                     <Button variant="ghost" size="icon" onClick={() => setShowModal(false)} aria-label="Close dialog">
@@ -380,34 +571,146 @@ export default function UserManagementPage() {
                     </Button>
                   </div>
 
-                  <form onSubmit={handleCreate} className="dashboard-stack" style={{ gap: '1rem' }}>
+                  <form onSubmit={modalMode === 'access' ? saveAccessPermissions : saveUser} className="dashboard-stack" style={{ gap: '1rem' }}>
+                    {formError ? (
+                      <div style={errorBannerStyle}>
+                        <div style={{ display: 'flex', minWidth: 0, alignItems: 'center', gap: '12px' }}>
+                          <span style={errorTextStyle}>{formError}</span>
+                        </div>
+                      </div>
+                    ) : null}
+
                     <Input
                       label="Full name"
-                      value={newUser.name}
-                      onChange={(event) => setNewUser({ ...newUser, name: event.target.value })}
+                      value={formUser.name}
+                      onChange={(event) => setFormUser({ ...formUser, name: event.target.value })}
                       required
                     />
                     <Input
                       label="Email address"
                       type="email"
-                      value={newUser.email}
-                      onChange={(event) => setNewUser({ ...newUser, email: event.target.value })}
+                      value={formUser.email}
+                      onChange={(event) => setFormUser({ ...formUser, email: event.target.value })}
                       required
                     />
-                    <Input
-                      label="Temporary password"
-                      value={newUser.password}
-                      onChange={(event) => setNewUser({ ...newUser, password: event.target.value })}
-                      helperText="Users will be prompted to change this password after sign-in."
-                      required
-                    />
+                    {modalMode === 'create' || modalMode === 'access' ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-card)', background: 'var(--bg-page)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                          <div>
+                            <p style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Page access for this project</p>
+                            <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>All pages are selected by default. Untick the ones this user should not see.</p>
+                          </div>
+                          <Button type="button" variant="outline" size="sm" onClick={toggleAllPageKeys}>
+                            {selectedPageKeys.length === PROJECT_PAGE_KEYS.length ? 'Clear all' : 'Select all'}
+                          </Button>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
+                          {PROJECT_PAGE_ACCESS_OPTIONS.map((page) => {
+                            const checked = selectedPageKeys.includes(page.key);
+
+                            return (
+                              <label
+                                key={page.key}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'flex-start',
+                                  gap: '10px',
+                                  padding: '10px 12px',
+                                  borderRadius: '10px',
+                                  border: '1px solid var(--border-card)',
+                                  background: checked ? 'rgba(37,99,235,0.08)' : 'var(--bg-card)',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => togglePageKey(page.key)}
+                                  style={{ marginTop: '3px' }}
+                                />
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>{page.label}</div>
+                                  <div style={{ fontSize: '10px', color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                    {page.key}
+                                  </div>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                    {modalMode === 'create' ? (
+                      <Input
+                        label="Temporary password"
+                        value={formUser.password}
+                        onChange={(event) => setFormUser({ ...formUser, password: event.target.value })}
+                        helperText="Users will be prompted to change this password after sign-in."
+                        required
+                      />
+                    ) : null}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <label htmlFor="invite-role" style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                        User role
+                      </label>
+                      <select
+                        id="invite-role"
+                        value={formUser.role}
+                        onChange={(event) => setFormUser({ ...formUser, role: event.target.value })}
+                        style={{
+                          width: '100%',
+                          borderRadius: '8px',
+                          border: '1px solid var(--border-input)',
+                          background: 'var(--bg-input)',
+                          padding: '10px 12px',
+                          color: 'var(--text-primary)',
+                          fontSize: '14px',
+                        }}
+                      >
+                        {PROJECT_ROLE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                        {PROJECT_ROLE_OPTIONS.find((option) => option.value === formUser.role)?.description}
+                      </p>
+                    </div>
+
+                    {modalMode === 'edit' ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label htmlFor="user-status" style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
+                          Account status
+                        </label>
+                        <select
+                          id="user-status"
+                          value={normalizeStatus(formUser.status)}
+                          onChange={(event) => setFormUser({ ...formUser, status: event.target.value })}
+                          style={{
+                            width: '100%',
+                            borderRadius: '8px',
+                            border: '1px solid var(--border-input)',
+                            background: 'var(--bg-input)',
+                            padding: '10px 12px',
+                            color: 'var(--text-primary)',
+                            fontSize: '14px',
+                          }}
+                        >
+                          <option value="ACTIVE">Active</option>
+                          <option value="INACTIVE">Inactive</option>
+                        </select>
+                      </div>
+                    ) : null}
 
                     <div className="dashboard-action-row" style={{ justifyContent: 'flex-end' }}>
                       <Button type="button" variant="outline" onClick={() => setShowModal(false)}>
                         Cancel
                       </Button>
                       <Button type="submit" isLoading={isSaving}>
-                        Create account
+                        {modalMode === 'create' ? 'Create account' : modalMode === 'access' ? 'Save access' : 'Save changes'}
                       </Button>
                     </div>
                   </form>

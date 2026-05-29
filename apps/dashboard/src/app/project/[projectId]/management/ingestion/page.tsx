@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
+import { PageRestricted } from '../../../../../components/PageRestricted';
 import {
   Database,
   Webhook,
@@ -46,11 +47,18 @@ export default function IngestionMonitorPage() {
   const [events, setEvents] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((v: any) => String(v)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('management/ingestion')) return;
+
       const response = await apiFetch(`/api/v1/tenants/current/projects/${projectId}/ingestion/events`);
       setEvents(response?.data || []);
     } catch (err) {
@@ -117,6 +125,10 @@ export default function IngestionMonitorPage() {
   }, [events, searchQuery, statusFilter]);
 
   const validRate = events.length > 0 ? Math.round((events.filter((e) => e.validation?.isValid).length / events.length) * 100) : 100;
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('management/ingestion')) {
+    return <PageRestricted pageKey="management/ingestion" />;
+  }
 
   return (
     <>

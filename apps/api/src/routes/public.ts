@@ -21,10 +21,12 @@ export async function publicRoutes(server: FastifyInstance) {
     server.addHook('preHandler', async (req: any) => {
         const { siteId } = req.params;
         if (siteId) {
+            const connectorInstanceId = req.query?.connector_instance_id || req.body?.connector_instance_id;
             AuditService.log({
                 action: 'API_ACCESS',
                 actorId: (req.headers['x-api-key'] as string) || 'unknown_token',
                 siteId,
+                connectorInstanceId,
                 entityType: 'endpoint',
                 entityId: req.url,
                 meta: { method: req.method, ip: req.ip }

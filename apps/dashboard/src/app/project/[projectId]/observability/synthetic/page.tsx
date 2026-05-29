@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
+import { PageRestricted } from '@/components/PageRestricted';
 import {
   Activity,
   History,
@@ -21,6 +22,7 @@ import {
   Clock
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -46,22 +48,30 @@ const cardStyle: React.CSSProperties = {
 export default function SyntheticMonitoringPage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
+  const { connectorInstanceId } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<any[]>([]);
   const [runHistory, setRunHistory] = useState<any[]>([]);
   const [failures, setFailures] = useState<any[]>([]);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     setError(null);
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((v: any) => String(v)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('observability/synthetic')) return;
+
       const [dash, hist, fails] = await Promise.all([
-        apiFetch(`/api/v1/dashboard/synthetic/dashboard?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/synthetic/history?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/synthetic/failures?siteId=${projectId}`)
+        apiFetch(`/api/v1/dashboard/synthetic/dashboard?siteId=${projectId}`, { suppressUnauthorizedRedirect: true }),
+        apiFetch(`/api/v1/dashboard/synthetic/history?siteId=${projectId}`, { suppressUnauthorizedRedirect: true }),
+        apiFetch(`/api/v1/dashboard/synthetic/failures?siteId=${projectId}`, { suppressUnauthorizedRedirect: true })
       ]);
       setSummary(Array.isArray(dash) ? dash : []);
       setRunHistory(Array.isArray(hist) ? hist : []);
@@ -72,7 +82,7 @@ export default function SyntheticMonitoringPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token]);
+  }, [apiFetch, projectId, token, connectorInstanceId]);
 
   useEffect(() => {
     loadData();
@@ -119,6 +129,10 @@ export default function SyntheticMonitoringPage() {
     ],
     [degraded, failures.length, firstStep, uptimePct]
   );
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('observability/synthetic')) {
+    return <PageRestricted pageKey="observability/synthetic" />;
+  }
 
   if (loading && runHistory.length === 0) {
     return (

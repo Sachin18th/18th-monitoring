@@ -14,6 +14,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { PageRestricted } from '@/components/PageRestricted';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import {
   CartesianGrid,
   Line,
@@ -53,6 +55,7 @@ const donutColors = ['#22c55e', '#818cf8', '#f59e0b', '#ef4444'];
 export default function BackendObservabilityPage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
+  const { connectorInstanceId } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +63,7 @@ export default function BackendObservabilityPage() {
   const [statusCodes, setStatusCodes] = useState<any[]>([]);
   const [slowEndpoints, setSlowEndpoints] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
@@ -68,6 +72,12 @@ export default function BackendObservabilityPage() {
     setError(null);
 
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((value: any) => String(value)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('observability/backend')) return;
+
       const [trendData, summaryData, slowData] = await Promise.all([
         apiFetch(`/api/v1/dashboard/performance/trends?siteId=${projectId}`),
         apiFetch(`/api/v1/dashboard/performance/summary?siteId=${projectId}`),
@@ -89,11 +99,17 @@ export default function BackendObservabilityPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token]);
+  }, [apiFetch, projectId, token, connectorInstanceId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('observability/backend');
+
+  if (isPageRestricted) {
+    return <PageRestricted pageKey="observability/backend" />;
+  }
 
   const chartData = latencyTrend.length > 0 ? latencyTrend : [];
   const topEndpoints = slowEndpoints.slice(0, 4);

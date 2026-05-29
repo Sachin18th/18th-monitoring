@@ -1,6 +1,7 @@
 import { prisma } from '@kpi-platform/db';
 
 type PagespeedMetricName = 'lcp' | 'fid' | 'cls' | 'ttfb';
+type PagespeedStrategy = 'mobile' | 'desktop';
 
 type PagespeedMetricRow = {
     metricName: PagespeedMetricName;
@@ -25,12 +26,48 @@ const METRIC_MAP: Array<{ key: PagespeedMetricName; auditName: string }> = [
     { key: 'ttfb', auditName: 'server-response-time' },
 ];
 
+const PAGESPEED_SOURCE_PREFIX = 'pagespeed_api';
+
 export class PageSpeedService {
-    static async syncProjectMetrics(tenantId: string, projectId: string) {
-        console.log('[PageSpeedService] syncProjectMetrics:start', { tenantId, projectId });
+    static async syncProjectMetrics(tenantId: string, projectId: string, connectorInstanceIdParam?: string) {
+        console.log('[PageSpeedService] syncProjectMetrics:start', { tenantId, projectId, connectorInstanceIdParam });
 
         try {
-            const connector = await this.getConnectorInstance(tenantId, projectId);
+            let connector = null;
+            
+            // If connectorInstanceId is provided, fetch that specific connector
+            if (connectorInstanceIdParam) {
+                connector = await prisma.connectorInstance.findFirst({
+                    where: {
+                        id: connectorInstanceIdParam,
+                        tenantId,
+                        siteId: projectId,
+                    },
+                    select: {
+                        id: true,
+                        tenantId: true,
+                        siteId: true,
+                        providerId: true,
+                        syncConfig: true,
+                        credentials: {
+                            orderBy: { lastRotatedAt: 'desc' },
+                            take: 1,
+                            select: {
+                                encryptedSecret: true,
+                            },
+                        },
+                    },
+                });
+                
+                if (!connector) {
+                    console.warn('[PageSpeedService] syncProjectMetrics:connector-not-found', { tenantId, projectId, connectorInstanceIdParam });
+                    return [];
+                }
+            } else {
+                // Fallback: Query for any connector assigned to this project
+                connector = await this.getConnectorInstance(tenantId, projectId);
+            }
+            
             if (!connector) {
                 console.warn('[PageSpeedService] syncProjectMetrics:no-connector', { tenantId, projectId });
                 return [];
@@ -58,66 +95,78 @@ export class PageSpeedService {
 
             // Fetch for both strategies and tolerate one strategy failing.
             // This avoids 502 responses when Google API is temporarily slow for one device.
-            const strategies: Array<'mobile' | 'desktop'> = ['mobile', 'desktop'];
+            const strategies: PagespeedStrategy[] = ['mobile', 'desktop'];
             const timestamp = new Date();
 
-            const strategyResults = await Promise.allSettled(strategies.map(async (strategy) => {
-                const response = await this.fetchPageSpeedResult(storeUrl, strategy);
-                console.log('[PageSpeedService] syncProjectMetrics:pagespeed-response', {
-                    tenantId,
-                    projectId,
-                    strategy,
-                    hasResponse: Boolean(response),
-                    lighthouseCategories: response?.lighthouseResult ? Object.keys(response.lighthouseResult) : [],
-                });
+            const strategyResults: Array<{ strategy: PagespeedStrategy; upserted: number }> = [];
+            const rejected: Array<{ strategy: PagespeedStrategy; reason: unknown }> = [];
 
-                const audits = response?.lighthouseResult?.audits || {};
-                const rows = METRIC_MAP.map((metric) => ({
-                    metricName: metric.key,
-                    metricValue: Number(audits?.[metric.auditName]?.numericValue),
-                })).filter((row) => Number.isFinite(row.metricValue));
-
-                console.log('[PageSpeedService] syncProjectMetrics:parsed-metrics', {
-                    tenantId,
-                    projectId,
-                    strategy,
-                    rows,
-                });
-
-                if (rows.length === 0) {
-                    console.warn('[PageSpeedService] syncProjectMetrics:no-metrics-extracted', {
+            for (const strategy of strategies) {
+                try {
+                    const response = await this.fetchPageSpeedResultWithRetry(storeUrl, strategy);
+                    console.log('[PageSpeedService] syncProjectMetrics:pagespeed-response', {
                         tenantId,
                         projectId,
                         strategy,
-                        auditsPresent: Object.keys(audits).length,
-                        auditsSample: Object.keys(audits).slice(0, 12),
+                        hasResponse: Boolean(response),
+                        lighthouseCategories: response?.lighthouseResult ? Object.keys(response.lighthouseResult) : [],
                     });
-                    return { strategy, upserted: 0 };
+
+                    const audits = response?.lighthouseResult?.audits || {};
+                    const rows = METRIC_MAP.map((metric) => ({
+                        metricName: metric.key,
+                        metricValue: Number(audits?.[metric.auditName]?.numericValue),
+                    })).filter((row) => Number.isFinite(row.metricValue));
+
+                    console.log('[PageSpeedService] syncProjectMetrics:parsed-metrics', {
+                        tenantId,
+                        projectId,
+                        strategy,
+                        rows,
+                    });
+
+                    if (rows.length === 0) {
+                        console.warn('[PageSpeedService] syncProjectMetrics:no-metrics-extracted', {
+                            tenantId,
+                            projectId,
+                            strategy,
+                            auditsPresent: Object.keys(audits).length,
+                            auditsSample: Object.keys(audits).slice(0, 12),
+                        });
+                        strategyResults.push({ strategy, upserted: 0 });
+                        continue;
+                    }
+
+                    await Promise.all(rows.map((row) => this.upsertMetric({
+                        tenantId,
+                        siteId: projectId,
+                        metricName: row.metricName,
+                        metricValue: row.metricValue,
+                        timestamp,
+                        source: this.buildSource(strategy),
+                        device: strategy,
+                        connectorInstanceId: connectorInstanceIdParam || connector.id
+                    })));
+
+                    strategyResults.push({ strategy, upserted: rows.length });
+                } catch (error) {
+                    rejected.push({ strategy, reason: error });
                 }
+            }
 
-                await Promise.all(rows.map((row) => this.upsertMetric({
-                    tenantId,
-                    siteId: projectId,
-                    metricName: row.metricName,
-                    metricValue: row.metricValue,
-                    timestamp,
-                    source: `pagespeed_api:${strategy}`,
-                })));
-
-                return { strategy, upserted: rows.length };
-            }));
-
-            const rejected = strategyResults.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
             if (rejected.length > 0) {
                 console.warn('[PageSpeedService] syncProjectMetrics:partial-failure', {
                     tenantId,
                     projectId,
                     failedStrategies: rejected.length,
-                    reasons: rejected.map((r) => (r.reason instanceof Error ? r.reason.message : String(r.reason))),
+                    reasons: rejected.map((r) => ({
+                        strategy: r.strategy,
+                        message: r.reason instanceof Error ? r.reason.message : String(r.reason),
+                    })),
                 });
             }
 
-            const latest = await this.getLatestMetrics(projectId);
+            const latest = await this.getLatestMetrics(projectId, connectorInstanceIdParam);
             console.log('[PageSpeedService] syncProjectMetrics:latest-after-upsert', {
                 tenantId,
                 projectId,
@@ -134,14 +183,16 @@ export class PageSpeedService {
         }
     }
 
-    static async getLatestMetrics(projectId: string): Promise<any> {
+    static async getLatestMetrics(projectId: string, connectorInstanceId?: string): Promise<any> {
         try {
-            // Query both mobile and desktop saved sources
-            const sources = ['pagespeed_api:mobile', 'pagespeed_api:desktop'];
             const metrics = await (prisma.performanceMetric as any).findMany({
                 where: {
                     siteId: projectId,
-                    source: { in: sources },
+                    ...(connectorInstanceId ? { connectorInstanceId } : {}),
+                    OR: [
+                        { source: { startsWith: `${PAGESPEED_SOURCE_PREFIX}:` } },
+                        { source: { startsWith: `${PAGESPEED_SOURCE_PREFIX}.` } },
+                    ],
                     metricName: { in: METRIC_MAP.map((m) => m.key) },
                 },
                 orderBy: { timestamp: 'desc' },
@@ -149,12 +200,13 @@ export class PageSpeedService {
 
             console.log('[PageSpeedService] getLatestMetrics:query-result', {
                 projectId,
+                connectorInstanceId: connectorInstanceId || null,
                 count: metrics.length,
             });
 
             const latest: any = { mobile: {}, desktop: {} };
             for (const metric of metrics) {
-                const device = String(metric.source).includes('desktop') ? 'desktop' : 'mobile';
+                const device = this.resolveMetricDevice(metric) || 'mobile';
                 const key = metric.metricName as PagespeedMetricName;
                 if (latest[device][key]) continue; // already have latest for this metric+device
                 latest[device][key] = {
@@ -396,7 +448,45 @@ export class PageSpeedService {
         }
     }
 
-    private static async fetchPageSpeedResult(storeUrl: string, strategy: 'mobile' | 'desktop' = 'mobile') {
+    private static buildSource(strategy: PagespeedStrategy): string {
+        return `${PAGESPEED_SOURCE_PREFIX}:${strategy}`;
+    }
+
+    private static resolveMetricDevice(metric: { device?: string | null; source?: string | null }): PagespeedStrategy | null {
+        const device = String(metric.device || '').trim().toLowerCase();
+        if (device === 'mobile' || device === 'desktop') {
+            return device;
+        }
+
+        const source = String(metric.source || '').trim().toLowerCase();
+        if (source.endsWith(':mobile') || source.endsWith('.mobile')) return 'mobile';
+        if (source.endsWith(':desktop') || source.endsWith('.desktop')) return 'desktop';
+        return null;
+    }
+
+    private static async fetchPageSpeedResultWithRetry(storeUrl: string, strategy: PagespeedStrategy) {
+        const attempts = strategy === 'mobile' ? 2 : 1;
+        let lastError: unknown;
+
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+            try {
+                return await this.fetchPageSpeedResult(storeUrl, strategy);
+            } catch (error) {
+                lastError = error;
+                console.warn('[PageSpeedService] fetchPageSpeedResultWithRetry:attempt-failed', {
+                    storeUrl,
+                    strategy,
+                    attempt,
+                    attempts,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+
+        throw lastError instanceof Error ? lastError : new Error(`PageSpeed ${strategy} request failed`);
+    }
+
+    private static async fetchPageSpeedResult(storeUrl: string, strategy: PagespeedStrategy = 'mobile') {
         const url = new URL('https://www.googleapis.com/pagespeedonline/v5/runPagespeed');
         url.searchParams.set('url', storeUrl);
         url.searchParams.set('strategy', strategy);
@@ -418,9 +508,10 @@ export class PageSpeedService {
         try {
             const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
             // Google PageSpeed API can take 15-30+ seconds to analyze a page.
-            // Keep this above client timeout headroom to reduce AbortError frequency.
+            // Mobile runs are often slower than desktop, so give them more headroom.
             const controller = new AbortController();
-            const timeoutMs = Number(process.env.PAGESPEED_FETCH_TIMEOUT_MS || 65000);
+            const defaultTimeoutMs = strategy === 'mobile' ? 120000 : 90000;
+            const timeoutMs = Number(process.env.PAGESPEED_FETCH_TIMEOUT_MS || defaultTimeoutMs);
             timeout = setTimeout(() => controller.abort(), timeoutMs);
 
             const response = await fetchFn(url.toString(), {
@@ -465,6 +556,8 @@ export class PageSpeedService {
         metricValue: number;
         timestamp: Date;
         source: string;
+        device: PagespeedStrategy;
+        connectorInstanceId?: string | null;
     }) {
         console.log('[PageSpeedService] upsertMetric', {
             siteId: input.siteId,
@@ -484,18 +577,22 @@ export class PageSpeedService {
             create: {
                 tenantId: input.tenantId,
                 siteId: input.siteId,
+                connectorInstanceId: input.connectorInstanceId || null,
                 category: 'WEB_VITALS',
                 metricName: input.metricName,
                 source: input.source,
                 metricValue: String(input.metricValue),
                 unit: input.metricName === 'cls' ? 'score' : 'ms',
+                device: input.device,
                 timestamp: input.timestamp,
             },
             update: {
                 tenantId: input.tenantId,
+                connectorInstanceId: input.connectorInstanceId || null,
                 category: 'WEB_VITALS',
                 metricValue: String(input.metricValue),
                 unit: input.metricName === 'cls' ? 'score' : 'ms',
+                device: input.device,
                 timestamp: input.timestamp,
             },
         });

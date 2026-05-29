@@ -14,6 +14,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { PageRestricted } from '@/components/PageRestricted';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -145,13 +146,20 @@ export default function AlertCenterPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [alerts, setAlerts]   = useState<any[]>([]);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/v1/dashboard/alerts?siteId=${projectId}`);
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((v: any) => String(v)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('observability/alerts')) return;
+
+      const res = await apiFetch(`/api/v1/dashboard/alerts?siteId=${projectId}`, { suppressUnauthorizedRedirect: true });
       // Handle both {alerts:[]} and plain []
       const list = Array.isArray(res) ? res : (res?.alerts ?? []);
       setAlerts(list);
@@ -186,6 +194,10 @@ export default function AlertCenterPage() {
     timestamp: a.triggeredAt ? new Date(a.triggeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
     source: a.module || a.affectedEntity || 'System',
   })), [alerts]);
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('observability/alerts')) {
+    return <PageRestricted pageKey="observability/alerts" />;
+  }
 
   if (loading && alerts.length === 0) {
     return (

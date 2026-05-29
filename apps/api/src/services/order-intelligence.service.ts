@@ -15,7 +15,7 @@ export class OrderIntelligenceService {
      * Normalizes a raw order from any source into the Canonical Order Layer.
      * Requirement 1, 2, 4
      */
-    static async ingestAndNormalize(raw: any, sourceSystem: string, siteId: string): Promise<string> {
+    static async ingestAndNormalize(raw: any, sourceSystem: string, siteId: string, connectorInstanceId?: string): Promise<string> {
         const sourceOrderId = raw.id || raw.order_number || raw.entity_id;
         const project = await prisma.project.findUnique({
             where: { id: siteId },
@@ -65,6 +65,7 @@ export class OrderIntelligenceService {
                 data: {
                     orderInternalId: internalId,
                     projectId: siteId,
+                    connectorInstanceId: connectorInstanceId || undefined,
                     lifecycleState,
                     totalAmount: financials.grandTotal.toString(),
                     metadata: { financials } as unknown as Prisma.InputJsonValue

@@ -26,6 +26,8 @@ import {
 } from "lucide-react";
 import { DiagnosticDrawer } from "@kpi-platform/ui";
 import { useAuth } from "../../../../context/AuthContext";
+import { PageRestricted } from "../../../../components/PageRestricted";
+import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 
 type IdentityRow = {
   id: string;
@@ -147,6 +149,71 @@ const getOrderMetadata = (order: CanonicalOrderRecord): any => {
     }
   }
   return metadata;
+};
+
+const getCustomerMetadata = (customer: any): any => {
+  const metadata = customer?.metadata;
+  if (!metadata) return {};
+
+  if (typeof metadata === "string") {
+    try {
+      return JSON.parse(metadata);
+    } catch {
+      return {};
+    }
+  }
+
+  return metadata;
+};
+
+const customerMatchesActiveConnector = (
+  customer: any,
+  connectorInstanceId: string | null,
+) => {
+  if (!connectorInstanceId) return true;
+
+  const metadata = getCustomerMetadata(customer);
+  const externalIds = customer?.externalIds || metadata?.externalIds || {};
+  const connectorCandidates = collectLookupValues(
+    customer?.connectorInstanceId,
+    customer?.connectorId,
+    customer?.connectorLabel,
+    customer?.sourceSystem,
+    customer?.channel,
+    metadata?.connectorInstanceId,
+    metadata?.connectorId,
+    metadata?.connectorLabel,
+    metadata?.connectorInstanceLabel,
+    metadata?.sourceSystem,
+    metadata?.source,
+    metadata?.platform,
+    metadata?.shopDomain,
+    metadata?.storeDomain,
+    externalIds?.connectorInstanceId,
+    externalIds?.connectorId,
+    externalIds?.shopify,
+    externalIds?.bigcommerce,
+    externalIds?.adobe_commerce,
+  );
+
+  return connectorCandidates.includes(normalizeLookupValue(connectorInstanceId));
+};
+
+const buildCustomerSummary = (customers: any[]) => {
+  const identified = customers.filter((customer) => !!extractCustomerEmail(customer)).length;
+  const activeUsers = customers.filter((customer) => getCustomerOrderCount(customer) > 0).length;
+  const returning = customers.filter((customer) => getCustomerOrderCount(customer) > 1).length;
+
+  return {
+    totalUsers: customers.length,
+    activeUsers,
+    identifiedRatio: customers.length === 0 ? 0 : Math.round((identified / customers.length) * 100),
+    newVsReturning: customers.length === 0 ? 0 : Math.round((returning / customers.length) * 100),
+    sessions: customers.reduce(
+      (sum, customer) => sum + Number(customer?.metadata?.sessionCount || customer?.metadata?.sessions || 0),
+      0,
+    ),
+  };
 };
 
 const extractCustomerEmail = (customer: any) => {
@@ -487,8 +554,6 @@ const getCustomerIdentityKeys = (customer: any): string[] => {
         externalIds?.shopify,
         externalIds?.adobe_commerce,
         externalIds?.bigcommerce, // ← ADD
-        rawCustomer?.id?.toString(),          
-        String(metadata?.bigcommerceCustomerId || ""),
         // metadata?.bigcommerceCustomerId.toString(), // ← ADD (numeric → string),
       ),
     ),
@@ -507,16 +572,6 @@ const orderMatchesCustomer = (order: CanonicalOrderRecord, customer: any) => {
     console.debug(
       `[orderMatchesCustomer] EMAIL ONLY - Customer: ${customerEmail}, Order emails: ${orderEmailCandidates.join(", ") || "NONE"}, Match: ${emailMatches}`,
     );
-    console.debug("[orderMatchesCustomer] filter basis:", {
-      customerId: customer?.id,
-      customerEmail,
-      orderId: order?.id || order?.orderId,
-      orderEmailCandidates,
-      matchedOnEmail: emailMatches,
-      customerConnectorKeys: getCustomerConnectorKeys(customer),
-      orderConnectorSourceSystem: order?.sourceSystem,
-      orderConnectorChannel: order?.channel,
-    });
   }
 
   return emailMatches;
@@ -582,17 +637,6 @@ const sortOrdersByDateDesc = <
 const getCustomerOrderCount = (customer: any): number => {
   const rawOrders = customer?.metadata?.orders;
   const rawCustomerOrderCount = customer?.metadata?.rawCustomer?.orders_count;
-
-  if (process.env.NODE_ENV === "development") {
-    console.debug("[getCustomerOrderCount] source snapshot:", {
-      customerId: customer?.id,
-      metadataOrdersType: Array.isArray(rawOrders) ? "array" : typeof rawOrders,
-      metadataOrdersCount: Array.isArray(rawOrders) ? rawOrders.length : rawOrders,
-      metadataOrderCount: customer?.metadata?.orderCount,
-      rawCustomerOrdersCount: rawCustomerOrderCount,
-      customerEmail: extractCustomerEmail(customer) || "NO_EMAIL",
-    });
-  }
 
   if (Array.isArray(rawOrders)) {
     return rawOrders.length;
@@ -662,6 +706,7 @@ export default function CustomersPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { token, apiFetch } = useAuth();
+  const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
 
   const CUSTOMERS_PER_PAGE = 20; // Frontend pagination size
   const CUSTOMERS_FETCH_LIMIT = 10000; // Remove limit - fetch all available customers
@@ -684,15 +729,14 @@ export default function CustomersPage() {
   const [intelligence, setIntelligence] = useState<any>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchFocused, setSearchFocused] = useState(false);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     if (!token || !projectId) return;
 
     // Debounce: prevent fetching more than once per 2 seconds using ref (not state)
     const now = Date.now();
-    if (now - lastFetchTimeRef.current < 2000) {
+    if (!force && now - lastFetchTimeRef.current < 2000) {
       return;
     }
     lastFetchTimeRef.current = now;
@@ -702,36 +746,66 @@ export default function CustomersPage() {
     }
     setError(null);
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`);
+      const allowedPageKeys = Array.isArray(permissions?.allowedPageKeys)
+        ? permissions.allowedPageKeys.map((value: any) => String(value))
+        : Array.isArray(permissions?.data?.allowedPageKeys)
+          ? permissions.data.allowedPageKeys.map((value: any) => String(value))
+          : [];
+
+      setAllowedPageKeys(allowedPageKeys);
+
+      const canViewOrders = allowedPageKeys.includes('orders');
+      const canViewCustomers = allowedPageKeys.includes('customers') || allowedPageKeys.includes('observability/journeys');
+
       // Fetch summary, intelligence, customer list, and project orders in parallel
       const [summ, intel, listRes, ordersRes] = await Promise.all([
-        apiFetch(`/api/v1/dashboard/customers/summary?siteId=${projectId}`),
-        apiFetch(
-          `/api/v1/dashboard/customers/intelligence?siteId=${projectId}`,
-        ),
-        apiFetch(
-          `/api/v1/dashboard/customers/list?siteId=${projectId}&limit=${CUSTOMERS_FETCH_LIMIT}&offset=0`,
-        ),
-        apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}`).catch(
-          () => [],
-        ),
+        canViewCustomers
+          ? apiFetch(`/api/v1/dashboard/customers/summary?siteId=${projectId}`)
+          : Promise.resolve(null),
+        canViewCustomers
+          ? apiFetch(`/api/v1/dashboard/customers/intelligence?siteId=${projectId}`)
+          : Promise.resolve(null),
+        canViewCustomers
+          ? apiFetch(`/api/v1/dashboard/customers/list?siteId=${projectId}&limit=${CUSTOMERS_FETCH_LIMIT}&offset=0`)
+          : Promise.resolve([]),
+        canViewOrders
+          ? apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}`, {
+              suppressUnauthorizedRedirect: true,
+            }).catch(() => [])
+          : Promise.resolve([]),
       ]);
-
-      setSummary(summ);
-      setIntelligence(intel);
 
       // Extract ALL customer list (no limit)
       const fullCustomerList = Array.isArray(listRes) ? listRes : [];
       const orderList = Array.isArray(ordersRes) ? ordersRes : [];
 
+      const scopedCustomers = fullCustomerList.filter((customer) =>
+        customerMatchesActiveConnector(customer, connectorInstanceId),
+      );
+      const scopedOrders = orderList.filter((order) =>
+        orderMatchesConnector(order, {
+          metadata: {
+            connectorInstanceId,
+          },
+          connectorInstanceId,
+        }),
+      );
+
+      setSummary(buildCustomerSummary(scopedCustomers));
+      setIntelligence(intel);
+
       console.log("[FETCH] Data received from API:", {
-        customers: fullCustomerList.length,
-        orders: orderList.length,
+          customers: fullCustomerList.length,
+          scopedCustomers: scopedCustomers.length,
+          orders: orderList.length,
+          scopedOrders: scopedOrders.length,
         timestamp: new Date().toISOString(),
       });
 
       // Log first customer email for debugging
-      if (fullCustomerList.length > 0) {
-        const firstCustomer = fullCustomerList[0];
+      if (scopedCustomers.length > 0) {
+        const firstCustomer = scopedCustomers[0];
         const firstEmail = extractCustomerEmail(firstCustomer);
         console.debug(
           "[CustomersPage] First customer email extraction:",
@@ -746,8 +820,8 @@ export default function CustomersPage() {
       }
 
       // Log order structure and emails for debugging
-      if (orderList.length > 0) {
-        const firstOrder = orderList[0];
+      if (scopedOrders.length > 0) {
+        const firstOrder = scopedOrders[0];
         const emailCandidates = extractOrderEmailCandidates(firstOrder);
         console.debug(
           "[CustomersPage] First order email extraction:",
@@ -770,13 +844,10 @@ export default function CustomersPage() {
         );
       }
 
-      setAllCustomers(fullCustomerList);
-      setOrders(orderList);
-      // Only reset to first page on the initial load. Subsequent polling
-      // updates should not change the user's current page selection.
-      if (isInitialLoad.current) {
-        setCurrentPage(1);
-      }
+      setAllCustomers(scopedCustomers);
+      setCustomers(scopedCustomers.slice(0, CUSTOMERS_PER_PAGE));
+      setOrders(scopedOrders);
+      setCurrentPage(1); // Reset to first page when data refreshes
     } catch (e) {
       console.error("Failed to sync customer data:", e);
       setError("Failed to synchronize customer data. Please retry.");
@@ -784,104 +855,49 @@ export default function CustomersPage() {
       setLoading(false);
       isInitialLoad.current = false;
     }
-  }, [projectId, token, apiFetch]);
-
-  // Visibility-aware polling: call fetchData immediately, then poll every 30s
-  // only while the document is visible. Use a ref for the latest fetchData
-  // to avoid re-registering intervals when the callback identity changes.
-  const pollingRef = React.useRef<number | null>(null);
-  const fetchRef = React.useRef(fetchData);
+  }, [projectId, token, apiFetch, connectorInstanceId]);
 
   useEffect(() => {
-    fetchRef.current = fetchData;
+    fetchData();
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
   }, [fetchData]);
 
   useEffect(() => {
-    const startPolling = () => {
-      if (pollingRef.current) return;
-      // call immediately when starting
-      try {
-        fetchRef.current();
-      } catch (e) {
-        // swallow - fetchData handles its own errors
-      }
-      pollingRef.current = window.setInterval(() => {
-        if (document.visibilityState === "visible") {
-          try {
-            fetchRef.current();
-          } catch {}
-        }
-      }, 30000);
-    };
+    if (!token || !projectId) return;
+    lastFetchTimeRef.current = 0;
+    setLoading(true);
+    setError(null);
+    setAllCustomers([]);
+    setCustomers([]);
+    setOrders([]);
+    setSummary({
+      totalUsers: 0,
+      activeUsers: 0,
+      identifiedRatio: 0,
+      newVsReturning: 0,
+      sessions: 0,
+    });
+    setIntelligence(null);
+    fetchData(true);
+  }, [connectorSelectionTick, projectId, token, fetchData]);
 
-    const stopPolling = () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") startPolling();
-      else stopPolling();
-    };
-
-    // start when component mounts if visible
-    if (typeof document !== "undefined") {
-      if (document.visibilityState === "visible") startPolling();
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-    } else {
-      startPolling();
-    }
-
-    return () => {
-      stopPolling();
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", handleVisibilityChange);
-      }
-    };
-  }, []);
-
-  // Reset page on initial mount only (handled by fetchData logic)
-
-  // When searchQuery changes, reset to first page so users see results immediately
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery]);
+  }, []);
 
-  // Filter customers by email when a search query is present
-  const filteredCustomers = useMemo(() => {
-    const q = String(searchQuery || "").trim().toLowerCase();
-    if (q.length === 0) return allCustomers;
-    return allCustomers.filter((cust) => {
-      try {
-        const email = extractCustomerEmail(cust) || cust?.email || "";
-        return String(email).toLowerCase().includes(q);
-      } catch (e) {
-        return false;
-      }
-    });
-  }, [allCustomers, searchQuery]);
-
-  // Calculate total pages based on filtered results
-  const totalPages = Math.max(
-    1,
-    Math.ceil(filteredCustomers.length / CUSTOMERS_PER_PAGE),
-  );
-
-  // Ensure currentPage remains valid when totalPages changes
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
-
-  // Paginate filtered customers into `customers` state
-  useEffect(() => {
+  // Calculate paginated customers based on allCustomers and currentPage
+  useMemo(() => {
     const startIndex = (currentPage - 1) * CUSTOMERS_PER_PAGE;
     const endIndex = startIndex + CUSTOMERS_PER_PAGE;
-    setCustomers(filteredCustomers.slice(startIndex, endIndex));
-  }, [filteredCustomers, currentPage, CUSTOMERS_PER_PAGE]);
+    setCustomers(allCustomers.slice(startIndex, endIndex));
+  }, [allCustomers, currentPage, CUSTOMERS_PER_PAGE]);
+
+  // Calculate total pages
+  const totalPages = Math.max(
+    1,
+    Math.ceil(allCustomers.length / CUSTOMERS_PER_PAGE),
+  );
 
   const metricCards = useMemo(
     () => [
@@ -971,21 +987,6 @@ export default function CustomersPage() {
     const rawCustomer = (selectedCustomer as any)._raw ?? selectedCustomer;
     const customerEmail = extractCustomerEmail(rawCustomer);
     const expectedCount = getCustomerOrderCount(rawCustomer);
-    const embeddedOrders = Array.isArray(rawCustomer?.metadata?.orders)
-      ? rawCustomer?.metadata?.orders
-      : [];
-
-    console.debug("[selectedCustomerOrders] customer snapshot:", {
-      selectedCustomerId: selectedCustomer?.id,
-      rawCustomerId: rawCustomer?.id,
-      customerEmail: customerEmail || "NO_EMAIL",
-      lifecycleState: rawCustomer?.lifecycleState,
-      expectedCount,
-      apiOrderCount: orders.length,
-      embeddedOrderCount: embeddedOrders.length,
-      customerConnectorKeys: getCustomerConnectorKeys(rawCustomer),
-      customerIdentityKeys: getCustomerIdentityKeys(rawCustomer),
-    });
 
     // DEBUG: Log matching info
     console.debug(
@@ -993,7 +994,11 @@ export default function CustomersPage() {
     );
 
     // Check embedded orders count
-    const embeddedOrdersCount = embeddedOrders.length;
+    const embeddedOrdersCount = Array.isArray(
+      rawCustomer?.metadata?.orders,
+    )
+      ? rawCustomer?.metadata?.orders.length
+      : 0;
     console.debug(
       `[selectedCustomerOrders] Embedded orders in customer metadata: ${embeddedOrdersCount}`,
     );
@@ -1009,34 +1014,16 @@ export default function CustomersPage() {
       return matches;
     });
 
-    console.debug("[selectedCustomerOrders] email filter summary:", {
-      customerId: rawCustomer?.id,
-      customerEmail: customerEmail || "NO_EMAIL",
-      totalApiOrders: orders.length,
-      matchedOrderCount: emailMatchedOrders.length,
-      matchedOrderIds: emailMatchedOrders
-        .slice(0, 25)
-        .map((order) => order?.id || order?.orderId),
-      matchedOrderEmails: emailMatchedOrders
-        .slice(0, 25)
-        .map((order) => extractOrderEmailCandidates(order)),
-      expectedCount,
-    });
-
     if (emailMatchedOrders.length > 0) {
       const sortedOrders = sortOrdersByDateDesc(emailMatchedOrders);
+      const visibleOrders =
+        expectedCount > 0 ? sortedOrders.slice(0, expectedCount) : sortedOrders;
 
       console.debug(
-        `[selectedCustomerOrders] 📊 EMAIL MATCH RESULT - Found ${sortedOrders.length} matching orders from API for ${rawCustomer?.id}`,
+        `[selectedCustomerOrders] 📊 EMAIL MATCH RESULT - Found ${visibleOrders.length}/${sortedOrders.length} matching orders from API for ${rawCustomer?.id}`,
       );
-      console.debug("[selectedCustomerOrders] matched orders returned without count slicing:", {
-        customerId: rawCustomer?.id,
-        expectedCount,
-        matchedOrderIds: sortedOrders.map((order) => order?.id || order?.orderId),
-        matchedOrderDates: sortedOrders.map((order) => order?.createdAt),
-      });
 
-      return sortedOrders.map((order, index) =>
+      return visibleOrders.map((order, index) =>
         normalizeCanonicalOrder(order, index, rawCustomer),
       );
     }
@@ -1077,12 +1064,32 @@ export default function CustomersPage() {
       );
     }
 
+    const emailMatchedEmbeddedOrders = getEmailMatchedEmbeddedOrders(rawCustomer);
+    if (emailMatchedEmbeddedOrders.length > 0) {
+      const visibleEmbeddedOrders =
+        expectedCount > 0
+          ? emailMatchedEmbeddedOrders.slice(0, expectedCount)
+          : emailMatchedEmbeddedOrders;
+
+      console.warn(
+        `[selectedCustomerOrders] Using email-matched embedded fallback: ${visibleEmbeddedOrders.length}/${emailMatchedEmbeddedOrders.length} orders for ${rawCustomer?.id}`,
+      );
+
+      return visibleEmbeddedOrders;
+    }
+
     // Return empty array - don't fall back to embedded orders
-    // This prevents showing the same orders for every customer.
+    // This prevents showing the same orders for every customer
     return [];
   }, [orders, selectedCustomer]);
 
-  const selectedCustomerOrderCount = selectedCustomerOrders.length;
+  // const selectedCustomerOrderCount = selectedCustomer
+  //   ? getCustomerOrderCount(selectedCustomer)
+  //   : 0;
+
+  const selectedCustomerOrderCount = selectedCustomer
+    ? getCustomerOrderCount((selectedCustomer as any)._raw ?? selectedCustomer)
+    : 0;
 
   const selectedCustomerTotalSpend = selectedCustomerOrders.reduce(
     (sum, order) => sum + Number(order.amount || 0),
@@ -1109,6 +1116,8 @@ export default function CustomersPage() {
         ).toUpperCase();
   const hasMixedSelectedOrderCurrencies =
     selectedCustomerOrderCurrencies.length > 1;
+
+  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('customers');
 
   // ========== ROOT-LEVEL DIAGNOSTIC LOGS ==========
   // These logs execute on EVERY render to trace state flow
@@ -1158,6 +1167,10 @@ export default function CustomersPage() {
     padding: "24px",
     overflow: "visible",
   };
+
+  if (isPageRestricted) {
+    return <PageRestricted pageKey="customers" />;
+  }
 
   return (
     <>
@@ -1751,14 +1764,12 @@ export default function CustomersPage() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: "10px",
-                  border: searchFocused ? "1px solid #60a5fa" : "1px solid var(--border-card)",
-                  boxShadow: searchFocused ? "0 0 0 3px rgba(96,165,250,0.08)" : "none",
+                  gap: "8px",
+                  border: "1px solid var(--border-card)",
                   background: "var(--bg-card)",
-                  borderRadius: "12px",
-                  padding: "10px 14px",
-                  minWidth: "420px",
-                  transition: "border 120ms ease, box-shadow 120ms ease",
+                  borderRadius: "10px",
+                  padding: "8px 12px",
+                  minWidth: "240px",
                 }}
               >
                 <Search
@@ -1771,30 +1782,18 @@ export default function CustomersPage() {
                 />
                 <input
                   type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onFocus={() => setSearchFocused(true)}
-                  onBlur={() => setSearchFocused(false)}
-                  placeholder="Search identities by email..."
-                  aria-label="Search identities by email"
+                  placeholder="Search identities..."
                   style={{
                     flex: 1,
                     background: "transparent",
                     border: "none",
                     outline: "none",
-                    boxShadow: "none",
-                    WebkitAppearance: "none",
-                    MozAppearance: "none",
-                    appearance: "none",
-                    width: "100%",
                     color: "var(--text-primary)",
-                    fontSize: "13px",
-                    padding: "6px 0",
-                    minWidth: 0,
+                    fontSize: "12px",
                   }}
                 />
               </div>
-              {/* <button
+              <button
                 type="button"
                 aria-label="Filter identities"
                 style={{
@@ -1816,7 +1815,7 @@ export default function CustomersPage() {
                     color: "var(--text-muted)",
                   }}
                 />
-              </button> */}
+              </button>
             </div>
           </div>
 
@@ -2274,7 +2273,7 @@ export default function CustomersPage() {
                 },
                 {
                   icon: Fingerprint,
-                  label: "Orders",
+                  label: "Completed Orders",
                   value: selectedCustomerOrderCount.toLocaleString(),
                 },
                 {

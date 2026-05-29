@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation';
 import { Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useConnectorFilter } from '../hooks/useConnectorFilter';
 
 type MetricKey = 'lcp' | 'fid' | 'cls' | 'ttfb';
 type MetricStatus = 'good' | 'needs-improvement' | 'poor';
@@ -41,6 +42,7 @@ export default function RumMetricsPanel() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { apiFetch, token, user } = useAuth();
+  const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
   const tenantId = user?.tenantId;
   const autoSyncAttempted = useRef(false);
 
@@ -78,7 +80,14 @@ export default function RumMetricsPanel() {
 
   useEffect(() => {
     loadMetrics();
-  }, [loadMetrics]);
+  }, [loadMetrics, connectorSelectionTick]);
+
+  useEffect(() => {
+    if (!token || !projectId) return;
+    setLoading(true);
+    setError(null);
+    setMetrics(null);
+  }, [connectorSelectionTick, projectId, token]);
 
   const handleRefresh = useCallback(async () => {
     if (!token || !projectId || !tenantId) return;
@@ -89,11 +98,13 @@ export default function RumMetricsPanel() {
     try {
       const syncResponse = await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/sync`, {
         method: 'POST',
+        body: connectorInstanceId ? JSON.stringify({ connectorInstanceId }) : undefined,
         timeout: 70000,
       });
       console.log('[RumMetricsPanel] handleRefresh:sync-response', {
         tenantId,
         projectId,
+        connectorInstanceId,
         syncResponse,
       });
       await loadMetrics();
@@ -104,7 +115,7 @@ export default function RumMetricsPanel() {
     } finally {
       setRefreshing(false);
     }
-  }, [apiFetch, loadMetrics, projectId, tenantId, token]);
+  }, [apiFetch, connectorInstanceId, loadMetrics, projectId, tenantId, token]);
 
   // REMOVED auto-sync on mount to prevent hitting PageSpeed API quota.
   // The data is now cached in DB; user must manually click Refresh to trigger sync.

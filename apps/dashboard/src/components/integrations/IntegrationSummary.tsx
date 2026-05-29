@@ -17,13 +17,16 @@ export interface IntegrationSummaryProps {
     degraded: number;
     critical: number;
     stale: number;
-    successRate: number;
-    avgLatency: number;
+    successRate: number | string;
+    avgLatency: number | string;
   };
   loading?: boolean;
 }
 
 export const IntegrationSummary: React.FC<IntegrationSummaryProps> = ({ stats, loading }) => {
+  const numericSuccessRate =
+    typeof stats.successRate === 'number' ? stats.successRate : Number(stats.successRate);
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
       <MetricCard
@@ -39,8 +42,7 @@ export const IntegrationSummary: React.FC<IntegrationSummaryProps> = ({ stats, l
         unit="%"
         icon={ShieldCheck}
         loading={loading}
-        state={stats.successRate > 95 ? 'success' : stats.successRate > 85 ? 'warning' : 'error'}
-        trend={{ value: 0.2, isUp: true, label: 'vs last 24h' }}
+        state={Number.isFinite(numericSuccessRate) ? (numericSuccessRate > 95 ? 'success' : numericSuccessRate > 85 ? 'warning' : 'error') : 'default'}
       />
       <MetricCard
         title="Degraded / Critical"
@@ -56,7 +58,6 @@ export const IntegrationSummary: React.FC<IntegrationSummaryProps> = ({ stats, l
         icon={Clock}
         loading={loading}
         state="default"
-        trend={{ value: 12, isUp: false, label: 'latency' }}
       />
     </div>
   );

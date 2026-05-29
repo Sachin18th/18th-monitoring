@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
+import { PageRestricted } from '../../../../../components/PageRestricted';
 import {
   BarChart3,
   TrendingUp,
@@ -43,13 +44,20 @@ export default function KpiAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [kpiSummary, setKpiSummary] = useState<any[]>([]);
   const [catalog, setCatalog] = useState<{ available: any[]; unavailable: any[] }>({ available: [], unavailable: [] });
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((v: any) => String(v)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('management/kpi')) return;
+
       const [summaryRes, catalogRes] = await Promise.all([
-        apiFetch(`/api/v1/tenants/current/projects/${projectId}/kpi/summary`),
+        apiFetch(`/api/v1/tenants/current/projects/${projectId}/kpi/summary`, { suppressUnauthorizedRedirect: true }),
         apiFetch(`/api/v1/tenants/current/projects/${projectId}/kpi/catalog`)
       ]);
 
@@ -65,6 +73,10 @@ export default function KpiAnalyticsPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('management/kpi')) {
+    return <PageRestricted pageKey="management/kpi" />;
+  }
 
   const getCategoryColor = (category: string) => {
     switch (category) {

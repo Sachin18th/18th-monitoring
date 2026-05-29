@@ -17,8 +17,10 @@ import {
   Database,
 } from 'lucide-react';
 import { type TimeRangeValue } from '@kpi-platform/ui';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { useAuth } from '../../../../context/AuthContext';
 import { PerformanceChart } from '../../../../components/ui/PerformanceChart';
+import { PageRestricted } from '../../../../components/PageRestricted';
 
 type Metric = {
   kpiName: string;
@@ -147,6 +149,7 @@ export default function ProjectOverviewPage() {
   const router = useRouter();
   const projectId = params.projectId as string;
   const { token, apiFetch, user, lastUpdated } = useAuth();
+  const { connectorInstanceId } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<Metric[]>([]);
@@ -154,6 +157,7 @@ export default function ProjectOverviewPage() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [stats, setStats] = useState<StatSummary | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>('24h');
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const activeAlerts = useMemo(() => alerts.filter((alert) => alert.severity && alert.severity !== 'low'), [alerts]);
   const health = useMemo(() => deriveHealth(metrics, stats), [metrics, stats]);
@@ -162,20 +166,42 @@ export default function ProjectOverviewPage() {
     if (!token || !projectId) return;
 
     setLoading(true);
-    const fetchSection = async (path: string, fallback: any) => {
+    setAllowedPageKeys(null);
+    const fetchSection = async (path: string, fallback: any, options: Record<string, any> = {}) => {
       try {
-        return await apiFetch(path);
+        return await apiFetch(path, options);
       } catch {
         return fallback;
       }
     };
 
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys)
+        ? permissions.allowedPageKeys.map((value: any) => String(value))
+        : Array.isArray(permissions?.data?.allowedPageKeys)
+          ? permissions.data.allowedPageKeys.map((value: any) => String(value))
+          : Array.isArray(permissions?.pageKeys)
+            ? permissions.pageKeys.map((value: any) => String(value))
+            : Array.isArray(permissions?.data?.pageKeys)
+              ? permissions.data.pageKeys.map((value: any) => String(value))
+              : [];
+
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('overview')) {
+        return;
+      }
+
+      const canReadAlerts = nextAllowedPageKeys.includes('alerts') || nextAllowedPageKeys.includes('observability/alerts');
+      const canReadPerformance = nextAllowedPageKeys.includes('performance');
+      const canReadOrders = nextAllowedPageKeys.includes('orders');
+
       const [summaryData, alertData, trendData, statsData] = await Promise.all([
         fetchSection(`/api/v1/dashboard/summaries?siteId=${projectId}&range=${timeRange}`, []),
-        fetchSection(`/api/v1/dashboard/alerts?siteId=${projectId}`, []),
-        fetchSection(`/api/v1/dashboard/performance/trends?siteId=${projectId}&range=${timeRange}`, []),
-        fetchSection(`/api/v1/dashboard/orders/summary?siteId=${projectId}&range=${timeRange}`, null),
+        canReadAlerts ? fetchSection(`/api/v1/dashboard/alerts?siteId=${projectId}`, []) : [],
+        canReadPerformance ? fetchSection(`/api/v1/dashboard/performance/trends?siteId=${projectId}&range=${timeRange}`, []) : [],
+        canReadOrders ? fetchSection(`/api/v1/dashboard/orders/summary?siteId=${projectId}&range=${timeRange}`, null) : null,
       ]);
 
       setMetrics(Array.isArray(summaryData) ? summaryData : []);
@@ -185,7 +211,7 @@ export default function ProjectOverviewPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, timeRange, token]);
+  }, [apiFetch, projectId, timeRange, token, connectorInstanceId]);
 
   useEffect(() => {
     loadData();
@@ -296,6 +322,10 @@ export default function ProjectOverviewPage() {
       description: 'Deep intelligence on reliability and customers throughput.',
     },
   ];
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('overview')) {
+    return <PageRestricted pageKey="overview" />;
+  }
 
   if (loading && metrics.length === 0) {
     return (

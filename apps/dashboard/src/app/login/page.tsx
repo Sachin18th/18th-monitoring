@@ -50,27 +50,27 @@ const RoleSelectorItem = ({ icon: Icon, title, description, isSelected, onClick 
     type="button"
     onClick={onClick}
     className={cn(
-      "w-full flex items-center rounded-2xl border text-left transition-all duration-300",
+      "w-full flex items-center rounded-xl border text-left transition-all duration-300 role-item",
       isSelected 
         ? "bg-primary/5 border-primary shadow-[0_0_20px_rgba(37,99,235,0.1)]" 
         : "bg-bg-muted/30 border-border-subtle hover:border-border-interactive hover:bg-bg-card"
     )}
-    style={{ gap: 16, padding: '14px 16px', minHeight: 84 }}
+    style={{ gap: 8, padding: '8px 12px', minHeight: 40, borderRadius: 12 }}
   >
     <div className={cn(
-      "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all",
+      "flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border transition-all",
       isSelected ? "bg-primary text-white border-primary shadow-lg shadow-primary/20" : "bg-bg-card text-text-muted border-border-subtle"
     )}>
-      <Icon size={20} />
+      <Icon size={12} />
     </div>
     <div className="flex-1 min-w-0">
       <div className="flex items-center justify-between">
-        <Typography variant="body" weight="bold" noMargin className={isSelected ? "text-primary" : "text-text-primary"}>
+        <Typography variant="body" weight="bold" noMargin className={isSelected ? "text-primary text-[11px] leading-none" : "text-text-primary text-[11px] leading-none"}>
           {title}
         </Typography>
-        {isSelected && <ChevronRight size={16} className="text-primary animate-pulse" />}
+        {isSelected && <ChevronRight size={12} className="text-primary animate-pulse" />}
       </div>
-      <Typography variant="micro" className="truncate opacity-70">{description}</Typography>
+      <Typography variant="micro" className="truncate opacity-70 text-[9px] leading-tight tracking-[0.07em]">{description}</Typography>
     </div>
   </button>
 );
@@ -92,7 +92,7 @@ export default function LoginPage() {
     try {
       await login(email, password);
     } catch (err: any) {
-      setError(err.message || 'Invalid email or password.');
+      setError('Invalid Credential.');
     } finally {
       setIsLoading(false);
     }
@@ -116,7 +116,7 @@ export default function LoginPage() {
       <main className="relative z-10 w-full max-w-[1440px] px-6 lg:px-12 py-12 flex flex-col lg:flex-row items-center gap-16 lg:gap-24">
         
         {/* Left: Branding & Value Prop */}
-        <section className="flex-1 flex flex-col max-w-2xl text-center lg:text-left">
+        <section className="auth-left flex-1 flex flex-col max-w-2xl text-center lg:text-left">
           <BrandLockup />
           
           <div className="inline-flex items-center gap-3 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 w-fit mb-8 self-center lg:self-start animate-fade-in">
@@ -151,21 +151,19 @@ export default function LoginPage() {
         </section>
 
         {/* Right: Login Interface */}
-        <div className="w-full max-w-[520px] shrink-0 animate-slide-in-right">
+        <div className="flex w-full max-w-[520px] shrink-0 items-center justify-center h-screen animate-slide-in-right">
           <Card
-            className="!rounded-[40px] border-border-subtle bg-bg-card/80 backdrop-blur-xl shadow-premium relative overflow-hidden group"
-            style={{ padding: '36px 32px' }}
+            className="login-card !rounded-[24px] bg-white relative group"
+              style={{ padding: '28px 32px', height: '85vh', maxHeight: '85vh' }}
           >
-              {/* Subtle top accent */}
-              <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary via-secondary to-accent opacity-50" />
-              
-              <div className="text-center" style={{ marginBottom: 28 }}>
-                <Typography variant="h2" weight="semibold" className="mb-2">Workspace Login</Typography>
-                <Typography variant="caption">Access your operational command center.</Typography>
+              <div className="text-center" style={{ marginBottom: 16 }}>
+                <Typography variant="h2" weight="semibold" className="login-card-title mb-1">Workspace Login</Typography>
+                <Typography variant="caption" className="login-card-subtitle">Access your operational command center.</Typography>
               </div>
 
-              <form onSubmit={handleSubmit} className="flex flex-col" style={{ gap: 20 }}>
+              <form onSubmit={handleSubmit} className="flex flex-col" style={{ gap: 12 }}>
                 <Input
+                  className="login-field"
                   label="Work Email"
                   placeholder="name@company.com"
                   icon={Mail}
@@ -174,8 +172,9 @@ export default function LoginPage() {
                   required
                 />
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 10 }}>
                   <Input
+                    className="login-field"
                     label="Password"
                     type={showPassword ? "text" : "password"}
                     placeholder="••••••••"
@@ -193,8 +192,8 @@ export default function LoginPage() {
                       </button>
                     }
                   />
-                  <div className="flex justify-end" style={{ paddingTop: 4 }}>
-                    <button type="button" className="text-[11px] font-bold text-primary hover:underline uppercase tracking-wider">Forgot Password?</button>
+                  <div className="flex justify-end" style={{ paddingTop: 0 }}>
+                    <button type="button" className="text-[10px] font-bold text-primary hover:underline uppercase tracking-wider">Forgot Password?</button>
                   </div>
                 </div>
 
@@ -209,23 +208,23 @@ export default function LoginPage() {
                   type="submit" 
                   variant="primary"
                   size="lg"
-                  className="w-full rounded-2xl shadow-lg shadow-primary/20 text-base"
-                  style={{ marginTop: 8 }}
+                  className="authorize-btn w-full rounded-2xl shadow-lg shadow-primary/20 text-[13px] font-bold"
+                  style={{ height: 42, marginTop: 0, marginBottom: 12 }}
                   isLoading={isLoading}
                 >
-                  Authorize Session
-                  <ArrowRight size={18} className="ml-2" />
+                  <span>Authorize Session</span>
+                  <span className="authorize-icon"><ArrowRight size={18} /></span>
                 </Button>
               </form>
 
-              <div className="flex items-center gap-4" style={{ marginTop: 26, marginBottom: 22 }}>
+              <div className="flex items-center gap-4" style={{ marginTop: 12, marginBottom: 8 }}>
                 <div className="h-px flex-1 bg-border-subtle" />
-                <Typography variant="micro" weight="bold" className="text-text-muted opacity-50 !mb-0">Demo Environment</Typography>
+                <Typography variant="micro" weight="bold" className="text-text-muted opacity-50 !mb-0 text-[10px] tracking-[0.09em]">Demo Environment</Typography>
                 <div className="h-px flex-1 bg-border-subtle" />
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '2px 0' }}>
-                <div className="grid grid-cols-2" style={{ columnGap: 12, rowGap: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '0' }}>
+                <div className="grid grid-cols-2" style={{ columnGap: 8, rowGap: 8, marginBottom: 10 }}>
                   <RoleSelectorItem 
                     icon={ShieldCheck} 
                     title="Super Admin" 
@@ -257,11 +256,11 @@ export default function LoginPage() {
                 </div>
               </div>
               
-              <div className="bg-primary/5 border border-primary/10 rounded-2xl text-center" style={{ marginTop: 18, padding: '14px 16px' }}>
-                <Typography variant="micro" weight="bold" className="!mb-0">
-                  Shared Demo Password: <span className="select-all font-mono text-primary bg-primary/10 px-2 py-0.5 rounded ml-1">Demo@1234!</span>
+              {/* <div className="bg-gray-50 border border-gray-200 rounded-2xl text-center" style={{ marginTop: 0, padding: '8px 12px' }}>
+                <Typography variant="micro" weight="bold" className="!mb-0 text-[10px] leading-tight text-gray-600">
+                  SHARED DEMO PASSWORD: <span className="select-all font-mono text-primary bg-primary/10 px-2 py-0.5 rounded ml-1">Demo@1234!</span>
                 </Typography>
-              </div>
+              </div> */}
           </Card>
         </div>
       </main>
@@ -281,6 +280,173 @@ export default function LoginPage() {
         }
         .tracking-tightest {
           letter-spacing: -0.05em;
+
+        /* Left panel: dark themed brand area */
+        .auth-left {
+          background: linear-gradient(180deg, rgba(6,10,22,0.98) 0%, rgba(12,20,36,0.98) 100%);
+          color: #e6eefc;
+          padding: 48px 48px 48px 56px;
+          border-radius: 16px 0 0 16px;
+        }
+        .auth-left .text-2xl { color: #fff; }
+        .auth-left .text-primary { color: #7fb3ff !important; }
+        .auth-left .FeatureItem, .auth-left .feature { color: #dbeafe; }
+
+        /* Right card: light panel */
+        .login-card {
+          border: 1px solid rgba(15,23,42,0.04) !important;
+          box-shadow: 0 8px 24px rgba(11,20,35,0.06);
+          background: #f6f8fa !important;
+          border-radius: 16px !important;
+        }
+
+        /* Inputs inside right panel: dark bar look */
+        .login-card .ui-input {
+          background: #0f1724 !important;
+          color: #fff !important;
+          border: 1px solid rgba(255,255,255,0.04) !important;
+          height: 44px !important;
+          border-radius: 10px !important;
+        }
+        .login-card .ui-input::placeholder { color: rgba(255,255,255,0.5) !important; }
+        .login-card .input-label { color: #6b7280 !important; font-size: 11px !important; }
+
+        /* Role buttons: subtle blue outline and rounder corners */
+        .login-card .role-item {
+          border: 1px solid rgba(99,102,241,0.12) !important;
+          background: #ffffff !important;
+          box-shadow: 0 1px 0 rgba(16,24,40,0.02) inset;
+          border-radius: 12px !important;
+          padding: 8px 12px !important;
+          min-height: 40px !important;
+        }
+
+        /* Shared demo password box */
+        .login-card .shared-demo {
+          background: #ffffff; border: 1px solid rgba(15,23,42,0.04); padding: 8px 12px; border-radius: 8px; margin-top: 6px; text-align: center; font-weight:700; color:#0f1724;
+        }
+        }
+
+        .login-card .login-card-title {
+          font-size: 20px;
+          font-weight: 700;
+          margin-bottom: 4px;
+        }
+
+        .login-card .login-card-subtitle {
+          font-size: 12px;
+          margin-bottom: 16px;
+        }
+
+        /* Increase Workspace Login prominence */
+        .login-card .login-card-title {
+          font-size: 24px;
+          font-weight: 700;
+        }
+
+        /* Authorize button: force single-row layout */
+        .login-card .authorize-btn {
+          display: flex !important;
+          flex-direction: row !important;
+          align-items: center !important;
+          justify-content: center !important;
+          gap: 8px !important;
+          white-space: nowrap !important;
+        }
+        .login-card .authorize-btn .authorize-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          margin-left: 6px;
+        }
+
+        /* Ensure SVGs inside buttons don't sit on the text baseline */
+        .login-card .authorize-btn .authorize-icon svg,
+        .login-card .authorize-btn svg {
+          display: block;
+        }
+
+        /* Input padding when icon present: ensure placeholder and content don't overlap icons */
+        .login-card .login-field .ui-input.pl-11 { padding-left: 44px !important; }
+        .login-card .login-field .ui-input.pr-11 { padding-right: 44px !important; }
+
+        /* Login card shadow: remove border and add layered shadow */
+        .login-card {
+          border: none !important;
+          box-shadow: 0 6px 18px rgba(16,24,40,0.06);
+          border-radius: 20px !important;
+          width: 100%;
+          max-width: 520px;
+          height: 85vh;
+          max-height: 85vh;
+          display: flex;
+          flex-direction: column;
+        }
+
+        /* Responsive adjustments to preserve layout and avoid clipping.
+           Use font-size scaling and enable internal scroll when viewport is too short.
+        */
+        @media (max-height: 699px) {
+          .login-card {
+            font-size: 90%;
+            padding: 20px 20px;
+            max-height: 85vh;
+            overflow: auto;
+          }
+        }
+
+        @media (min-height: 700px) and (max-height: 899px) {
+          .login-card {
+            font-size: 95%;
+            padding: 24px 28px;
+            overflow: auto;
+          }
+        }
+
+        @media (min-height: 900px) {
+          .login-card {
+            font-size: 100%;
+            padding: 28px 32px;
+            overflow: visible;
+          }
+        }
+
+        .login-card .login-field {
+          gap: 4px;
+        }
+
+        .login-card .login-field .input-label {
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.09em;
+          margin-bottom: 4px;
+        }
+
+        .login-card .login-field .input-container {
+          height: 40px;
+        }
+
+        .login-card .login-field .ui-input {
+          height: 40px;
+          font-size: 13px;
+          padding-top: 0;
+          padding-bottom: 0;
+          padding-left: 12px;
+          padding-right: 12px;
+        }
+
+        .login-card .login-field .input-container .absolute.left-4 {
+          left: 12px;
+        }
+
+        .login-card .login-field .input-container .absolute.right-4 {
+          right: 12px;
+        }
+
+        .login-card .login-field .input-container svg {
+          width: 14px;
+          height: 14px;
         }
       `}</style>
     </div>

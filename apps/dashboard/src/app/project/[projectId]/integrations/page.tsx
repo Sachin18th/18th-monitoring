@@ -6,11 +6,13 @@ import React, {
   useMemo,
   useRef,
 } from "react";
+import axios from "axios";
 import { useAuth } from "../../../../context/AuthContext";
+import { PageRestricted } from "../../../../components/PageRestricted";
+import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 import { useParams } from "next/navigation";
 import {
   FilterBar,
-  InformationState,
   DiagnosticDrawer,
   OperationalTable,
   Column,
@@ -23,8 +25,6 @@ import {
   MoreHorizontal,
   Plus,
   Plug,
-  ShoppingBag,
-  Store as StoreIcon,
 } from "lucide-react";
 import { useToast } from "@kpi-platform/ui";
 import { useConnectorPlatform } from "../../../../context/ConnectorPlatformContext";
@@ -102,21 +102,16 @@ export default function IntegrationsPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { token, apiFetch } = useAuth();
+  const { connectorInstanceId, setConnectorInstanceId } = useConnectorFilter();
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
   // State
   const [loading, setLoading] = useState(true);
-  const [connectors, setConnectors] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>({
-    total: 0,
-    healthy: 0,
-    degraded: 0,
-    critical: 0,
-    stale: 0,
-    successRate: 0,
-    avgLatency: 0,
-  });
-  const [trends, setTrends] = useState<any[]>([]);
-  const [failedSyncs, setFailedSyncs] = useState<any[]>([]);
+  const [integrationRecords, setIntegrationRecords] = useState<any[]>([]);
+  const [summaryRecord, setSummaryRecord] = useState<any>({});
+  const [trendRecords, setTrendRecords] = useState<any[]>([]);
+  const [failedSyncRecords, setFailedSyncRecords] = useState<any[]>([]);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   // UI State
   const [selectedConnector, setSelectedConnector] = useState<any>(null);
@@ -131,8 +126,7 @@ export default function IntegrationsPage() {
   >({});
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
-  const { connectedStores, connectorCatalog, openConnectorSetupModal } =
-    useConnectorPlatform();
+  const { openConnectorSetupModal } = useConnectorPlatform();
   const { success, error: showError } = useToast();
   const resyncPollersRef = useRef<Record<string, number>>({});
 
@@ -159,14 +153,53 @@ export default function IntegrationsPage() {
     ).trim();
   };
 
+  const normalizeLookupKey = (value: unknown): string =>
+    toText(value).trim().toLowerCase();
+
+  const normalizeProviderLabel = (value: unknown): string => {
+    const normalized = normalizeLookupKey(value);
+    if (normalized === "adobe_commerce") return "Adobe Commerce";
+    if (normalized === "bigcommerce") return "BigCommerce";
+    if (normalized === "shopify") return "Shopify";
+    return toText(value);
+  };
+
+  const realtimeFetch = useCallback(
+    async (url: string, includeConnectorInstanceId = false) => {
+      const activeToken = token || localStorage.getItem("session-token");
+      const scopedUrl = includeConnectorInstanceId
+        ? `${url}${url.includes("?") ? "&" : "?"}connector_instance_id=${encodeURIComponent(connectorInstanceId || "")}`
+        : url;
+      const response = await axios.get(`${API_BASE}${scopedUrl}`, {
+        headers: {
+          Authorization: activeToken ? `Bearer ${activeToken}` : "",
+          "session-token": activeToken || "",
+        },
+        timeout: 10000,
+      });
+
+      if (response.data && typeof response.data === "object" && "success" in response.data) {
+        return response.data.data;
+      }
+
+      return response.data;
+    },
+    [API_BASE, connectorInstanceId, token],
+  );
+
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     try {
-      // Fetch from the new productized endpoint
-      const response = await apiFetch(
-        `/api/v1/tenants/current/projects/${projectId}/integrations`,
-      );
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((v: any) => String(v)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('integrations')) return;
+
+      const response = await apiFetch(`/api/v1/tenants/current/projects/${projectId}/integrations`, {
+        suppressUnauthorizedRedirect: true,
+      });
       const integrations = Array.isArray(response)
         ? response
         : Array.isArray(response?.data)
@@ -174,80 +207,113 @@ export default function IntegrationsPage() {
           : [];
 
       const [summ, trend, failed] = await Promise.all([
-        apiFetch(`/api/v1/dashboard/integrations/summary?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/integrations/trends?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/integrations/failed?siteId=${projectId}`),
+        apiFetch(`/api/v1/dashboard/integrations/summary?siteId=${projectId}`, { suppressUnauthorizedRedirect: true }),
+        apiFetch(`/api/v1/dashboard/integrations/trends?siteId=${projectId}`, { suppressUnauthorizedRedirect: true }),
+        apiFetch(`/api/v1/dashboard/integrations/failed?siteId=${projectId}`, { suppressUnauthorizedRedirect: true }),
       ]);
 
       const summaryData = summ?.data ?? summ ?? {};
       const trendData = trend?.data ?? trend ?? [];
       const failedData = failed?.data ?? failed ?? [];
 
-      const mappedConnectors = integrations.map((s: any) => ({
-        id: resolveConnectorInstanceId(s),
-        connectorInstanceId: resolveConnectorInstanceId(s),
-        name: toText(s.label, "Unnamed Connector"),
-        provider: toText(s.providerId, "External Service"),
-        type: toText(s.family || s.category, "REST API"),
-        status: (toText(s.healthStatus, "").toLowerCase() === "healthy"
-          ? "healthy"
-          : toText(s.healthStatus, "").toLowerCase() ||
-            "degraded") as ConnectorHealth,
-        healthScore: toNumber(s.healthScore, 100),
-        lastSync: s.lastSyncAt
-          ? new Date(s.lastSyncAt).toLocaleTimeString()
-          : "Never synced",
-        lastWebhook: s.lastWebhookAt
-          ? new Date(s.lastWebhookAt).toLocaleTimeString()
-          : "No activity",
-        metrics: {
-          syncSuccess: toNumber(s.healthScore, 100),
-          webhookLatency: s.avgLatency
-            ? `${s.avgLatency}ms`
-            : summaryData.avgOmsLatency
-              ? `${summaryData.avgOmsLatency}ms`
-              : "N/A",
-          freshness: (toNumber(s.healthScore, 100) > 90
-            ? "fresh"
-            : toNumber(s.healthScore, 100) > 70
-              ? "delayed"
-              : "stale") as any,
-        },
-        dimensions: {
-          connectivity: s.status === "ACTIVE",
-          auth: true,
-          sync: toNumber(s.healthScore, 100) > 50,
-          webhook: !!s.lastWebhookAt,
-        },
-        recordsByType: s.recordsByType || {},
-        activeResyncJob: s.activeResyncJob || null,
-      }));
-
-      setConnectors(mappedConnectors);
-      setSummary({
-        total: mappedConnectors.length,
-        healthy: mappedConnectors.filter((c: any) => c.status === "healthy")
-          .length,
-        degraded: mappedConnectors.filter((c: any) => c.status === "degraded")
-          .length,
-        critical: mappedConnectors.filter((c: any) => c.status === "critical")
-          .length,
-        stale: mappedConnectors.filter((c: any) => c.status === "stale").length,
-        successRate: summaryData.successRate ?? 100,
-        avgLatency: summaryData.avgOmsLatency || 420,
-      });
-      setTrends(Array.isArray(trendData) ? trendData : []);
-      setFailedSyncs(Array.isArray(failedData) ? failedData : []);
+      setIntegrationRecords(integrations);
+      setSummaryRecord(summaryData);
+      setTrendRecords(Array.isArray(trendData) ? trendData : []);
+      setFailedSyncRecords(Array.isArray(failedData) ? failedData : []);
     } catch (err) {
       console.error("Failed to load integration metrics", err);
     } finally {
       setLoading(false);
     }
-  }, [projectId, token, apiFetch]);
+  }, [connectorInstanceId, projectId, realtimeFetch, token]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // When a store/connector is selected elsewhere in the app (via useConnectorFilter),
+  // automatically show that connector's details. If the integration record is not
+  // present in the list yet, fetch the single integration record.
+  useEffect(() => {
+    if (!connectorInstanceId) {
+      setSelectedConnector(null);
+      setIsDrawerOpen(false);
+      return;
+    }
+
+    // Try to find the connector locally first
+    const found = integrationRecords.find((ir: any) => {
+      const id = resolveConnectorInstanceId(ir);
+      return id && id === connectorInstanceId;
+    });
+
+    if (found) {
+      setSelectedConnector(found);
+      setIsDrawerOpen(false);
+      return;
+    }
+
+    // If not found, fetch the single integration record using apiFetch
+    (async () => {
+      try {
+        let integration: any = null;
+        try {
+          // Use direct axios call to avoid apiFetch adding extra query params
+          const activeToken = token || localStorage.getItem("session-token");
+          const url = `${API_BASE}/api/v1/tenants/current/projects/${encodeURIComponent(
+            projectId,
+          )}/integrations/${encodeURIComponent(connectorInstanceId || "")}`;
+          const resp = await axios.get(url, {
+            headers: {
+              Authorization: activeToken ? `Bearer ${activeToken}` : "",
+              "session-token": activeToken || "",
+            },
+            timeout: 10000,
+          });
+
+          integration = resp?.data ?? null;
+        } catch (fetchErr: any) {
+          const status = fetchErr?.response?.status ?? fetchErr?.status;
+          if (status === 404) {
+            console.warn(`Integration not found for connectorInstanceId=${connectorInstanceId}`);
+            integration = null;
+          } else {
+            throw fetchErr;
+          }
+        }
+
+        if (integration) {
+          setSelectedConnector(integration);
+          setIsDrawerOpen(true);
+        } else {
+          setSelectedConnector(null);
+          setIsDrawerOpen(false);
+        }
+      } catch (err: any) {
+        // Non-404 errors are logged defensively
+        let idStr = "(none)";
+        try {
+          if (typeof connectorInstanceId === "string") idStr = connectorInstanceId;
+          else idStr = JSON.stringify(connectorInstanceId);
+        } catch (e) {
+          idStr = "(unserializable)";
+        }
+
+        let errMsg: string;
+        try {
+          errMsg = err?.message ?? String(err);
+        } catch (e) {
+          errMsg = "(unserializable error)";
+        }
+
+        console.error(
+          `Failed to load integration for connectorInstanceId=${idStr}: ${errMsg}`,
+        );
+        setSelectedConnector(null);
+        setIsDrawerOpen(false);
+      }
+    })();
+  }, [connectorInstanceId, integrationRecords, realtimeFetch, projectId]);
 
   useEffect(() => {
     return () => {
@@ -259,6 +325,7 @@ export default function IntegrationsPage() {
   }, []);
 
   const handleInspect = (connector: any) => {
+    setConnectorInstanceId(resolveConnectorInstanceId(connector) || null);
     setSelectedConnector(connector);
     setIsDrawerOpen(true);
   };
@@ -378,15 +445,6 @@ export default function IntegrationsPage() {
     ],
   );
 
-  useEffect(() => {
-    connectors.forEach((connector: any) => {
-      const activeJob = connector.activeResyncJob;
-      if (activeJob?.jobId && !resyncPollersRef.current[connector.id]) {
-        startResyncPolling(connector, activeJob.jobId);
-      }
-    });
-  }, [connectors, startResyncPolling]);
-
   const handleResyncConfirm = useCallback(async () => {
     if (!resyncDialog || resyncDialog.phase !== "confirm") return;
 
@@ -462,8 +520,74 @@ export default function IntegrationsPage() {
     }
   };
 
+  const connectors = useMemo(() => {
+    return integrationRecords.map((integration: any) => {
+      const connectorInstanceId = resolveConnectorInstanceId(integration);
+      const provider = normalizeProviderLabel(integration?.providerId);
+      const healthStatus = normalizeLookupKey(integration?.healthStatus);
+      const healthScore = toNumber(integration?.healthScore, 0);
+
+      let status: ConnectorHealth = "stale";
+      if (healthStatus === "healthy") status = "healthy";
+      else if (healthStatus === "degraded") status = "degraded";
+      else if (healthStatus === "critical" || healthStatus === "offline") status = "critical";
+      else if (healthStatus === "stale") status = "stale";
+
+      return {
+        id: connectorInstanceId,
+        connectorInstanceId,
+        name:
+          toText(integration?.label).trim() ||
+          toText(integration?.providerId).trim() ||
+          toText(integration?.id).trim(),
+        provider,
+        type: toText(integration?.family || integration?.category).trim(),
+        status,
+        healthScore,
+        lastSync: integration?.lastSyncAt
+          ? new Date(integration.lastSyncAt).toLocaleTimeString()
+          : "—",
+        lastWebhook: integration?.lastWebhookAt
+          ? new Date(integration.lastWebhookAt).toLocaleTimeString()
+          : "—",
+        metrics: {
+          syncSuccess: healthScore,
+          webhookLatency:
+            typeof summaryRecord?.avgOmsLatency === "number"
+              ? `${summaryRecord.avgOmsLatency}ms`
+              : "—",
+          freshness: (status === "healthy"
+            ? "fresh"
+            : status === "degraded"
+              ? "delayed"
+              : "stale") as "fresh" | "delayed" | "stale",
+        },
+        dimensions: {
+          connectivity: toText(integration?.status).toUpperCase() === "ACTIVE",
+          auth: healthStatus !== "critical" && healthStatus !== "offline",
+          sync: Boolean(integration?.lastAttemptAt || integration?.lastSyncAt),
+          webhook: Boolean(integration?.lastWebhookAt),
+        },
+        recordsByType: integration?.recordsByType || {},
+        activeResyncJob: integration?.activeResyncJob || null,
+        endpoint: toText(integration?.providerId).trim() || "—",
+      };
+    });
+  }, [
+    integrationRecords,
+    summaryRecord?.avgOmsLatency,
+  ]);
+
   const filteredConnectors = useMemo(() => {
     return connectors.filter((c) => {
+      // If a connectorInstanceId is selected globally, only show that connector
+      if (connectorInstanceId) {
+        return (
+          toText(c?.connectorInstanceId).trim() === connectorInstanceId ||
+          toText(c?.id).trim() === connectorInstanceId
+        );
+      }
+
       const normalizedName = toText(c?.name).toLowerCase();
       const normalizedProvider = toText(c?.provider).toLowerCase();
       const normalizedQuery = toText(searchQuery).toLowerCase();
@@ -473,7 +597,64 @@ export default function IntegrationsPage() {
       const matchesStatus = !filterStatus || c.status === filterStatus;
       return matchesSearch && matchesStatus;
     });
-  }, [connectors, searchQuery, filterStatus]);
+  }, [connectors, searchQuery, filterStatus, connectorInstanceId]);
+
+  const summary = useMemo(() => {
+    const total = connectors.length;
+    const healthy = connectors.filter((c: any) => c.status === "healthy").length;
+    const degraded = connectors.filter((c: any) => c.status === "degraded").length;
+    const critical = connectors.filter((c: any) => c.status === "critical").length;
+    const stale = connectors.filter((c: any) => c.status === "stale").length;
+    const derivedSuccessRate =
+      total > 0 ? Math.round((healthy / total) * 100) : "—";
+
+    return {
+      total,
+      healthy,
+      degraded,
+      critical,
+      stale,
+      successRate:
+        typeof summaryRecord?.successRate === "number"
+          ? summaryRecord.successRate
+          : derivedSuccessRate,
+      avgLatency:
+        typeof summaryRecord?.avgOmsLatency === "number"
+          ? summaryRecord.avgOmsLatency
+          : "—",
+    };
+  }, [connectors, summaryRecord]);
+
+  const trends = useMemo(() => {
+    return Array.isArray(trendRecords) ? trendRecords : [];
+  }, [trendRecords]);
+
+  const failedSyncs = useMemo(() => {
+    if (failedSyncRecords.length > 0) {
+      return failedSyncRecords.map((record: any) => ({
+        ...record,
+        system:
+          toText(record?.system).trim() ||
+          toText(record?.provider).trim() ||
+          toText(record?.id).trim(),
+        timestamp:
+          record?.timestamp && !Number.isNaN(new Date(record.timestamp).valueOf())
+            ? record.timestamp
+            : null,
+      }));
+    }
+
+    return [];
+  }, [connectors, failedSyncRecords]);
+
+  useEffect(() => {
+    connectors.forEach((connector: any) => {
+      const activeJob = connector.activeResyncJob;
+      if (activeJob?.jobId && !resyncPollersRef.current[connector.id]) {
+        startResyncPolling(connector, activeJob.jobId);
+      }
+    });
+  }, [connectors, startResyncPolling]);
 
   const failedColumns: Column<any>[] = [
     {
@@ -489,7 +670,10 @@ export default function IntegrationsPage() {
     {
       key: "timestamp",
       header: "Time",
-      render: (val) => new Date(val).toLocaleString(),
+      render: (val) =>
+        val && !Number.isNaN(new Date(val).valueOf())
+          ? new Date(val).toLocaleString()
+          : "No timestamp",
     },
     {
       key: "actions",
@@ -502,6 +686,10 @@ export default function IntegrationsPage() {
       ),
     },
   ];
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('integrations')) {
+    return <PageRestricted pageKey="integrations" />;
+  }
 
   return (
     <>
@@ -881,12 +1069,20 @@ export default function IntegrationsPage() {
           </div>
 
           {/* Critical Failure Logs */}
-          <div style={{ ...panelStyle, padding: 0, overflow: "hidden" }}>
+          <div
+            style={{
+              ...panelStyle,
+              padding: 0,
+              overflow: "hidden",
+              background: "#ffffff",
+              border: "1px solid #e5e7eb",
+            }}
+          >
             <div
               style={{
                 padding: "16px",
-                borderBottom: "1px solid rgba(255,255,255,0.08)",
-                background: "var(--bg-input)",
+                borderBottom: "1px solid #e5e7eb",
+                background: "#ffffff",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -924,13 +1120,74 @@ export default function IntegrationsPage() {
                 {failedSyncs.length} Errors
               </span>
             </div>
-            <OperationalTable
-              columns={failedColumns}
-              data={failedSyncs}
-              isDense
-              isEmpty={failedSyncs.length === 0}
-              emptyTitle="No critical failures"
-            />
+            {failedSyncs.length === 0 ? (
+              <div
+                style={{
+                  minHeight: "220px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: "32px 24px",
+                  background: "#ffffff",
+                }}
+              >
+                <div
+                  style={{
+                    maxWidth: "420px",
+                    width: "100%",
+                    textAlign: "center",
+                    borderRadius: "16px",
+                    border: "1px solid #e5e7eb",
+                    background: "#ffffff",
+                    padding: "36px 28px",
+                    boxShadow: "0 12px 30px rgba(15,23,42,0.06)",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "52px",
+                      height: "52px",
+                      borderRadius: "14px",
+                      margin: "0 auto 16px",
+                      background: "rgba(129,140,248,0.1)",
+                      border: "1px solid rgba(129,140,248,0.2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#a5b4fc",
+                    }}
+                  >
+                    <AlertCircle style={{ width: "24px", height: "24px" }} />
+                  </div>
+                  <p
+                    style={{
+                      margin: 0,
+                      fontSize: "18px",
+                      fontWeight: 700,
+                      color: "var(--text-primary)",
+                    }}
+                  >
+                    No critical failures
+                  </p>
+                  <p
+                    style={{
+                      margin: "8px 0 0",
+                      fontSize: "13px",
+                      lineHeight: 1.6,
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    There are no records available at this time.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <OperationalTable
+                columns={failedColumns}
+                data={failedSyncs}
+                isDense
+              />
+            )}
           </div>
         </div>
       </div>
@@ -1128,30 +1385,24 @@ export default function IntegrationsPage() {
         <DiagnosticDrawerContent
           connector={selectedConnector}
           syncHistory={[
-            {
-              timestamp: new Date().toISOString(),
-              type: "Scheduled",
-              status: "success",
-              records: 142,
-            },
-            {
-              timestamp: new Date(Date.now() - 3600000).toISOString(),
-              type: "Scheduled",
-              status: "success",
-              records: 89,
-            },
-            {
-              timestamp: new Date(Date.now() - 7200000).toISOString(),
-              type: "Manual",
-              status: "error",
-              records: 0,
-            },
+            selectedConnector?.lastSync && selectedConnector.lastSync !== "—"
+              ? [
+                  {
+                    timestamp: new Date().toISOString(),
+                    type: "Latest",
+                    status:
+                      selectedConnector.status === "healthy" ? "success" : "error",
+                    records: Object.values(
+                      selectedConnector.recordsByType || {},
+                    ).reduce(
+                      (sum: number, value: any) => sum + Number(value || 0),
+                      0,
+                    ),
+                  },
+                ]
+              : []
           ]}
-          webhookActivity={[
-            { id: "wh_91283", event: "order.created", status: "processed" },
-            { id: "wh_91282", event: "inventory.updated", status: "processed" },
-            { id: "wh_91281", event: "order.cancelled", status: "error" },
-          ]}
+          webhookActivity={[]}
           onAction={handleAction}
         />
       </DiagnosticDrawer>

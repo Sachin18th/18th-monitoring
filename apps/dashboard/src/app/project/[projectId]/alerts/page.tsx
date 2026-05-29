@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
+import { PageRestricted } from '../../../../components/PageRestricted';
 import {
   Siren,
   ShieldAlert,
@@ -193,6 +194,7 @@ export default function AlertsPage() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [activityFeed, setActivityFeed] = useState<any[]>([]);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   // UI State
   const [selectedSignal, setSelectedSignal] = useState<{ type: string; data: any } | null>(null);
@@ -201,8 +203,23 @@ export default function AlertsPage() {
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
+
     setLoading(true);
+    setAllowedPageKeys(null);
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys)
+        ? permissions.allowedPageKeys.map((value: any) => String(value))
+        : Array.isArray(permissions?.data?.allowedPageKeys)
+          ? permissions.data.allowedPageKeys.map((value: any) => String(value))
+          : [];
+
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('alerts')) {
+        return;
+      }
+
       const [alrts, audit, activity] = await Promise.all([
         apiFetch(`/api/v1/dashboard/alerts?siteId=${projectId}`),
         apiFetch(`/api/v1/dashboard/audit?siteId=${projectId}`),
@@ -324,6 +341,10 @@ export default function AlertsPage() {
       })),
     [timelineEvents]
   );
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('alerts')) {
+    return <PageRestricted pageKey="alerts" />;
+  }
 
   const mttr = '14.2m';
   const suppressedAlerts = 12;

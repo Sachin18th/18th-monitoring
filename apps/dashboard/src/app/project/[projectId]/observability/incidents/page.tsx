@@ -17,6 +17,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { PageRestricted } from '@/components/PageRestricted';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -223,11 +225,13 @@ const sideCardStyle: React.CSSProperties = {
 export default function IncidentCenterPage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
+  const { connectorInstanceId } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [incidents, setIncidents] = useState<any[]>([]);
   const [performance, setPerformance] = useState<any>(null);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
@@ -236,6 +240,12 @@ export default function IncidentCenterPage() {
     setError(null);
 
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((value: any) => String(value)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('observability/incidents')) return;
+
       const [incResponse, perfResponse] = await Promise.all([
         apiFetch(`/api/v1/dashboard/incidents?siteId=${projectId}`),
         apiFetch(`/api/v1/dashboard/performance/summary?siteId=${projectId}`),
@@ -248,13 +258,17 @@ export default function IncidentCenterPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token]);
+  }, [apiFetch, projectId, token, connectorInstanceId]);
 
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 30_000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('observability/incidents')) {
+    return <PageRestricted pageKey="observability/incidents" />;
+  }
 
   if (loading && incidents.length === 0) {
     return (

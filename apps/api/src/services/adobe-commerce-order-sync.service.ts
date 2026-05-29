@@ -106,6 +106,7 @@ export class AdobeCommerceOrderSyncService {
           const data = {
             siteId: instance.siteId,
             tenantId: instance.tenantId,
+            connectorInstanceId: instance.id,
             orderId: String(canonical.orderId),
             externalReferenceId: canonical.externalReferenceId ? String(canonical.externalReferenceId) : null,
             sourceSystem: 'adobe_commerce',
@@ -144,15 +145,15 @@ export class AdobeCommerceOrderSyncService {
           if (existing) {
             await prisma.$transaction(async (tx) => {
               await tx.canonicalOrder.update({ where: { id: existing.id }, data });
-              await tx.orderSnapshot.create({ data: { orderInternalId: existing.id, projectId: instance.siteId, lifecycleState: String(canonical.lifecycleState), totalAmount: Number(canonical.totalAmount || 0), metadata: { syncSource: 'adobe_commerce', connectorInstanceId: instance.id } as Prisma.InputJsonValue } });
+              await tx.orderSnapshot.create({ data: { orderInternalId: existing.id, projectId: instance.siteId, connectorInstanceId: instance.id, lifecycleState: String(canonical.lifecycleState), totalAmount: Number(canonical.totalAmount || 0), metadata: { syncSource: 'adobe_commerce', connectorInstanceId: instance.id } as Prisma.InputJsonValue } });
             });
             updated += 1;
           } else {
             const newId = crypto.randomUUID();
             await prisma.$transaction(async (tx) => {
               await tx.canonicalOrder.create({ data: { id: newId, ...data } });
-              await tx.orderSnapshot.create({ data: { orderInternalId: newId, projectId: instance.siteId, lifecycleState: String(canonical.lifecycleState), totalAmount: Number(canonical.totalAmount || 0), metadata: { syncSource: 'adobe_commerce', connectorInstanceId: instance.id } as Prisma.InputJsonValue } });
-              await tx.orderEvent.create({ data: { id: crypto.randomUUID(), orderInternalId: newId, projectId: instance.siteId, eventType: 'ADOBECOMMERCE_SYNC_IMPORT', timestamp: new Date(), payload: raw as Prisma.InputJsonValue, correlationId: instance.id } });
+              await tx.orderSnapshot.create({ data: { orderInternalId: newId, projectId: instance.siteId, connectorInstanceId: instance.id, lifecycleState: String(canonical.lifecycleState), totalAmount: Number(canonical.totalAmount || 0), metadata: { syncSource: 'adobe_commerce', connectorInstanceId: instance.id } as Prisma.InputJsonValue } });
+              await tx.orderEvent.create({ data: { id: crypto.randomUUID(), orderInternalId: newId, projectId: instance.siteId, connectorInstanceId: instance.id, eventType: 'ADOBECOMMERCE_SYNC_IMPORT', timestamp: new Date(), payload: raw as Prisma.InputJsonValue, correlationId: instance.id } });
             });
             created += 1;
           }

@@ -90,6 +90,7 @@ export class ObservabilityService {
     static async audit(options: {
         siteId: string;
         tenantId?: string;
+        connectorInstanceId?: string;
         actorId: string;
         action: string;
         entityType: string;
@@ -103,6 +104,7 @@ export class ObservabilityService {
             data: {
                 tenantId: options.tenantId || 'tenant_001',
                 projectId: options.siteId,
+                connectorInstanceId: options.connectorInstanceId,
                 actorId: options.actorId,
                 action: options.action,
                 targetType: options.entityType,

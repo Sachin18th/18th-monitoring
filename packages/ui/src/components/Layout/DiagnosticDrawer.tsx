@@ -1,8 +1,7 @@
 import React, { useEffect } from 'react';
-import { X, Maximize2, Shield } from 'lucide-react';
+import { X } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Button } from '../Button';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -12,7 +11,7 @@ export interface DiagnosticDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
   width?: string;
@@ -68,18 +67,15 @@ export const DiagnosticDrawer: React.FC<DiagnosticDrawerProps> = ({
       >
         <div className="drawer-header">
           <div className="header-content">
-            <div className="header-icon">
-              <Shield size={18} className="text-primary" />
-            </div>
             <div className="header-text">
               <h2 className="drawer-title">{title}</h2>
-              {subtitle && <p className="drawer-subtitle">{subtitle}</p>}
+              {subtitle && <div className="drawer-subtitle">{subtitle}</div>}
             </div>
           </div>
           <div className="header-actions">
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X size={20} />
-            </Button>
+            <button type="button" className="drawer-close-button" onClick={onClose} aria-label="Close drawer" title="Close drawer">
+              <X size={18} />
+            </button>
           </div>
         </div>
 

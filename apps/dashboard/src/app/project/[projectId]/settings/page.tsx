@@ -63,16 +63,38 @@ export default function AdministrationPage() {
   const [pendingAction, setPendingAction] = useState<any>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
+   const normalizeConnectorRecords = (records: any[]) => {
+      return records.map((record) => ({
+         ...record,
+         name: record?.name || record?.label || record?.providerId || 'Unknown Connector',
+         provider: record?.provider || record?.providerId || 'Unknown Provider',
+         type: record?.type || record?.family || record?.category || record?.providerId || 'unknown',
+         status: record?.status || record?.healthStatus || 'unknown',
+         lastSync:
+            record?.lastSync ||
+            record?.lastSyncAt ||
+            record?.lastSuccessfulSync ||
+            record?.lastAttemptAt ||
+            record?.lastAttemptedSync ||
+            'Never',
+      }));
+   };
+
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     try {
       const [govConfig, connData] = await Promise.all([
         apiFetch(`/api/v1/dashboard/governance?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/integrations/list?siteId=${projectId}`)
+            apiFetch(`/api/v1/tenants/current/projects/${projectId}/integrations`)
       ]);
       setConfig(govConfig);
-      setConnectors(Array.isArray(connData) ? connData : []);
+         const connectorsData = Array.isArray(connData)
+            ? connData
+            : Array.isArray(connData?.data)
+               ? connData.data
+               : [];
+         setConnectors(normalizeConnectorRecords(connectorsData));
     } catch (err) {
       console.error('Governance fetch failure:', err);
     } finally {
@@ -130,7 +152,7 @@ export default function AdministrationPage() {
 
    const renderConnectorStatus = (status: string) => {
       const normalized = String(status || '').toLowerCase();
-      if (normalized === 'active') {
+      if (normalized === 'active' || normalized === 'healthy') {
          return {
             background: '#9bd9b1',
             color: '#000000',
@@ -154,7 +176,7 @@ export default function AdministrationPage() {
    };
 
   return (
-    <RoleGuard allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+    <RoleGuard allowedRoles={['SUPER_ADMIN']}>
          <div
             style={{
                ...pageStyle,

@@ -13,9 +13,11 @@ export interface KpiSummaryResponse {
 /**
  * Standard parameters used to query and filter metrics across the application.
  * 'siteId' defines the strict contextual boundary for multi-tenant isolation.
+ * 'connectorInstanceId' enables multi-store data isolation per connector.
  */
 export interface MetricFilterDto {
     siteId: string;
+    connectorInstanceId?: string | null;
     timeRange?: '1h' | '24h' | '7d';
     region?: string;
     source?: string;

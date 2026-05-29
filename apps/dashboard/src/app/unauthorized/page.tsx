@@ -13,7 +13,7 @@ export default function UnauthorizedPage() {
             <LockKeyhole size={28} />
           </span>
           <Typography variant="h1" noMargin>
-            Access restricted
+            403 / Access restricted
           </Typography>
           <Typography variant="body" color="secondary">
             This area is outside your current project permissions. Return to your portfolio or ask an administrator for access.

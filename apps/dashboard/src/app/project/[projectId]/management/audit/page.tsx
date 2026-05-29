@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { PageLayout, Typography, Card, Badge, OperationalTable } from '@kpi-platform/ui';
 import { ShieldCheck, Calendar, Info, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../../../../context/AuthContext';
+import { PageRestricted } from '../../../../../components/PageRestricted';
 
 const categoryVariant: Record<string, string> = {
   security:      'error',
@@ -20,13 +21,20 @@ export default function AuditPage() {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/v1/dashboard/audit?siteId=${projectId}`);
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((v: any) => String(v)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('management/audit')) return;
+
+      const res = await apiFetch(`/api/v1/dashboard/audit?siteId=${projectId}`, { suppressUnauthorizedRedirect: true });
       setAuditLogs(Array.isArray(res) ? res : []);
     } catch (err: any) {
       console.error('[Audit] Load failed', err);
@@ -41,6 +49,10 @@ export default function AuditPage() {
     const interval = setInterval(loadData, 60_000); // 60s refresh
     return () => clearInterval(interval);
   }, [loadData]);
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('management/audit')) {
+    return <PageRestricted pageKey="management/audit" />;
+  }
 
   const columns = [
     {

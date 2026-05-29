@@ -66,12 +66,13 @@ export const getCustomerAnalytics = async (req: FastifyRequest, reply: FastifyRe
 
 export const getCustomerIntelligence = async (req: FastifyRequest, reply: FastifyReply) => {
     const siteId = (req as any).siteId;
+    const tenantId = (req as any).tenantId || (req as any)?.user?.tenantId;
     const traceId = req.id as string;
 
     try {
-        const intelligence = await DashboardService.getCustomerIntelligence({ siteId });
+        const intelligence = await DashboardService.getCustomerIntelligence({ siteId, tenantId });
         return reply.send(ResponseUtil.success(intelligence, {
-            filters: { siteId }
+            filters: { siteId, tenantId }
         }, traceId));
     } catch (err: any) {
         return reply.status(500).send(ResponseUtil.error(err.message, traceId));

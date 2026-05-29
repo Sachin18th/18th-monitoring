@@ -13,7 +13,6 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
     fastify.addHook('preHandler', tenantAuthHandler);
     fastify.addHook('preHandler', tenantIsolationGuard);
 
-    // â”€â”€â”€ HEALTH â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * GET /health/snapshot

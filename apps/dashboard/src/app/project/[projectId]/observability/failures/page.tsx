@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '@/context/AuthContext';
+import { PageRestricted } from '@/components/PageRestricted';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -43,18 +45,26 @@ const cardStyle: React.CSSProperties = {
 export default function FailureIntelligencePage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
+  const { connectorInstanceId } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [performanceSummary, setPerf] = useState<any>(null);
   const [anomalies, setAnomalies] = useState<any[]>([]);
   const [trends, setTrends] = useState<any[]>([]);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     setError(null);
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((value: any) => String(value)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('observability/failures')) return;
+
       const [perf, anom, trnd] = await Promise.all([
         apiFetch(`/api/v1/dashboard/performance/summary?siteId=${projectId}`),
         apiFetch(`/api/v1/dashboard/performance/anomalies?siteId=${projectId}`),
@@ -69,13 +79,15 @@ export default function FailureIntelligencePage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token]);
+  }, [apiFetch, projectId, token, connectorInstanceId]);
 
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 30_000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('observability/failures');
 
   const errorTrendData = useMemo(
     () =>
@@ -147,6 +159,10 @@ export default function FailureIntelligencePage() {
         return { bg: 'rgba(148,163,184,0.12)', text: 'var(--text-muted)', border: '1px solid rgba(148,163,184,0.2)' };
     }
   };
+
+  if (isPageRestricted) {
+    return <PageRestricted pageKey="observability/failures" />;
+  }
 
   if (loading && trends.length === 0) {
     return (

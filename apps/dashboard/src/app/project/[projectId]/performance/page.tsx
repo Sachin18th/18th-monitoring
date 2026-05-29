@@ -1,7 +1,8 @@
 'use client';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 
 import { useAuth } from '../../../../context/AuthContext';
+import { useConnectorFilter } from '../../../../hooks/useConnectorFilter';
 import { useParams } from 'next/navigation';
 import { 
   PageLayout, 
@@ -196,6 +197,7 @@ export default function PerformancePage() {
     const params = useParams();
     const projectId = params.projectId as string;
     const { token, apiFetch, outageStatus } = useAuth();
+    const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
 
     // Data State
     const [loading, setLoading] = useState(true);
@@ -212,9 +214,12 @@ export default function PerformancePage() {
     const [selectedAnomaly, setSelectedAnomaly] = useState<PerformanceAnomaly | null>(null);
     const [isDrawerOpen, setIsDrawerOpen] = useState(false);
     const [activeMetric, setActiveMetric] = useState('latency');
+    const isLoadingRef = useRef(false);
 
     const loadData = useCallback(async () => {
         if (!token || !projectId) return;
+        if (isLoadingRef.current) return;
+        isLoadingRef.current = true;
         setLoading(true);
         try {
             const [summ, trnd, anom, reg, pages, intg] = await Promise.all([
@@ -261,15 +266,29 @@ export default function PerformancePage() {
         } catch (err) {
             console.error('Performance lab failure:', err);
         } finally {
+            isLoadingRef.current = false;
             setLoading(false);
         }
-    }, [projectId, token, apiFetch]);
+    }, [projectId, token, apiFetch, connectorInstanceId]);
 
     useEffect(() => {
         loadData();
         const interval = setInterval(loadData, 30000);
         return () => clearInterval(interval);
     }, [loadData]);
+
+    useEffect(() => {
+        if (!token || !projectId) return;
+        setLoading(true);
+        setSummary({
+            p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, errorRate: 0, affectedServices: 0, uptime: 0
+        });
+        setTrends([]);
+        setAnomalies([]);
+        setRegional([]);
+        setApis([]);
+        setIntegrations([]);
+    }, [connectorSelectionTick, projectId, token]);
 
     const handleAnomalyInspect = (anomaly: PerformanceAnomaly) => {
         setSelectedAnomaly(anomaly);

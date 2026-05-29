@@ -17,6 +17,7 @@ export class AuditService {
         tenantId?: string;
         siteId?: string;
         projectId?: string;
+        connectorInstanceId?: string;
         actorId?: string;
         actorRole?: string;
         targetId?: string;
@@ -36,6 +37,7 @@ export class AuditService {
                     data: {
                         tenantId: params.tenantId,
                         projectId,
+                        connectorInstanceId: params.connectorInstanceId,
                         actorId: params.actorId || 'system',
                         action: params.action,
                         targetType: params.entityType || 'unknown',

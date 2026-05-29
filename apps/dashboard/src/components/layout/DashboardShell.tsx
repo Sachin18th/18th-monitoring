@@ -1,10 +1,13 @@
 'use client';
 
-import React, { useMemo, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useConnectorPlatform } from '../../context/ConnectorPlatformContext';
 import { NavGroup, formatBreadcrumbLabel, useTheme } from '@kpi-platform/ui';
+import { useToast } from '@kpi-platform/ui';
+import { PROJECT_PAGE_ACCESS_OPTIONS } from '@kpi-platform/shared-types';
+import type { ConnectedStore } from '../../lib/ecommerceConnectors';
 import {
   LayoutDashboard,
   Activity,
@@ -24,6 +27,7 @@ import {
   Flame,
   Map,
   AlertCircle,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   RefreshCw,
@@ -35,25 +39,121 @@ import {
 } from 'lucide-react';
 
 const SIDEBAR_WIDTH = 200;
-const TOPBAR_HEIGHT = 52;
+const TOPBAR_HEIGHT = 46;
+const PROJECT_PERMISSION_STORAGE_PREFIX = 'project-page-permissions';
+
+const buildPermissionCacheKey = (userId: string, projectId: string) =>
+  `${PROJECT_PERMISSION_STORAGE_PREFIX}:${userId}:${projectId}`;
+
+const normalizeAllowedPageKeys = (data: any): string[] => {
+  const pageKeys = Array.isArray(data?.allowedPageKeys)
+    ? data.allowedPageKeys
+    : Array.isArray(data?.data?.allowedPageKeys)
+      ? data.data.allowedPageKeys
+      : Array.isArray(data?.pageKeys)
+        ? data.pageKeys
+        : Array.isArray(data?.data?.pageKeys)
+          ? data.data.pageKeys
+          : [];
+
+  return pageKeys.map((value: any) => String(value));
+};
+
+const readCachedAllowedPageKeys = (userId: string, projectId: string): string[] | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(buildPermissionCacheKey(userId, projectId));
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.allowedPageKeys)
+      ? parsed.allowedPageKeys.map((value: any) => String(value))
+      : null;
+  } catch (error) {
+    console.warn('[DashboardShell] Failed to read cached page permissions:', error);
+    return null;
+  }
+};
+
+const cacheAllowedPageKeys = (userId: string, projectId: string, allowedPageKeys: string[]) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const cacheKey = buildPermissionCacheKey(userId, projectId);
+    const payload = JSON.stringify({
+      allowedPageKeys,
+      updatedAt: Date.now(),
+    });
+
+    window.localStorage.setItem(cacheKey, payload);
+    window.dispatchEvent(
+      new CustomEvent('kpi:project-permissions-updated', {
+        detail: {
+          cacheKey,
+          userId,
+          projectId,
+          allowedPageKeys,
+        },
+      }),
+    );
+  } catch (error) {
+    console.warn('[DashboardShell] Failed to cache page permissions:', error);
+  }
+};
 
 export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname() || '';
   const params = useParams();
   const router = useRouter();
   const { user, logout, isLoading, apiFetch, token, setProject } = useAuth();
-  const { healthLevel, healthLabel, selectedStoreLabel, storeOptions, setActiveStoreId, activeStoreId } = useConnectorPlatform();
+  const { healthLevel, healthLabel, selectedStoreLabel, storeOptions, setActiveStoreId, activeStoreId, connectedStores } = useConnectorPlatform();
   const { theme, toggleTheme, mounted } = useTheme();
+  const { success, error: showError } = useToast();
+  const resyncPollerRef = useRef<number | null>(null);
 
   const projectId = (params.projectId as string) || '';
   const isProjectRoute = pathname.startsWith('/project/') && !!projectId;
   const isDark = mounted ? theme === 'dark' : false;
 
   const [selectedEnv, setSelectedEnv] = React.useState('Production');
-  const [lastRefreshed, setLastRefreshed] = React.useState(new Date().toLocaleTimeString());
   const [availableProjects, setAvailableProjects] = React.useState<any[]>([]);
   const [alertCount, setAlertCount] = React.useState<number>(0);
   const [hoveredHref, setHoveredHref] = React.useState<string | null>(null);
+  const [showUserDropdown, setShowUserDropdown] = React.useState(false);
+  const [showStoreDropdown, setShowStoreDropdown] = React.useState(false);
+  const [allowedPageKeys, setAllowedPageKeys] = React.useState<string[] | null>(null);
+  const [hasResolvedPagePermissions, setHasResolvedPagePermissions] = React.useState(false);
+  const [resyncDialog, setResyncDialog] = React.useState<{
+    title: string;
+    connectorId: string;
+    connectorName: string;
+    phase: 'running' | 'failed';
+    message?: string | null;
+  } | null>(null);
+
+  type HeaderStore = ConnectedStore & {
+    lastResyncAt?: string;
+  };
+
+  const selectedStore = useMemo(
+    () => (connectedStores as HeaderStore[]).find((store) => store.connectorId === activeStoreId) || null,
+    [activeStoreId, connectedStores],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (resyncPollerRef.current) {
+        window.clearInterval(resyncPollerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLoading && user && isProjectRoute) {
@@ -115,73 +215,166 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     return () => clearInterval(interval);
   }, [token, projectId, apiFetch, isProjectRoute, user?.tenantId]);
 
+  useEffect(() => {
+    if (!token || !projectId || !isProjectRoute || !user) {
+      setAllowedPageKeys(null);
+      setHasResolvedPagePermissions(false);
+      return;
+    }
+
+    if (user.role === 'SUPER_ADMIN') {
+      const allPageKeys = PROJECT_PAGE_ACCESS_OPTIONS.map((option) => option.key);
+      setAllowedPageKeys(allPageKeys);
+      setHasResolvedPagePermissions(true);
+      cacheAllowedPageKeys(user.id, projectId, allPageKeys);
+      return;
+    }
+
+    const cachedPageKeys = readCachedAllowedPageKeys(user.id, projectId);
+    if (cachedPageKeys) {
+      setAllowedPageKeys(cachedPageKeys);
+      setHasResolvedPagePermissions(true);
+    } else {
+      setAllowedPageKeys(null);
+      setHasResolvedPagePermissions(false);
+    }
+
+    apiFetch(`/api/v1/user/permissions?projectId=${projectId}`)
+      .then((data) => {
+        const nextAllowedPageKeys = normalizeAllowedPageKeys(data);
+        setAllowedPageKeys(nextAllowedPageKeys);
+        setHasResolvedPagePermissions(true);
+        cacheAllowedPageKeys(user.id, projectId, nextAllowedPageKeys);
+      })
+      .catch((err) => {
+        console.error('[DashboardShell] Failed to load page permissions:', err);
+        setAllowedPageKeys((current) => current ?? []);
+        setHasResolvedPagePermissions(true);
+      });
+  }, [token, projectId, apiFetch, isProjectRoute, user]);
+
+  useEffect(() => {
+    if (!projectId || !user?.id || typeof window === 'undefined') {
+      return;
+    }
+
+    const cacheKey = buildPermissionCacheKey(user.id, projectId);
+
+    const syncFromCache = () => {
+      const cachedPageKeys = readCachedAllowedPageKeys(user.id, projectId);
+      if (cachedPageKeys) {
+        setAllowedPageKeys(cachedPageKeys);
+        setHasResolvedPagePermissions(true);
+      }
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === cacheKey) {
+        syncFromCache();
+      }
+    };
+
+    const handlePermissionUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ cacheKey?: string }>;
+      if (!customEvent.detail?.cacheKey || customEvent.detail.cacheKey === cacheKey) {
+        syncFromCache();
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('kpi:project-permissions-updated', handlePermissionUpdate as EventListener);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('kpi:project-permissions-updated', handlePermissionUpdate as EventListener);
+    };
+  }, [projectId, user?.id]);
+
   const navGroups = useMemo((): NavGroup[] => {
     if (!isProjectRoute) return [];
 
     const prefix = `/project/${projectId}`;
-    const isAdmin = user?.role === 'TENANT_ADMIN' || user?.role === 'SUPER_ADMIN' || user?.role === 'PROJECT_ADMIN';
+    const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+    const effectiveAllowedPageKeys = isSuperAdmin
+      ? PROJECT_PAGE_ACCESS_OPTIONS.map((option) => option.key)
+      : hasResolvedPagePermissions
+        ? allowedPageKeys || []
+        : [];
+    const allowedSet = new Set(effectiveAllowedPageKeys);
 
-    const groups: NavGroup[] = [
+    const isVisible = (pageKey: string) => {
+      const option = PROJECT_PAGE_ACCESS_OPTIONS.find((entry) => entry.key === pageKey);
+
+      if (!option) {
+        return true;
+      }
+
+      if (option.superAdminOnly && !isSuperAdmin) {
+        return false;
+      }
+
+      return isSuperAdmin || allowedSet.has(pageKey as any);
+    };
+
+    const groups: any[] = [
       {
         name: 'Command Center',
         items: [
-          { label: 'Overview', href: `${prefix}/overview`, icon: LayoutDashboard },
-          { label: 'Alert Center', href: `${prefix}/observability/alerts`, icon: Bell },
-          { label: 'Incident Center', href: `${prefix}/observability/incidents`, icon: Flame }
+          { label: 'Overview', href: `${prefix}/overview`, icon: LayoutDashboard, pageKey: 'overview' },
+          { label: 'Alert Center', href: `${prefix}/observability/alerts`, icon: Bell, pageKey: 'observability/alerts' },
+          { label: 'Incident Center', href: `${prefix}/observability/incidents`, icon: Flame, pageKey: 'observability/incidents' }
         ]
       },
       {
         name: 'Operational Surface',
         items: [
-          { label: 'Performance', href: `${prefix}/performance`, icon: Activity },
-          { label: 'Frontend RUM', href: `${prefix}/rum`, icon: Monitor },
-          { label: 'Backend API', href: `${prefix}/observability/backend`, icon: Server },
-          { label: 'Failure Intel', href: `${prefix}/observability/failures`, icon: ShieldAlert },
-          { label: 'Journey Intel', href: `${prefix}/observability/journeys`, icon: Map },
-          { label: 'Synthetic', href: `${prefix}/observability/synthetic`, icon: Activity },
-          { label: 'Customers', href: `${prefix}/customers`, icon: Users },
-          { label: 'Orders', href: `${prefix}/orders`, icon: Package }
+          { label: 'Performance', href: `${prefix}/performance`, icon: Activity, pageKey: 'performance' },
+          { label: 'Frontend RUM', href: `${prefix}/rum`, icon: Monitor, pageKey: 'rum' },
+          { label: 'Backend API', href: `${prefix}/observability/backend`, icon: Server, pageKey: 'observability/backend' },
+          { label: 'Failure Intel', href: `${prefix}/observability/failures`, icon: ShieldAlert, pageKey: 'observability/failures' },
+          { label: 'Journey Intel', href: `${prefix}/observability/journeys`, icon: Map, pageKey: 'observability/journeys' },
+          { label: 'Synthetic', href: `${prefix}/observability/synthetic`, icon: Activity, pageKey: 'observability/synthetic' },
+          { label: 'Customers', href: `${prefix}/customers`, icon: Users, pageKey: 'customers' },
+          { label: 'Orders', href: `${prefix}/orders`, icon: Package, pageKey: 'orders' }
         ]
       },
       {
         name: 'System',
         items: [
-          { label: 'Integrations', href: `${prefix}/integrations`, icon: Link2 },
-          { label: 'Alerts', href: `${prefix}/alerts`, icon: Bell, badge: alertCount }
+          { label: 'Integrations', href: `${prefix}/integrations`, icon: Link2, pageKey: 'integrations' },
+          { label: 'Alerts', href: `${prefix}/alerts`, icon: Bell, badge: alertCount, pageKey: 'alerts' }
         ]
       }
     ];
 
-    if (isAdmin) {
-      groups.push(
-        {
-          name: 'Data Platform',
-          items: [
-            { label: 'Ingestion', href: `${prefix}/management/ingestion`, icon: Database },
-            { label: 'Pipeline', href: `${prefix}/management/pipeline`, icon: GitMerge },
-            { label: 'KPI Engine', href: `${prefix}/management/kpi`, icon: BarChart3 },
-            { label: 'Monitoring', href: `${prefix}/management/monitoring`, icon: ShieldAlert }
-          ]
-        },
-        {
-          name: 'Governance',
-          items: [
-            { label: 'Audit & Activity', href: `${prefix}/management/audit`, icon: ShieldCheck },
-            { label: 'Configuration', href: `${prefix}/settings`, icon: Settings },
-            { label: 'Administration', href: `${prefix}/management/users`, icon: UserCircle }
-          ]
-        }
-      );
-    }
+    groups.push(
+      {
+        name: 'Data Platform',
+        items: [
+          { label: 'Ingestion', href: `${prefix}/management/ingestion`, icon: Database, pageKey: 'management/ingestion' },
+          { label: 'Pipeline', href: `${prefix}/management/pipeline`, icon: GitMerge, pageKey: 'management/pipeline' },
+          { label: 'KPI Engine', href: `${prefix}/management/kpi`, icon: BarChart3, pageKey: 'management/kpi' },
+          { label: 'Monitoring', href: `${prefix}/management/monitoring`, icon: ShieldAlert, pageKey: 'management/monitoring' }
+        ]
+      },
+      {
+        name: 'Governance',
+        items: [
+          { label: 'Audit & Activity', href: `${prefix}/management/audit`, icon: ShieldCheck, pageKey: 'management/audit' },
+          { label: 'Configuration', href: `${prefix}/settings`, icon: Settings, pageKey: 'settings' },
+          { label: 'Administration', href: `${prefix}/management/users`, icon: UserCircle, pageKey: 'management/users' }
+        ]
+      }
+    );
 
     return groups.map((group) => ({
       ...group,
       items: group.items.map((item) => ({
         ...item,
         icon: item.icon || AlertCircle
-      }))
+      })).filter((item: any) => isVisible(item.pageKey))
     }));
-  }, [projectId, user?.role, alertCount, isProjectRoute]);
+  }, [projectId, user?.role, alertCount, isProjectRoute, allowedPageKeys, hasResolvedPagePermissions]);
 
   const breadcrumbs = useMemo(() => {
     if (!isProjectRoute) return [];
@@ -206,9 +399,110 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     return items;
   }, [pathname, projectId, isProjectRoute]);
 
-  const handleRefresh = () => {
-    setLastRefreshed(new Date().toLocaleTimeString());
-  };
+  const handleRefresh = useCallback(async () => {
+    const connectorId = selectedStore?.connectorId || activeStoreId || '';
+    const connectorName = selectedStore?.name || selectedStoreLabel || 'Selected store';
+
+    if (!connectorId) {
+      showError('Select a store before starting a resync.', 'Resync unavailable');
+      return;
+    }
+
+    setResyncDialog({
+      title: 'Resync in progress',
+      connectorId,
+      connectorName,
+      phase: 'running',
+      message: 'Resyncing the selected store. Please keep this window open.',
+    });
+
+    try {
+      const response = await apiFetch(
+        `/api/v1/tenants/current/projects/${projectId}/integrations/${connectorId}/resync`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ syncTargets: ['orders', 'customers'] }),
+        },
+      );
+
+      const payload = response?.data ?? response;
+      const jobId = payload?.jobId;
+
+      if (!jobId) {
+        throw new Error('Resync job was not created.');
+      }
+
+      const pollStatus = async () => {
+        const statusResponse = await apiFetch(
+          `/api/v1/tenants/current/projects/${projectId}/integrations/${connectorId}/resync/status?jobId=${jobId}`,
+        );
+        const statusPayload = statusResponse?.data ?? statusResponse;
+        const status = String(statusPayload?.status || '').toLowerCase();
+        const errorMessage = statusPayload?.error || null;
+
+        if (status === 'completed') {
+          if (resyncPollerRef.current) {
+            window.clearInterval(resyncPollerRef.current);
+            resyncPollerRef.current = null;
+          }
+          setResyncDialog(null);
+          success(`Resync completed for ${connectorName}`);
+          return;
+        }
+
+        if (status === 'failed') {
+          if (resyncPollerRef.current) {
+            window.clearInterval(resyncPollerRef.current);
+            resyncPollerRef.current = null;
+          }
+          setResyncDialog({
+            title: 'Resync failed',
+            connectorId,
+            connectorName,
+            phase: 'failed',
+            message: errorMessage || 'The resync job failed to finish.',
+          });
+          showError(errorMessage || 'The resync job failed to finish.', connectorName);
+        }
+
+        return status;
+      };
+
+      const initialStatus = await pollStatus();
+      if (initialStatus === 'queued' || initialStatus === 'running') {
+        resyncPollerRef.current = window.setInterval(() => {
+          void pollStatus().catch((error: any) => {
+            console.error('[DashboardShell] Failed to poll resync status', error);
+          });
+        }, 5000);
+      }
+    } catch (error: any) {
+      if (resyncPollerRef.current) {
+        window.clearInterval(resyncPollerRef.current);
+        resyncPollerRef.current = null;
+      }
+      setResyncDialog(null);
+      showError(error?.message || 'Failed to start resync.', connectorName);
+    }
+  }, [activeStoreId, apiFetch, projectId, selectedStore, selectedStoreLabel, showError, success]);
+
+  const formatSyncTime = useCallback((value?: string | null) => {
+    if (!value) return '—';
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    return parsed.toLocaleString([], {
+      dateStyle: 'medium',
+      timeStyle: 'medium',
+    });
+  }, []);
+
+  const selectedStoreSyncTime = formatSyncTime(
+    selectedStore?.lastResyncAt || selectedStore?.lastSuccessfulSync || null,
+  );
 
   const isPublicPage = pathname === '/login' || pathname === '/unauthorized';
   if (isPublicPage || isLoading) return <>{children}</>;
@@ -239,11 +533,24 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     navActiveText: 'var(--text-primary)',
     navbarBg: 'var(--bg-nav)',
     navbarBorder: 'var(--border-nav)',
+    borderSecondary: 'var(--border-secondary, var(--border-input))',
+    borderTertiary: 'var(--border-tertiary, var(--border-card))',
     pillBorder: 'var(--border-card)',
     pillBg: 'transparent',
     pillText: 'var(--text-primary)',
     mutedText: 'var(--text-muted)',
     iconMuted: 'var(--text-secondary)',
+    bgSecondary: 'var(--bg-secondary, rgba(148, 163, 184, 0.14))',
+    bgInfo: 'var(--bg-info, rgba(59, 130, 246, 0.15))',
+    textInfo: 'var(--text-info, #2563eb)',
+    warningBg: 'var(--warning-bg, rgba(245, 158, 11, 0.18))',
+    warningText: 'var(--warning-text, #92400e)',
+    selectorBg: 'var(--bg-input)',
+    selectorBorder: 'var(--border-secondary, var(--border-input))',
+    selectorText: 'var(--text-primary)',
+    selectorOptionBg: 'var(--bg-sidebar)',
+    selectorOptionText: 'var(--text-primary)',
+    selectorDisabledBg: 'var(--bg-page)',
     searchBg: 'var(--bg-input)',
     searchBorder: 'var(--border-input)',
     avatarBg: 'var(--primary)'
@@ -255,12 +562,202 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
       : healthLevel === 'warning'
         ? { dot: '#f59e0b', text: '#f59e0b' }
         : { dot: '#22c55e', text: '#22c55e' };
+  const isStoreSelectorDisabled = storeOptions.length === 0;
+  const healthBadgeLabel = String(healthLabel || 'Healthy').toUpperCase();
 
   return (
     <div style={{ minHeight: '100vh', background: shellColors.appBg, color: shellColors.appText }}>
       <style jsx global>{`
         main > div[style*='position: fixed'][style*='bottom: 20px'][style*='border-radius: 999px'] {
           left: 216px !important;
+        }
+
+        .project-header-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          min-height: ${TOPBAR_HEIGHT}px;
+          padding: 0 18px;
+          overflow: visible;
+          white-space: nowrap;
+        }
+
+        .project-header-zone {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+
+        .project-header-left {
+          flex: 0 1 auto;
+          min-width: 0;
+        }
+
+        .project-header-center {
+          flex: 1 1 auto;
+          justify-content: center;
+          min-width: 0;
+        }
+
+        .project-header-right {
+          flex: 0 0 auto;
+          justify-content: flex-end;
+          gap: 16px;
+          min-width: 0;
+        }
+
+        .project-header-icon-button {
+          width: 24px;
+          height: 24px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: none;
+          background: transparent;
+          color: var(--text-secondary);
+          border-radius: 6px;
+          cursor: pointer;
+          flex-shrink: 0;
+          transition: background-color 150ms ease, color 150ms ease;
+        }
+
+        .project-header-icon-button:hover {
+          background: var(--bg-input);
+          color: var(--text-primary);
+        }
+
+        .project-header-back-button:hover {
+          background: var(--bg-input);
+        }
+
+        .project-header-project-name {
+          display: inline-flex;
+          align-items: center;
+          max-width: 220px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--text-primary);
+        }
+
+        .project-header-env-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: none;
+          background: ${shellColors.warningBg};
+          color: ${shellColors.warningText};
+          font-size: 11px;
+          font-weight: 500;
+          flex-shrink: 0;
+        }
+
+        .project-header-store-trigger {
+          width: 208px;
+          max-width: 208px;
+          min-width: 208px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 5px 10px;
+          border-radius: 6px;
+          border: 1px solid ${shellColors.selectorBorder};
+          background: ${shellColors.selectorBg};
+          color: ${shellColors.selectorText};
+          cursor: pointer;
+          flex-shrink: 0;
+          transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+        }
+
+        .project-header-store-trigger:hover {
+          background: var(--bg-input);
+        }
+
+        .project-header-store-trigger:disabled {
+          cursor: not-allowed;
+          opacity: 0.65;
+          background: ${shellColors.selectorDisabledBg};
+        }
+
+        .project-header-store-trigger-label {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 12px;
+          font-weight: 400;
+          flex: 1 1 auto;
+          text-align: left;
+        }
+
+        .project-header-store-menu {
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 0;
+          min-width: 208px;
+          z-index: 60;
+          overflow: hidden;
+          border-radius: 8px;
+          border: 1px solid var(--border-secondary, var(--border-input));
+          background: var(--bg-sidebar);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+
+        .project-header-store-option {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: flex-start;
+          gap: 8px;
+          padding: 8px 12px;
+          border: none;
+          border-left: 3px solid transparent;
+          background: transparent;
+          color: var(--text-primary);
+          font-size: 13px;
+          font-weight: 400;
+          cursor: pointer;
+          text-align: left;
+          transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+        }
+
+        .project-header-store-option:hover {
+          background: var(--bg-secondary, rgba(148, 163, 184, 0.14));
+        }
+
+        .project-header-store-option[data-active='true'] {
+          background: var(--bg-info, rgba(59, 130, 246, 0.15));
+          color: var(--text-info, #2563eb);
+          border-left-color: var(--text-info, #2563eb);
+        }
+
+        .project-header-hide-below-960 {
+          display: inline-flex;
+        }
+
+        @media (max-width: 959px) {
+          .project-header-hide-below-960 {
+            display: none !important;
+          }
+
+          .project-header-row {
+            gap: 12px;
+            padding: 0 14px;
+          }
+
+          .project-header-store-trigger,
+          .project-header-store-menu {
+            min-width: 180px;
+            width: 180px;
+            max-width: 180px;
+          }
         }
       `}</style>
 
@@ -316,7 +813,9 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', overflow: 'visible' }}>
-          {navGroups.map((group, groupIndex) => (
+          {navGroups
+            .filter((group) => Array.isArray(group.items) && group.items.length > 0)
+            .map((group, groupIndex) => (
             <div key={group.name} style={{ overflow: 'visible' }}>
               <p
                 style={{
@@ -405,364 +904,413 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
           flexDirection: 'column'
         }}
       >
-        <nav
-          style={{
-            height: '52px',
-            width: '100%',
-            background: shellColors.navbarBg,
-            borderBottom: `1px solid ${shellColors.navbarBorder}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '0 20px',
-            position: 'sticky',
-            top: 0,
-            zIndex: 30,
-            flexShrink: 0,
-            gap: '12px'
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              flexShrink: 0,
-              minWidth: 0,
-              overflow: 'hidden'
-            }}
-          >
+        <nav className="project-header-row" style={{ background: shellColors.navbarBg, borderBottom: `1px solid ${shellColors.navbarBorder}`, position: 'sticky', top: 0, zIndex: 30, flexShrink: 0 }}>
+          <div className="project-header-zone project-header-left">
             <button
               type="button"
+              className="project-header-icon-button project-header-back-button"
+              aria-label="Back to projects"
+              title="Back to projects"
               onClick={() => router.push('/projects')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 12px',
-                borderRadius: '8px',
-                border: `1px solid ${shellColors.pillBorder}`,
-                background: shellColors.pillBg,
-                fontSize: '13px',
-                color: shellColors.pillText,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
             >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '180px' }}>{selectedProjectName}</span>
-              <ChevronDown style={{ width: '14px', height: '14px', color: shellColors.iconMuted, flexShrink: 0 }} />
+              <ChevronLeft style={{ width: '16px', height: '16px' }} />
             </button>
+
+            <span className="project-header-project-name" title={selectedProjectName}>{selectedProjectName}</span>
 
             <button
               type="button"
+              className="project-header-env-badge"
               onClick={() => setSelectedEnv(selectedEnv === 'Production' ? 'Staging' : 'Production')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 12px',
-                borderRadius: '8px',
-                border: `1px solid ${shellColors.pillBorder}`,
-                background: shellColors.pillBg,
-                fontSize: '13px',
-                color: shellColors.pillText,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
+              title={selectedEnv}
             >
-              <span
-                style={{
-                  width: '6px',
-                  height: '6px',
-                  borderRadius: '50%',
-                  background: '#f59e0b',
-                  flexShrink: 0
-                }}
-              />
-              <span>{selectedEnv}</span>
-              <ChevronDown style={{ width: '14px', height: '14px', color: shellColors.iconMuted, flexShrink: 0 }} />
+              {selectedEnv}
             </button>
-
-            <select
-              value={activeStoreId}
-              onChange={(event) => setActiveStoreId(event.target.value)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 12px',
-                borderRadius: '8px',
-                border: `1px solid ${shellColors.pillBorder}`,
-                background: shellColors.pillBg,
-                fontSize: '13px',
-                color: shellColors.pillText,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-                outline: 'none',
-                maxWidth: '220px'
-              }}
-            >
-              {storeOptions.map((option) => (
-                <option key={option.key} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-
-            <button
-              type="button"
-              onClick={() => router.push(`/project/${projectId}/integrations`)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 12px',
-                borderRadius: '8px',
-                border: `1px solid ${pathname.includes('/integrations') ? shellColors.navActiveBg : shellColors.pillBorder}`,
-                background: pathname.includes('/integrations') ? shellColors.navActiveBg : shellColors.pillBg,
-                fontSize: '13px',
-                color: pathname.includes('/integrations') ? shellColors.navActiveText : shellColors.pillText,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flexShrink: 0
-              }}
-            >
-              <Link2 style={{ width: '14px', height: '14px', color: pathname.includes('/integrations') ? shellColors.navActiveText : shellColors.iconMuted, flexShrink: 0 }} />
-              <span>Connectors</span>
-            </button>
-
-            {/* <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                minWidth: 0,
-                overflow: 'hidden',
-                color: shellColors.mutedText,
-                fontSize: '12px'
-              }}
-            >
-              <Home style={{ width: '14px', height: '14px', color: shellColors.mutedText, flexShrink: 0 }} />
-              {[
-                { label: 'Project', href: `/project/${projectId}/overview`, active: false },
-                { label: `Project: ${projectId.toUpperCase()}`, href: `/project/${projectId}/overview`, active: false },
-                { label: sectionLabel, href: '#', active: false },
-                { label: currentPage, href: pathname, active: true }
-              ].map((crumb, index) => (
-                <React.Fragment key={`${crumb.label}-${index}`}>
-                  <ChevronRight style={{ width: '12px', height: '12px', color: shellColors.mutedText, flexShrink: 0 }} />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!crumb.active && crumb.href !== '#') {
-                        router.push(crumb.href);
-                      }
-                    }}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      padding: 0,
-                      fontSize: '12px',
-                      color: crumb.active ? shellColors.pillText : shellColors.mutedText,
-                      fontWeight: crumb.active ? 500 : 400,
-                      cursor: crumb.active || crumb.href === '#' ? 'default' : 'pointer',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0
-                    }}
-                  >
-                    {crumb.label}
-                  </button>
-                </React.Fragment>
-              ))}
-            </div> */}
-
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                minWidth: '220px',
-                padding: '6px 14px',
-                background: shellColors.searchBg,
-                border: `1px solid ${shellColors.searchBorder}`,
-                borderRadius: '999px',
-                flexShrink: 1
-              }}
-            >
-              <Search style={{ width: '14px', height: '14px', color: shellColors.mutedText, flexShrink: 0 }} />
-              <input
-                type="text"
-                placeholder="Search operational intelligence..."
-                style={{
-                  width: '100%',
-                  border: 'none',
-                  outline: 'none',
-                  background: 'transparent',
-                  fontSize: '12px',
-                  color: shellColors.pillText
-                }}
-              />
-            </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-            <button
-              type="button"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 12px',
-                borderRadius: '8px',
-                border: `1px solid ${shellColors.pillBorder}`,
-                background: shellColors.pillBg,
-                fontSize: '12px',
-                color: shellColors.pillText,
-                cursor: 'pointer',
-                flexShrink: 0
-              }}
-            >
-              <Clock3 style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
-              Last 24 Hours
-            </button>
+          <div style={{ width: '1px', height: '20px', background: shellColors.borderTertiary, flexShrink: 0 }} />
 
-            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15, flexShrink: 0 }}>
-              <span
-                style={{
-                  fontSize: '9px',
-                  color: shellColors.mutedText,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em'
-                }}
+          <div className="project-header-zone project-header-right">
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                className="project-header-store-trigger"
+                onClick={() => setShowStoreDropdown((current) => !current)}
+                disabled={isStoreSelectorDisabled}
+                aria-expanded={showStoreDropdown}
+                aria-haspopup="menu"
+                title={selectedStoreLabel || 'Select store'}
               >
-                Last Sync
-              </span>
-              <span style={{ fontSize: '11px', color: shellColors.mutedText }}>{lastRefreshed}</span>
+                <span className="project-header-store-trigger-label">{selectedStoreLabel || 'Select store'}</span>
+                <ChevronDown
+                  style={{
+                    width: '14px',
+                    height: '14px',
+                    color: shellColors.iconMuted,
+                    flexShrink: 0,
+                    transform: showStoreDropdown ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 160ms ease'
+                  }}
+                />
+              </button>
+
+              {showStoreDropdown && !isStoreSelectorDisabled ? (
+                <div className="project-header-store-menu" role="menu" aria-label="Store selector">
+                  {storeOptions.map((option) => {
+                    const isActive = option.id === activeStoreId;
+
+                    return (
+                      <button
+                        key={option.key}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={isActive}
+                        data-active={isActive ? 'true' : 'false'}
+                        className="project-header-store-option"
+                        onClick={() => {
+                          setActiveStoreId(option.id);
+                          setShowStoreDropdown(false);
+                        }}
+                      >
+                        <span
+                          style={{
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            flex: 1,
+                          }}
+                        >
+                          {option.label}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
 
-            <button
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                <span className="project-header-hide-below-960" style={{ fontSize: '10px', color: shellColors.pillText, textTransform: 'uppercase', letterSpacing: '0.08em', lineHeight: 1, fontWeight: 400 }}>
+                  LAST SYNC
+                </span>
+                <span style={{ fontSize: '10px', color: shellColors.mutedText, fontWeight: 400, lineHeight: 1, whiteSpace: 'nowrap' }} title={selectedStore?.lastResyncAt || selectedStore?.lastSuccessfulSync || undefined}>
+                  {selectedStoreSyncTime}
+                </span>
+              </div>
+            </div>
+
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '2px 8px', borderRadius: '999px', background: 'rgba(34, 197, 94, 0.16)', color: '#22c55e', fontSize: '10px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+              {healthBadgeLabel}
+            </span>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+              <span className="project-header-hide-below-960" style={{ fontSize: '10px', color: shellColors.pillText, textTransform: 'uppercase', letterSpacing: '0.08em', lineHeight: 1, fontWeight: 400 }}>
+                STORE SCOPE
+              </span>
+              <span title={selectedStoreLabel} style={{ maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '10px', color: shellColors.mutedText, fontWeight: 400, lineHeight: 1 }}>
+                {selectedStoreLabel}
+              </span>
+            </div>
+
+             <button
               type="button"
-              onClick={handleRefresh}
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                border: `1px solid ${shellColors.pillBorder}`,
-                background: shellColors.pillBg,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                flexShrink: 0
-              }}
+              className="project-header-icon-button"
+              onClick={() => router.push(`/project/${projectId}/integrations`)}
+              aria-label="Open integrations"
+              title="Open integrations"
             >
-              <RefreshCw style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+              <Link2 style={{ width: '16px', height: '16px' }} />
             </button>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: healthTone.dot, flexShrink: 0 }} />
-              <span style={{ fontSize: '11px', color: healthTone.text, fontWeight: 500, letterSpacing: '0.06em' }}>{healthLabel}</span>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15, flexShrink: 0 }}>
-              <span style={{ fontSize: '9px', color: shellColors.mutedText, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Store Scope</span>
-              <span style={{ fontSize: '11px', color: shellColors.mutedText }}>{selectedStoreLabel}</span>
-            </div>
+            <button
+              type="button"
+              className="project-header-icon-button"
+              onClick={handleRefresh}
+              aria-label="Start resync"
+              title="Start resync"
+            >
+              <RefreshCw style={{ width: '16px', height: '16px' }} />
+            </button>
 
             <button
               type="button"
+              className="project-header-icon-button"
               onClick={toggleTheme}
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                border: `1px solid ${shellColors.pillBorder}`,
-                background: shellColors.pillBg,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                flexShrink: 0
-              }}
+              aria-label="Toggle theme"
+              title="Toggle theme"
             >
               {isDark ? (
-                <Sun style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+                <Sun style={{ width: '16px', height: '16px' }} />
               ) : (
-                <Moon style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
+                <Moon style={{ width: '16px', height: '16px' }} />
               )}
             </button>
 
             <button
               type="button"
+              className="project-header-icon-button"
               onClick={() => router.push(`/project/${projectId}/alerts`)}
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                border: `1px solid ${shellColors.pillBorder}`,
-                background: shellColors.pillBg,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                flexShrink: 0,
-                position: 'relative'
-              }}
+              aria-label="Notifications"
+              title="Notifications"
+              style={{ position: 'relative' }}
             >
-              <Bell style={{ width: '16px', height: '16px', color: shellColors.iconMuted }} />
-              <span
-                style={{
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  width: '6px',
-                  height: '6px',
-                  background: '#ef4444',
-                  borderRadius: '50%'
-                }}
-              />
+              <Bell style={{ width: '16px', height: '16px' }} />
+              <span style={{ position: 'absolute', top: '4px', right: '4px', width: '5px', height: '5px', borderRadius: '50%', background: '#ef4444' }} />
             </button>
 
-            <button
-              type="button"
-              onClick={logout}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'transparent',
-                border: 'none',
-                padding: 0,
-                cursor: 'pointer',
-                flexShrink: 0
-              }}
-            >
-              <span
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setShowUserDropdown(!showUserDropdown)}
                 style={{
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '50%',
-                  background: shellColors.avatarBg,
-                  display: 'flex',
+                  display: 'inline-flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '12px',
-                  color: '#fff',
-                  fontWeight: 500
+                  gap: '6px',
+                  background: 'transparent',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  flexShrink: 0
                 }}
               >
-                {userBadge}
-              </span>
-              <ChevronDown style={{ width: '14px', height: '14px', color: shellColors.iconMuted }} />
-            </button>
+                <span
+                  style={{
+                    width: '21px',
+                    height: '21px',
+                    borderRadius: '50%',
+                    background: '#2563eb',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#fff',
+                    boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.12)',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    flexShrink: 0
+                  }}
+                >
+                  {userBadge}
+                </span>
+                <ChevronDown
+                  style={{
+                    width: '14px',
+                    height: '14px',
+                    color: shellColors.iconMuted,
+                    flexShrink: 0,
+                    transform: showUserDropdown ? 'rotate(180deg)' : 'rotate(0deg)',
+                    transition: 'transform 160ms ease'
+                  }}
+                />
+              </button>
+              {showUserDropdown && (
+                <div style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: '4px',
+                  background: shellColors.sidebarBg,
+                  border: `1px solid ${shellColors.borderSecondary}`,
+                  borderRadius: '8px',
+                  minWidth: '200px',
+                  zIndex: 60,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                }}>
+                  <div style={{ padding: '12px 14px', borderBottom: `1px solid ${shellColors.borderSecondary}` }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: shellColors.pillText }}>{user?.name || 'User'}</div>
+                    <div style={{ fontSize: '11px', color: shellColors.mutedText, marginTop: '2px' }}>{user?.email || 'No email'}</div>
+                    <div style={{ fontSize: '10px', color: shellColors.mutedText, marginTop: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{user?.role || 'VIEWER'}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      logout();
+                      setShowUserDropdown(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      textAlign: 'left',
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      transition: 'background 150ms'
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.target as HTMLButtonElement).style.background = 'rgba(239,68,68,0.1)';
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.target as HTMLButtonElement).style.background = 'transparent';
+                    }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </nav>
 
         <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>{children}</div>
+
+        {resyncDialog ? (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 80,
+              background: 'rgba(2, 6, 23, 0.45)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px'
+            }}
+          >
+            <div style={{ width: '100%', maxWidth: '420px', borderRadius: '14px', background: shellColors.sidebarBg, border: `1px solid ${shellColors.borderSecondary}`, boxShadow: '0 24px 60px rgba(0, 0, 0, 0.22)', padding: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <RefreshCw style={{ width: '18px', height: '18px' }} className="animate-spin" />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: shellColors.pillText }}>{resyncDialog.title}</div>
+                  <div style={{ fontSize: '12px', color: shellColors.mutedText, marginTop: '2px' }}>{resyncDialog.connectorName}</div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '16px', fontSize: '13px', color: shellColors.pillText, lineHeight: 1.5 }}>
+                {resyncDialog.message || 'Resyncing the selected store. Please wait until the job finishes.'}
+              </div>
+
+              {resyncDialog.phase === 'failed' ? (
+                <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '12px' }}>
+                  {resyncDialog.message}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );
 };
+
+// Store Selector Button Component
+// const StoreSelectorButton = () => {
+//   const { connectorInstanceId, connectorLabel, setConnectorInstanceId } = useConnectorFilter();
+//   const { connectedStores } = useConnectorPlatform();
+//   const [showDropdown, setShowDropdown] = React.useState(false);
+
+//   const displayLabel = connectorLabel || 'Select Store';
+
+//   const handleStoreChange = (instanceId: string | null) => {
+//     setConnectorInstanceId(instanceId);
+//     setShowDropdown(false);
+//     // Trigger refetch of data when store changes
+//     window.dispatchEvent(new CustomEvent('connectorFilterChanged', { detail: { connectorInstanceId: instanceId } }));
+//   };
+
+//   return (
+//     <div style={{ position: 'relative' }}>
+//       <button
+//         type="button"
+//         onClick={() => setShowDropdown(!showDropdown)}
+//         style={{
+//           display: 'flex',
+//           alignItems: 'center',
+//           gap: '8px',
+//           padding: '6px 12px',
+//           borderRadius: '8px',
+//           border: `1px solid var(--border-pill)`,
+//           background: 'var(--bg-pill)',
+//           fontSize: '12px',
+//           color: 'var(--text-pill)',
+//           cursor: 'pointer',
+//           flexShrink: 0,
+//           whiteSpace: 'nowrap'
+//         }}
+//       >
+//         <span>{displayLabel}</span>
+//         <ChevronDown style={{ width: '14px', height: '14px', color: 'var(--text-secondary)', flexShrink: 0, transform: showDropdown ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 200ms' }} />
+//       </button>
+
+//       {showDropdown && (
+//         <div
+//           style={{
+//             position: 'absolute',
+//             top: '100%',
+//             right: 0,
+//             marginTop: '4px',
+//             background: 'var(--bg-sidebar)',
+//             border: `1px solid var(--border-pill)`,
+//             borderRadius: '8px',
+//             minWidth: '180px',
+//             zIndex: 50,
+//             boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+//             maxHeight: '300px',
+//             overflowY: 'auto'
+//           }}
+//         >
+//           <button
+//             type="button"
+//             onClick={() => setShowDropdown(false)}
+//             style={{
+//               width: '100%',
+//               padding: '10px 12px',
+//               textAlign: 'left',
+//               border: 'none',
+//               background: 'var(--bg-nav-active)',
+//               color: 'var(--text-nav-active)',
+//               cursor: 'default',
+//               fontSize: '13px',
+//               borderBottom: `1px solid var(--border-pill)`,
+//               transition: 'background 150ms'
+//             }}
+//           >
+//             Select a project store
+//           </button>
+
+//           {connectedStores && Array.isArray(connectedStores) && connectedStores.length > 0 ? (
+//             connectedStores.map((store) => (
+//               <button
+//                 key={store.connectorId}
+//                 type="button"
+//                 onClick={() => handleStoreChange(store.connectorId)}
+//                 style={{
+//                   width: '100%',
+//                   padding: '10px 12px',
+//                   textAlign: 'left',
+//                   border: 'none',
+//                   background: connectorInstanceId === store.connectorId ? 'var(--bg-nav-active)' : 'transparent',
+//                   color: connectorInstanceId === store.connectorId ? 'var(--text-nav-active)' : 'var(--text-pill)',
+//                   cursor: 'pointer',
+//                   fontSize: '13px',
+//                   borderBottom: `1px solid var(--border-pill)`,
+//                   transition: 'background 150ms'
+//                 }}
+//                 onMouseEnter={(e) => {
+//                   if (connectorInstanceId !== store.connectorId) {
+//                     (e.target as HTMLButtonElement).style.background = 'var(--bg-nav-hover)';
+//                   }
+//                 }}
+//                 onMouseLeave={(e) => {
+//                   if (connectorInstanceId !== store.connectorId) {
+//                     (e.target as HTMLButtonElement).style.background = 'transparent';
+//                   }
+//                 }}
+//               >
+//                 {store.connectionLabel || store.name || `${store.platform}`}
+//               </button>
+//             ))
+//           ) : (
+//             <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center' }}>
+//               No stores connected
+//             </div>
+//           )}
+//         </div>
+//       )}
+//     </div>
+//   );
+// };

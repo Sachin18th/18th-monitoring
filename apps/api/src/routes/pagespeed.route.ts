@@ -10,19 +10,22 @@ export const pagespeedRoutes = async (fastify: FastifyInstance) => {
 
     fastify.post('/tenants/:tenantId/projects/:siteId/pagespeed/sync', async (req, reply) => {
         const { tenantId, siteId } = req.params as any;
+        const { connectorInstanceId } = req.body as any || {};
 
         console.log('[PAGESPEED] sync request', {
             requestId: req.id,
             tenantId,
             siteId,
+            connectorInstanceId,
         });
 
         try {
-            const data = await PageSpeedService.syncProjectMetrics(tenantId, siteId);
+            const data = await PageSpeedService.syncProjectMetrics(tenantId, siteId, connectorInstanceId);
             console.log('[PAGESPEED] sync response', {
                 requestId: req.id,
                 tenantId,
                 siteId,
+                connectorInstanceId,
                 count: Array.isArray(data) ? data.length : 0,
             });
             return reply.send(ResponseUtil.success(data, {}, req.id as string));
@@ -35,19 +38,22 @@ export const pagespeedRoutes = async (fastify: FastifyInstance) => {
 
     fastify.get('/tenants/:tenantId/projects/:siteId/pagespeed/latest', async (req, reply) => {
         const { tenantId, siteId } = req.params as any;
+        const { connector_instance_id: connectorInstanceId } = req.query as any;
 
         console.log('[PAGESPEED] latest request', {
             requestId: req.id,
             tenantId,
             siteId,
+            connectorInstanceId,
         });
 
         try {
-            const data = await PageSpeedService.getLatestMetrics(siteId);
+            const data = await PageSpeedService.getLatestMetrics(siteId, connectorInstanceId);
             console.log('[PAGESPEED] latest response', {
                 requestId: req.id,
                 tenantId,
                 siteId,
+                connectorInstanceId,
                 count: Array.isArray(data) ? data.length : 0,
             });
             return reply.send(ResponseUtil.success(data, {}, req.id as string));

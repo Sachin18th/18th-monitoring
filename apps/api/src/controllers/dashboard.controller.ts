@@ -27,12 +27,16 @@ const getFilters = (req: any) => {
             startDate = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
     }
 
+    // Extract connector_instance_id for multi-store data isolation
+    const connectorInstanceId = req.query.connector_instance_id;
+
     return {
         tenantId: req.tenantId, // Attached by auth middleware
         siteId: req.params.siteId || req.query.siteId || req.siteId,
         timeRange,
         startDate: startDate.toISOString(),
-        endDate: endDate.toISOString()
+        endDate: endDate.toISOString(),
+        connectorInstanceId: connectorInstanceId || null // null = all connectors for current project
     };
 };
 
@@ -390,6 +394,16 @@ export const getCustomerIntelligence = async (req: any, res: any) => {
         return res.code(200).send(successResponse(data));
     } catch (err) {
         return respondWithError(res, err, 'getCustomerIntelligence', siteId);
+    }
+};
+
+export const savePaymentGatewayConfig = async (req: any, res: any) => {
+    const { siteId } = getFilters(req);
+    try {
+        const data = await DashboardService.savePaymentGatewayConfig(getFilters(req) as any, req.body || {});
+        return res.code(200).send(successResponse(data));
+    } catch (err) {
+        return respondWithError(res, err, 'savePaymentGatewayConfig', siteId);
     }
 };
 

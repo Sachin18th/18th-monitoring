@@ -33,6 +33,14 @@ export const DiagnosticDrawerContent: React.FC<DiagnosticDrawerContentProps> = (
   webhookActivity,
   onAction
 }) => {
+  const safeUppercase = (value: unknown, fallback = 'UNKNOWN') => {
+    if (typeof value !== 'string' || !value.trim()) {
+      return fallback;
+    }
+
+    return value.toUpperCase();
+  };
+
   const syncColumns: Column<any>[] = [
     { 
       key: 'timestamp', 
@@ -50,7 +58,7 @@ export const DiagnosticDrawerContent: React.FC<DiagnosticDrawerContentProps> = (
       header: 'Result',
       render: (val) => (
         <Badge variant={val === 'success' ? 'success' : 'error'} size="sm">
-          {val.toUpperCase()}
+          {safeUppercase(val)}
         </Badge>
       )
     },
@@ -69,7 +77,7 @@ export const DiagnosticDrawerContent: React.FC<DiagnosticDrawerContentProps> = (
       header: 'Status',
       render: (val) => (
         <Badge variant={val === 'processed' ? 'success' : 'error'} size="sm">
-          {val.toUpperCase()}
+          {safeUppercase(val)}
         </Badge>
       )
     }
@@ -172,7 +180,7 @@ export const DiagnosticDrawerContent: React.FC<DiagnosticDrawerContentProps> = (
                <Typography variant="caption" weight="bold">API Endpoint</Typography>
              </div>
              <Typography variant="caption" className="font-mono bg-surface p-1 rounded border border-subtle block overflow-hidden text-ellipsis">
-               {connector.endpoint || 'https://api.provider.com/v3'}
+               {connector.endpoint || '—'}
              </Typography>
           </div>
           <ArrowRight size={16} className="text-text-muted" />

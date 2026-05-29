@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
+import { PageRestricted } from '../../../../../components/PageRestricted';
 import {
   ShieldAlert,
   CheckCircle2,
@@ -80,14 +81,21 @@ export default function MonitoringDashboardPage() {
   const [snapshot, setSnapshot] = useState<any>(null);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'resolved'>('active');
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((v: any) => String(v)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('management/monitoring')) return;
+
       const [healthRes, alertsRes] = await Promise.all([
-        apiFetch(`/api/v1/tenants/current/projects/${projectId}/health/snapshot`),
-        apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts`)
+        apiFetch(`/api/v1/tenants/current/projects/${projectId}/health/snapshot`, { suppressUnauthorizedRedirect: true }),
+        apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts`, { suppressUnauthorizedRedirect: true })
       ]);
       setSnapshot(healthRes?.data?.snapshot);
       setAlerts(alertsRes?.data?.alerts || []);
@@ -101,6 +109,10 @@ export default function MonitoringDashboardPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  if (allowedPageKeys !== null && !allowedPageKeys.includes('management/monitoring')) {
+    return <PageRestricted pageKey="management/monitoring" />;
+  }
 
   const handleAcknowledge = async (alertId: string) => {
     await apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts/${alertId}/acknowledge`, {

@@ -2,6 +2,7 @@
 import { prisma } from '@kpi-platform/db';
 import type { MetricFilterDto, KpiSummaryResponse, AlertSummaryResponse } from '../models/dashboard.dto';
 import { AnalyticsEngine } from './analytics-engine.service';
+import { PaymentGatewayService } from './payment-gateway.service';
 
 // Removed GlobalMemoryStore usage - now using DB queries
 
@@ -119,11 +120,15 @@ export class DashboardService {
      */
     static async getActiveAlerts(filters: MetricFilterDto): Promise<AlertSummaryResponse[]> {
         if (!filters || !filters.siteId) return [];
-        const { siteId, limit = 50, offset = 0 } = filters;
+        const { siteId, connectorInstanceId, limit = 50, offset = 0 } = filters;
 
         try {
             const alerts = await prisma.alert.findMany({
-                where: { siteId, status: { in: ['TRIGGERED', 'ACTIVE'] } },
+                where: {
+                    siteId,
+                    status: { in: ['TRIGGERED', 'ACTIVE'] },
+                    ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+                },
                 orderBy: { triggeredAt: 'desc' },
                 take: limit,
                 skip: offset,
@@ -510,38 +515,66 @@ export class DashboardService {
 
     static async getCustomerIntelligence(filters: MetricFilterDto) {
         const { siteId } = filters;
+        const tenantId = (filters as any).tenantId;
         
-        const customers = await prisma.user.findMany({
-            where: { 
-                projectAccess: { some: { projectId: siteId } },
-                role: 'USER'
-            },
-            take: 5,
-            select: {
-                id: true,
-                name: true,
-                email: true,
-                lastLoginAt: true
-            }
-        });
+                const { connectorInstanceId } = filters;
+                // Avoid showing platform-provisioned default gateways (e.g. demo Razorpay)
+                // unless a manual gateway config exists for the project. This prevents
+                // the UI from displaying a default test gateway as "configured".
+                const manualGatewayCountQuery = await prisma.$queryRaw<any[]>`
+                        SELECT COUNT(1) as count FROM payment_gateway_configs
+                        WHERE project_id = ${siteId}
+                            AND tenant_id = ${tenantId}
+                            AND (metadata->>'scope') = 'manual'
+                `;
+                const manualGatewayCount = (manualGatewayCountQuery && manualGatewayCountQuery[0] && Number(manualGatewayCountQuery[0].count)) || 0;
 
-        const orders = await prisma.canonicalOrder.count({
-            where: { siteId }
-        });
+                const [customers, orders, sessionsCount, views, paymentGateways] = await Promise.all([
+            prisma.user.findMany({
+                where: {
+                    projectAccess: { some: { projectId: siteId } },
+                    role: 'USER'
+                },
+                take: 5,
+                select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    lastLoginAt: true
+                }
+            }),
+            prisma.canonicalOrder.count({
+                where: {
+                    siteId,
+                    ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+                }
+            }),
+            prisma.performanceMetric.count({
+                where: { siteId, metricName: 'sessionStart' }
+            }),
+            prisma.performanceMetric.count({
+                where: { siteId, metricName: 'pageView' }
+            }),
+            // Only sync configured gateways if there is at least one manual config.
+            // Otherwise return an empty array so the UI shows the "no configured gateways" message.
+            manualGatewayCount > 0 ? PaymentGatewayService.syncConfiguredGateways(siteId, tenantId) : []
+        ]);
 
-        const sessions = await prisma.performanceMetric.count({
-            where: { siteId, metricName: 'sessionStart' }
-        }) || 1;
-
-        const views = await prisma.performanceMetric.count({
-            where: { siteId, metricName: 'pageView' }
-        });
+        const sessions = sessionsCount || 1;
 
         return {
             funnel: [
                 { stage: 'Visit', count: sessions, percent: 100 },
-                { stage: 'Product View', count: views, percent: Math.round((views / sessions) * 100) },
-                { stage: 'Purchase', count: orders, percent: Math.round((orders / sessions) * 100) }
+                {
+                    stage: 'Product View',
+                    count: views,
+                    percent: Math.max(0, Math.min(100, Math.round((views / sessions) * 100)))
+                },
+                {
+                    stage: 'Purchase',
+                    count: orders,
+                    percent: Math.max(0, Math.min(100, Math.round((orders / sessions) * 100)))
+                }
             ],
             segments: [
                 { name: 'Identified Customers', size: customers.length, active: customers.length, conversion: Math.round((orders / (customers.length || 1)) * 100), growth: 0 },
@@ -550,6 +583,7 @@ export class DashboardService {
             topAttribution: [
                 { source: 'Direct / Organic', sessions: sessions, conversion: Math.round((orders / sessions) * 100) }
             ],
+            paymentGateways,
             recentIdentities: customers.map(c => ({
                 id: c.id,
                 name: c.name || '',
@@ -559,6 +593,20 @@ export class DashboardService {
                 lastActive: c.lastLoginAt?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'N/A'
             }))
         };
+    }
+
+    static async savePaymentGatewayConfig(
+        filters: MetricFilterDto,
+        input: { gatewayName: string; label?: string; apiKey?: string; apiSecret?: string; metadata?: Record<string, unknown> }
+    ) {
+        const { siteId } = filters;
+        const tenantId = (filters as any).tenantId;
+
+        if (!siteId || !tenantId) {
+            throw new Error('siteId and tenantId are required to save a payment gateway configuration.');
+        }
+
+        return PaymentGatewayService.upsertGatewayConfig(siteId, tenantId, input);
     }
 
     static async getUserTrends(filters: MetricFilterDto) {
@@ -693,10 +741,12 @@ export class DashboardService {
      * Hardened against null data, invalid dates, and empty datasets.
      */
     static async getOrderSummary(filters: MetricFilterDto) {
-        const { siteId } = filters;
-        
+        const { siteId, connectorInstanceId } = filters;
         const allOrders = await prisma.canonicalOrder.findMany({
-            where: { siteId },
+            where: {
+                siteId,
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+            },
             select: {
                 id: true,
                 normalizedStatus: true,
@@ -765,10 +815,13 @@ export class DashboardService {
     }
 
     static async getOrderTrends(filters: MetricFilterDto) {
-        const { siteId } = filters;
+        const { siteId, connectorInstanceId } = filters;
         
         const orders = await prisma.canonicalOrder.findMany({
-            where: { siteId },
+            where: {
+                siteId,
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+            },
             select: { id: true, createdAt: true, placedAt: true, channel: true }
         });
 
@@ -794,12 +847,16 @@ export class DashboardService {
     }
 
     static async getOrderRCA(filters: MetricFilterDto) {
-        const { siteId } = filters;
+        const { siteId, connectorInstanceId } = filters;
         const anomalies = [];
         
         // 1. Check for Performance Correlation
         const perfMetrics = await prisma.performanceMetric.findMany({
-            where: { siteId, metricName: 'pageLoadTime' },
+            where: {
+                siteId,
+                metricName: 'pageLoadTime',
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+            },
             select: { metricValue: true }
         });
 
@@ -894,9 +951,13 @@ export class DashboardService {
     }
 
     static async getDelayedOrders(filters: MetricFilterDto) {
-        const { siteId } = filters;
+        const { siteId, connectorInstanceId } = filters;
         const orders = await prisma.canonicalOrder.findMany({
-            where: { siteId, normalizedStatus: 'PLACED' },
+            where: {
+                siteId,
+                normalizedStatus: 'PLACED',
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+            },
             orderBy: { placedAt: 'asc' },
             take: 10,
             select: { id: true, createdAt: true, placedAt: true, channel: true }

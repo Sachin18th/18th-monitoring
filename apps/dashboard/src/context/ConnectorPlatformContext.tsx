@@ -27,6 +27,7 @@ import {
   createStoreFromConnection,
 } from "../lib/ecommerceConnectors";
 import { useAuth } from "./AuthContext";
+import { connectorFilterStore } from "../lib/connectorFilterStore";
 
 type ConnectorSetupState = {
   platform: EcommercePlatform | null;
@@ -37,6 +38,20 @@ type StoreOption = {
   id: string;
   label: string;
   key: string;
+};
+
+type ConnectedStoreRecord = ConnectedStore & {
+  label?: string;
+  providerId?: string;
+  category?: string;
+  family?: string;
+  lastResyncAt?: string;
+  latestResyncJob?: {
+    jobId?: string;
+    status?: string;
+    initiatedAt?: string;
+    completedAt?: string | null;
+  } | null;
 };
 
 type ConnectorPlatformContextValue = {
@@ -50,8 +65,11 @@ type ConnectorPlatformContextValue = {
   jobs: ConnectorSyncJob[];
   ingestionEvents: IngestionEvent[];
   reconciliations: ReconciliationCheck[];
+  activeConnectorId: string | null;
   activeStoreId: string;
+  setActiveConnector: (connectorId: string | null) => void;
   setActiveStoreId: (storeId: string) => void;
+  connectorSelectionTick: number;
   connectorSetup: ConnectorSetupState;
   beginConnectorSetup: (platform: EcommercePlatform) => void;
   openConnectorSetupModal: () => void;
@@ -81,7 +99,7 @@ type ConnectorPlatformContextValue = {
   syncCoverage: number;
 };
 
-const ConnectorPlatformContext = createContext<
+export const ConnectorPlatformContext = createContext<
   ConnectorPlatformContextValue | undefined
 >(undefined);
 
@@ -124,6 +142,72 @@ const mapPipelineJobToConnectorJob = (job: any): ConnectorSyncJob => ({
   ),
 });
 
+const normalizeConnectorLabel = (store: any, index = 0) => {
+  return (
+    String(store.label || store.name || store.connectionLabel || store.providerId || store.family || store.category || `Store ${index + 1}`).trim() ||
+    `Store ${index + 1}`
+  );
+};
+
+const normalizeConnectorPlatform = (store: any): EcommercePlatform => {
+  const rawPlatform = String(store.platform || store.providerId || store.category || store.family || "shopify").toLowerCase();
+  if (rawPlatform.includes("adobe")) return "adobe_commerce";
+  if (rawPlatform.includes("bigcommerce")) return "bigcommerce";
+  return "shopify";
+};
+
+const normalizeConnectedStore = (
+  store: any,
+  index = 0,
+): ConnectedStoreRecord => {
+  const current = new Date().toISOString();
+  const connectorId = String(store.connectorId || store.id || store.connectorInstanceId || store.instanceId || `store-${index}`).trim();
+  const name = normalizeConnectorLabel(store, index);
+  const platform = normalizeConnectorPlatform(store);
+  const rawStatus = String(store.status || store.healthStatus || "healthy").toLowerCase();
+
+  return {
+    connectorId,
+    projectId: String(store.projectId || store.siteId || ""),
+    platform,
+    status: rawStatus === "offline" ? "offline" : rawStatus === "degraded" ? "degraded" : "healthy",
+    lastSuccessfulSync: String(store.lastSuccessfulSync || store.lastSyncAt || current),
+    lastAttemptedSync: String(store.lastAttemptedSync || store.lastAttemptAt || current),
+    lastResyncAt: String(
+      store.lastResyncAt ||
+        store.latestResyncJob?.completedAt ||
+        store.latestResyncJob?.initiatedAt ||
+        store.lastSuccessfulSync ||
+        store.lastSyncAt ||
+        current,
+    ),
+    syncErrorCount: Number(store.syncErrorCount || 0),
+    webhooksActive: Boolean(store.webhooksActive ?? true),
+    tokenExpiresAt: store.tokenExpiresAt || undefined,
+    recordsSyncedLast24h: Number(store.recordsSyncedLast24h || 0),
+    name,
+    connectionLabel:
+      normalizeConnectorLabel({ ...store, label: store.connectionLabel || store.label || name }, index),
+    storeUrl: String(store.storeUrl || ""),
+    storeCode: store.storeCode || undefined,
+    shopDomain: store.shopDomain || undefined,
+    healthScore: Number(store.healthScore || 0),
+    syncProgress: Number(store.syncProgress || 0),
+    initialSyncState:
+      store.initialSyncState === "completed"
+        ? "completed"
+        : store.initialSyncState === "in_progress"
+          ? "in_progress"
+          : "not_started",
+    recordsByType: {
+      orders: Number(store.recordsByType?.orders || 0),
+      customers: Number(store.recordsByType?.customers || 0),
+      products: Number(store.recordsByType?.products || 0),
+      sessions: Number(store.recordsByType?.sessions || 0),
+    },
+  };
+};
+
 export const ConnectorPlatformProvider: React.FC<{
   children: React.ReactNode;
 }> = ({ children }) => {
@@ -142,7 +226,7 @@ export const ConnectorPlatformProvider: React.FC<{
   // const [ingestionEvents, setIngestionEvents] = useState<IngestionEvent[]>(snapshot.ingestionEvents);
   // const [reconciliations] = useState<ReconciliationCheck[]>(snapshot.reconciliations);
 
-  const [connectedStores, setConnectedStores] = useState<ConnectedStore[]>([]);
+  const [connectedStores, setConnectedStores] = useState<ConnectedStoreRecord[]>([]);
   const [canonicalOrders, setCanonicalOrders] = useState<CanonicalOrder[]>([]);
   const [canonicalCustomers, setCanonicalCustomers] = useState<
     CanonicalCustomer[]
@@ -158,7 +242,11 @@ export const ConnectorPlatformProvider: React.FC<{
     [],
   );
 
-  const [activeStoreId, setActiveStoreId] = useState("all");
+  const [activeConnectorId, setActiveConnectorId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("kpi_active_connector_id");
+  });
+  const [connectorSelectionTick, setConnectorSelectionTick] = useState<number>(Date.now());
   const [connectorSetup, setConnectorSetup] = useState<ConnectorSetupState>({
     platform: null,
     open: false,
@@ -180,12 +268,19 @@ export const ConnectorPlatformProvider: React.FC<{
             `/api/v1/tenants/${tenantId}/projects/${projectId}/integrations`
           );
           if (Array.isArray(storesRes)) {
-            setConnectedStores(storesRes);
+            const normalizedStores = storesRes.map((store, index) => normalizeConnectedStore(store, index));
+            setConnectedStores(normalizedStores);
+            setActiveConnectorId((current) => {
+              if (current && normalizedStores.some((store) => store.connectorId === current)) {
+                return current;
+              }
+              return normalizedStores[0]?.connectorId || null;
+            });
             // Cache to localStorage for persistence
             try {
               localStorage.setItem(
                 `connector_stores_${projectId}`,
-                JSON.stringify(storesRes)
+                JSON.stringify(normalizedStores)
               );
             } catch (e) {
               // Silently ignore localStorage errors
@@ -198,7 +293,14 @@ export const ConnectorPlatformProvider: React.FC<{
             try {
               const parsed = JSON.parse(cached);
               if (Array.isArray(parsed)) {
-                setConnectedStores(parsed);
+                const normalizedStores = parsed.map((store, index) => normalizeConnectedStore(store, index));
+                setConnectedStores(normalizedStores);
+                setActiveConnectorId((current) => {
+                  if (current && normalizedStores.some((store) => store.connectorId === current)) {
+                    return current;
+                  }
+                  return normalizedStores[0]?.connectorId || null;
+                });
               }
             } catch (parseErr) {
               console.warn("[ConnectorPlatform] Failed to parse cached stores", parseErr);
@@ -214,8 +316,66 @@ export const ConnectorPlatformProvider: React.FC<{
       }
     };
 
-    fetchConnectorData();
-  }, [apiFetch, currentProject, user?.tenantId]);
+    fetchConnectorData(); // Fetch initial data on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProject]);
+
+  const refreshPlatformData = async (connectorId?: string | null) => {
+    if (!currentProject) return;
+    const projectId = currentProject;
+    const tenantId = user?.tenantId || "current";
+
+    setIsLoading(true);
+    try {
+      // Fetch integrations list
+      try {
+        const storesRes = await apiFetch(
+          `/api/v1/tenants/${tenantId}/projects/${projectId}/integrations`
+        );
+        if (Array.isArray(storesRes)) {
+          const normalizedStores = storesRes.map((store, index) => normalizeConnectedStore(store, index));
+          setConnectedStores(normalizedStores);
+          setActiveConnectorId((current) => {
+            if (connectorId && normalizedStores.some((s) => s.connectorId === connectorId)) {
+              return connectorId;
+            }
+            if (current && normalizedStores.some((store) => store.connectorId === current)) {
+              return current;
+            }
+            return normalizedStores[0]?.connectorId || null;
+          });
+        }
+      } catch (e) {
+        // ignore integration list errors
+      }
+
+      // Fetch canonical datasets scoped to the active connector (apiFetch will include connector_instance_id)
+      try {
+        const orders = await apiFetch('/api/v1/dashboard/orders/list');
+        if (Array.isArray(orders)) setCanonicalOrders(orders);
+      } catch (e) {}
+
+      try {
+        const customers = await apiFetch('/api/v1/dashboard/customers/list');
+        if (Array.isArray(customers)) setCanonicalCustomers(customers);
+      } catch (e) {}
+
+      // product list endpoint is not present in this deployment; skip fetching products
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    connectorFilterStore.setActiveConnectorId(activeConnectorId);
+    if (typeof window !== "undefined") {
+      if (activeConnectorId) {
+        localStorage.setItem("kpi_active_connector_id", activeConnectorId);
+      } else {
+        localStorage.removeItem("kpi_active_connector_id");
+      }
+    }
+  }, [activeConnectorId]);
 
   useEffect(() => {
     setConnectedStores((stores) =>
@@ -483,11 +643,21 @@ export const ConnectorPlatformProvider: React.FC<{
       projectId,
       connectorId,
     );
+    const displayLabel = normalizeConnectorLabel(
+      {
+        label: createdInstance?.label,
+        name: createdInstance?.label,
+        connectionLabel: createdInstance?.providerId,
+        providerId: createdInstance?.providerId,
+        platform: createdInstance?.providerId,
+      },
+      0,
+    );
     const hydratedStore: ConnectedStore = {
       ...created.store,
       connectorId,
-      name: createdInstance?.label || created.store.name,
-      connectionLabel: platform === "shopify" ? "Shopify" : platform === "bigcommerce" ? "BigCommerce" : "Adobe Commerce",
+      name: displayLabel || created.store.name,
+      connectionLabel: displayLabel,
       projectId,
       status: (createdInstance?.status?.toLowerCase?.() ||
         "healthy") as ConnectedStore["status"],
@@ -616,37 +786,37 @@ export const ConnectorPlatformProvider: React.FC<{
   };
 
   const filteredOrders = useMemo(() => {
-    if (activeStoreId === "all") return canonicalOrders;
+    if (!activeConnectorId) return canonicalOrders;
     const selectedStore = connectedStores.find(
-      (store) => store.connectorId === activeStoreId,
+      (store) => store.connectorId === activeConnectorId,
     );
     if (!selectedStore) return canonicalOrders;
     return canonicalOrders.filter(
       (order) => order.source === selectedStore.platform,
     );
-  }, [activeStoreId, canonicalOrders, connectedStores]);
+  }, [activeConnectorId, canonicalOrders, connectedStores]);
 
   const filteredCustomers = useMemo(() => {
-    if (activeStoreId === "all") return canonicalCustomers;
+    if (!activeConnectorId) return canonicalCustomers;
     const selectedStore = connectedStores.find(
-      (store) => store.connectorId === activeStoreId,
+      (store) => store.connectorId === activeConnectorId,
     );
     if (!selectedStore) return canonicalCustomers;
     return canonicalCustomers.filter(
       (customer) => customer.source === selectedStore.platform,
     );
-  }, [activeStoreId, canonicalCustomers, connectedStores]);
+  }, [activeConnectorId, canonicalCustomers, connectedStores]);
 
   const filteredProducts = useMemo(() => {
-    if (activeStoreId === "all") return canonicalProducts;
+    if (!activeConnectorId) return canonicalProducts;
     const selectedStore = connectedStores.find(
-      (store) => store.connectorId === activeStoreId,
+      (store) => store.connectorId === activeConnectorId,
     );
     if (!selectedStore) return canonicalProducts;
     return canonicalProducts.filter(
       (product) => product.source === selectedStore.platform,
     );
-  }, [activeStoreId, canonicalProducts, connectedStores]);
+  }, [activeConnectorId, canonicalProducts, connectedStores]);
 
   const healthScore = useMemo(() => {
     const storeScore =
@@ -674,12 +844,12 @@ export const ConnectorPlatformProvider: React.FC<{
   }, [connectedStores, healthScore]);
 
   const selectedStoreLabel = useMemo(() => {
-    if (activeStoreId === "all") return "All Stores";
-    return (
-      connectedStores.find((store) => store.connectorId === activeStoreId)
-        ?.name || "All Stores"
+    if (connectedStores.length === 0) return "No store";
+    if (!activeConnectorId) return "No store";
+    return normalizeConnectorLabel(
+      connectedStores.find((store) => store.connectorId === activeConnectorId),
     );
-  }, [activeStoreId, connectedStores]);
+  }, [activeConnectorId, connectedStores]);
 
   const systemHealthScore = useMemo(() => {
     return Math.round(
@@ -713,7 +883,6 @@ export const ConnectorPlatformProvider: React.FC<{
       const usedKeys = new Set<string>();
 
       return [
-        { id: "all", label: "All Stores", key: "all" },
         ...connectedStores.map((store, index) => {
           const optionId = store.connectorId?.trim() || `store-${index}`;
           let optionKey = optionId;
@@ -728,7 +897,7 @@ export const ConnectorPlatformProvider: React.FC<{
 
           return {
             id: optionId,
-            label: store.name || store.connectionLabel || `Store ${index + 1}`,
+            label: normalizeConnectorLabel(store, index),
             key: optionKey,
           };
         }),
@@ -748,8 +917,35 @@ export const ConnectorPlatformProvider: React.FC<{
     jobs,
     ingestionEvents,
     reconciliations,
-    activeStoreId,
-    setActiveStoreId,
+    activeConnectorId,
+    activeStoreId: activeConnectorId || connectedStores[0]?.connectorId || "",
+    setActiveConnector: (connectorId: string | null) => {
+      setActiveConnectorId(connectorId);
+      try {
+        connectorFilterStore.setActiveConnectorId(connectorId);
+      } catch (e) {
+        // ignore
+      }
+      setConnectorSelectionTick(Date.now());
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('kpi:connector:selected', { detail: { connectorId, projectId: currentProject } }));
+      }
+      // Trigger an immediate refresh of platform data scoped to the selected connector
+      void refreshPlatformData(connectorId);
+    },
+    setActiveStoreId: (storeId: string) => {
+      const id = storeId || null;
+      setActiveConnectorId(id);
+      try {
+        connectorFilterStore.setActiveConnectorId(id);
+      } catch (e) {}
+      setConnectorSelectionTick(Date.now());
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('kpi:connector:selected', { detail: { connectorId: id, projectId: currentProject } }));
+      }
+      // Immediately refresh scoped data
+      void refreshPlatformData(id);
+    },
     connectorSetup,
     beginConnectorSetup,
     openConnectorSetupModal,
@@ -770,6 +966,7 @@ export const ConnectorPlatformProvider: React.FC<{
     healthScore,
     storeOptions,
     selectedStoreLabel,
+    connectorSelectionTick,
     filteredOrders,
     filteredCustomers,
     filteredProducts,

@@ -114,14 +114,16 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
         }
       } else {
         const assignedProjects = user.assignedProjects || [];
+        const shouldAutoOpenProject = user.role === 'CUSTOMER' && assignedProjects.length === 1;
+
         if (pathname === '/') {
-          if (user.role === 'CUSTOMER' && assignedProjects.length === 1) {
+          if (shouldAutoOpenProject) {
             router.push(`/project/${assignedProjects[0]}/overview`);
           } else {
             router.push('/projects');
           }
         }
-        if (pathname === '/projects' && user.role === 'CUSTOMER' && assignedProjects.length === 1) {
+        if (pathname === '/projects' && shouldAutoOpenProject) {
           router.push(`/project/${assignedProjects[0]}/overview`);
         }
       }

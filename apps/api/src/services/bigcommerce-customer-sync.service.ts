@@ -222,6 +222,7 @@ export class BigCommerceCustomerSyncService {
       id: crypto.randomUUID(),
       siteId: instance.siteId,
       tenantId: instance.tenantId,
+      connectorInstanceId: instance.id,
       externalIds: {
         bigcommerce: customerId
       } as Prisma.InputJsonValue,

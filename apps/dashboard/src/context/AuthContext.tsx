@@ -3,9 +3,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
+import { connectorFilterStore } from '../lib/connectorFilterStore';
 
 const getConnectorBridgeResponse = (url: string) => {
     if (typeof window === 'undefined') return undefined;
+    if (process.env.NEXT_PUBLIC_USE_CONNECTOR_BRIDGE !== 'true') return undefined;
 
     if (url.includes('/resync')) {
         return undefined;
@@ -23,7 +25,8 @@ const getConnectorBridgeResponse = (url: string) => {
     const ingestionEvents = bridge.ingestionEvents || [];
     const connectedStores = bridge.connectedStores || [];
     const shouldUseBridgeIntegrations = connectedStores.length > 0;
-    const selectedStore = connectedStores.find((store: any) => store.connectorId === bridge.activeStoreId) || null;
+    const selectedConnectorId = connectorFilterStore.getActiveConnectorId() || bridge.activeStoreId;
+    const selectedStore = connectedStores.find((store: any) => store.connectorId === selectedConnectorId) || null;
 
     const criticalOrderStatuses = new Set([
         'failed',
@@ -380,6 +383,15 @@ const getConnectorBridgeResponse = (url: string) => {
 
 const identifiedCount = (customers: any[]) => customers.filter((customer) => !!customer.email).length;
 const activeUsersCount = (customers: any[]) => customers.filter((customer) => customer.orderCount > 0).length;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+const LONG_RUNNING_REQUEST_TIMEOUT_MS = 120000;
+
+const isLongRunningMutationRequest = (url: string, method?: string) => {
+    const normalizedMethod = (method || 'GET').toUpperCase();
+    if (normalizedMethod === 'GET') return false;
+
+    return /\/(?:re)?sync(?:\/|\?|$)/.test(url) || /\/integrations(?:\/|$)/.test(url);
+};
 
 interface User {
     id: string;
@@ -415,6 +427,20 @@ const clearStoredSession = () => {
     Object.keys(localStorage)
         .filter((key) => key.startsWith(CACHE_KEY_PREFIX))
         .forEach((key) => localStorage.removeItem(key));
+    document.cookie = 'session-token=; Path=/; Max-Age=0; SameSite=Lax';
+};
+
+const syncSessionCookie = (token: string | null) => {
+    if (typeof document === 'undefined') {
+        return;
+    }
+
+    if (!token) {
+        document.cookie = 'session-token=; Path=/; Max-Age=0; SameSite=Lax';
+        return;
+    }
+
+    document.cookie = `session-token=${encodeURIComponent(token)}; Path=/; Max-Age=3600; SameSite=Lax`;
 };
 
 const parseStoredUser = (storedUser: string | null): User | null => {
@@ -426,6 +452,9 @@ const parseStoredUser = (storedUser: string | null): User | null => {
         return null;
     }
 };
+
+const isGlobalProjectsAdmin = (role?: User['role'] | null) =>
+    role === 'SUPER_ADMIN' || role === 'TENANT_ADMIN';
 
 // Cache Management Utilities
 const MAX_CACHE_SIZE = 2 * 1024 * 1024; // 2MB limit
@@ -528,7 +557,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const storedUser = parseStoredUser(localStorage.getItem('session-user'));
             const storedProject = localStorage.getItem('current-project');
 
+            console.log('[AuthContext] initializeSession:start', {
+                hasStoredToken: Boolean(storedToken),
+                storedUserId: storedUser?.id || null,
+                storedUserRole: storedUser?.role || null,
+                storedAssignedProjects: storedUser?.assignedProjects || [],
+                storedProject,
+            });
+
             if (!storedToken || !storedUser) {
+                console.warn('[AuthContext] initializeSession:no_stored_session');
                 clearStoredSession();
                 if (isMounted) setIsLoading(false);
                 return;
@@ -544,16 +582,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 });
                 const freshUser = res.data?.data?.user || storedUser;
 
+                console.log('[AuthContext] initializeSession:user_me_success', {
+                    userId: freshUser?.id || null,
+                    role: freshUser?.role || null,
+                    assignedProjects: freshUser?.assignedProjects || [],
+                    storedProject,
+                    hasStoredProjectAccess: storedProject ? (freshUser?.assignedProjects || []).includes(storedProject) : false,
+                    isGlobalAdmin: isGlobalProjectsAdmin(freshUser?.role),
+                });
+
                 if (!isMounted) return;
                 setToken(storedToken);
                 setUser(freshUser);
                 setCurrentProject(storedProject || null);
+                syncSessionCookie(storedToken);
                 localStorage.setItem('session-user', JSON.stringify(freshUser));
             } catch (error: any) {
                 const status = error.response?.status;
                 const code = error.response?.data?.error?.code;
 
+                console.warn('[AuthContext] initializeSession:user_me_failed', {
+                    status,
+                    code,
+                    message: error?.response?.data?.message || error?.message,
+                    storedUserId: storedUser?.id || null,
+                    storedUserRole: storedUser?.role || null,
+                    storedAssignedProjects: storedUser?.assignedProjects || [],
+                    storedProject,
+                });
+
                 if (status === 401 || code === 'SESSION_EXPIRED') {
+                    console.warn('[AuthContext] initializeSession:session_expired');
                     clearStoredSession();
                     if (!isMounted) return;
                     setToken(null);
@@ -563,9 +622,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
 
                 if (!isMounted) return;
+                console.log('[AuthContext] initializeSession:fallback_to_stored_user', {
+                    userId: storedUser?.id || null,
+                    role: storedUser?.role || null,
+                    assignedProjects: storedUser?.assignedProjects || [],
+                    storedProject,
+                });
                 setToken(storedToken);
                 setUser(storedUser);
                 setCurrentProject(storedProject || null);
+                syncSessionCookie(storedToken);
             } finally {
                 if (isMounted) setIsLoading(false);
             }
@@ -600,7 +666,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const activeToken = token || localStorage.getItem('session-token');
-        const cacheKey = `api_cache_${url.replace(/\W/g, '_')}`;
+        const activeConnectorId = connectorFilterStore.getActiveConnectorId();
+        const cacheKey = `api_cache_${url.replace(/\W/g, '_')}_${activeConnectorId || 'all'}`;
 
         const headers = {
             ...options.headers,
@@ -621,13 +688,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const requestTimeout =
                 typeof options.timeout === 'number' && Number.isFinite(options.timeout)
                     ? options.timeout
-                    : 10000;
+                    : isLongRunningMutationRequest(url, options.method)
+                        ? LONG_RUNNING_REQUEST_TIMEOUT_MS
+                        : DEFAULT_REQUEST_TIMEOUT_MS;
+
+            const requestParams = {
+                ...(options.params || {}),
+                ...(activeConnectorId ? { connector_instance_id: activeConnectorId } : {}),
+            };
 
             const res = await axios({
                 url: fetchUrl,
                 method: options.method || 'GET',
                 headers,
                 data: requestData,
+                params: requestParams,
                 timeout: requestTimeout
             });
 
@@ -664,6 +739,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const backendCode = backendError?.code || 'FETCH_ERROR';
             const correlationId = backendError?.correlationId;
             const isSessionExpired = status === 401 || backendCode === 'SESSION_EXPIRED';
+            const isRateLimited = status === 429 || backendCode === 'RATE_LIMITED';
+            const isConflict = status === 409 || backendCode === 'CONFLICT';
+            const isLongRunningMutation = isLongRunningMutationRequest(url, options.method);
+            const isExpectedSyncDelay = isLongRunningMutation && (requestTimedOut || isRateLimited || !status);
+            const suppressUnauthorizedRedirect = options?.suppressUnauthorizedRedirect === true;
+            const shouldWarnInsteadOfError = requestTimedOut || isRateLimited || !status || isConflict || (status === 403 && suppressUnauthorizedRedirect);
 
             if (isSessionExpired) {
                 clearSessionStateRef.current();
@@ -675,15 +756,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 return new Promise(() => {});
             }
 
+            if (isRateLimited) {
+                if (process.env.NODE_ENV !== 'production') {
+                    try {
+                        console.warn(`[API RATE LIMIT] ${options.method || 'GET'} ${url}`);
+                        console.warn(`Code: ${backendCode}`);
+                        console.warn(`Message: ${backendMessage || 'Too many requests.'}`);
+                        console.groupEnd?.();
+                    } catch {
+                        // ignore logging failures for throttling responses
+                    }
+                }
+
+                if ((options.method === 'GET' || !options.method) && typeof window !== 'undefined') {
+                    const cached = localStorage.getItem(cacheKey);
+                    if (cached) {
+                        try {
+                            const { data, timestamp } = JSON.parse(cached);
+                            console.warn(`[AuthContext] API 429/RATE_LIMITED. Serving cached data from ${timestamp}`);
+                            return data;
+                        } catch {
+                            // ignore cache parse failures and fall through
+                        }
+                    }
+                }
+            }
+
             // Structured logging for development
             if (process.env.NODE_ENV !== 'production') {
-                console.group(`[API ERROR] ${options.method || 'GET'} ${url}`);
-                console.error(`Status: ${status || 'Network Error'}`);
-                console.error(`Code: ${backendCode}`);
-                console.error(`Message: ${backendMessage || error.message}`);
-                if (correlationId) console.error(`Correlation ID: ${correlationId}`);
-                if (backendError?.details) console.error(`Details:`, backendError.details);
-                console.groupEnd();
+                try {
+                    let safeErrorMessage = 'Unknown error';
+                    try {
+                        safeErrorMessage = backendMessage || (error && (error.message || String(error))) || safeErrorMessage;
+                    } catch (msgErr) {
+                        safeErrorMessage = String(msgErr || 'Unknown error while reading error message');
+                    }
+
+                    if (shouldWarnInsteadOfError) {
+                        const warningMessage = isConflict
+                            ? backendMessage || 'Duplicate resource already exists.'
+                            : isExpectedSyncDelay
+                                ? `[API WARN] ${options.method || 'GET'} ${url} is still syncing; ${requestTimedOut ? 'timeout' : isRateLimited ? 'rate limited' : 'no response'} received.`
+                                : `[API WARN] ${options.method || 'GET'} ${url} failed with ${requestTimedOut ? 'timeout' : isRateLimited ? 'rate limit' : 'no response'}.`;
+
+                        console.warn(warningMessage);
+                    } else {
+                        console.group(`[API ERROR] ${options.method || 'GET'} ${url}`);
+                        console.error(`Status: ${status || 'Network Error'}`);
+                        console.error(`Code: ${backendCode}`);
+                        console.error(`Message: ${safeErrorMessage}`);
+                        if (correlationId) console.error(`Correlation ID: ${correlationId}`);
+                        if (backendError?.details) console.error(`Details:`, backendError.details);
+                        console.groupEnd();
+                    }
+                } catch (logErr) {
+                    try {
+                        console.error('[API ERROR] Failed to log error details', logErr);
+                    } catch {
+                        // swallow to avoid breaking consumers
+                    }
+                }
             }
 
             // Outage / Connectivity Error Handling
@@ -698,41 +830,100 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             if (status === 403) {
-                routerRef.current.push('/unauthorized');
+                console.warn('[AuthContext] apiFetch:403_redirecting_to_unauthorized', {
+                    url,
+                    fetchUrl,
+                    currentProject,
+                    userId: user?.id || null,
+                    role: user?.role || null,
+                    assignedProjects: user?.assignedProjects || [],
+                    message: backendMessage,
+                    backendCode,
+                });
+                if (!suppressUnauthorizedRedirect) {
+                    routerRef.current.push('/unauthorized');
+                }
                 throw new Error('Access Denied');
             }
 
-            // Create a structured error for the consumer
-            const apiError = new Error(backendMessage || `Request failed with status ${status || 'Unknown'}`);
+            // Create a structured error for the consumer with richer debug info
+            const message = backendMessage || `Request failed with status ${status || 'Unknown'}`;
+            const apiError = new Error(`${message} (${options.method || 'GET'} ${url})`);
             (apiError as any).status = status;
             (apiError as any).isApiError = true;
+            (apiError as any).code = backendCode;
+            if (correlationId) (apiError as any).correlationId = correlationId;
+            if (backendError) (apiError as any).backend = backendError;
             throw apiError;
         }
     }, [token, API_BASE, user?.tenantId, currentProject]);
 
     const setProject = React.useCallback((id: string) => {
+        console.log('[AuthContext] setProject', {
+            nextProjectId: id,
+            previousProjectId: currentProject,
+            userId: user?.id || null,
+            role: user?.role || null,
+            assignedProjects: user?.assignedProjects || [],
+        });
         setCurrentProject(id);
         localStorage.setItem('current-project', id);
-    }, []);
+    }, [currentProject, user]);
 
     const login = React.useCallback(async (email: string, password: string) => {
         try {
+            console.log('[AuthContext] login:start', { email });
             const res = await axios.post(`${API_BASE}/api/v1/auth/login`, { email, password });
             const { token: newToken, user: newUser } = res.data.data;
+
+            console.log('[AuthContext] login:success', {
+                userId: newUser?.id || null,
+                email: newUser?.email || email,
+                role: newUser?.role || null,
+                assignedProjects: newUser?.assignedProjects || [],
+                currentStoredProject: localStorage.getItem('current-project'),
+            });
             
             setToken(newToken);
             setUser(newUser);
             localStorage.setItem('session-token', newToken);
+            syncSessionCookie(newToken);
             localStorage.setItem('session-user', JSON.stringify(newUser));
 
-            if (newUser.assignedProjects.length === 1 && newUser.role !== 'SUPER_ADMIN') {
+            if (newUser.role === 'CUSTOMER' && newUser.assignedProjects.length === 1) {
+                console.log('[AuthContext] login:redirect_single_customer_project', {
+                    projectId: newUser.assignedProjects[0],
+                    userId: newUser?.id || null,
+                });
                 setProject(newUser.assignedProjects[0]);
                 router.push(`/project/${newUser.assignedProjects[0]}/overview`);
             } else {
+                console.log('[AuthContext] login:redirect_projects', {
+                    userId: newUser?.id || null,
+                    role: newUser?.role || null,
+                    assignedProjects: newUser?.assignedProjects || [],
+                });
                 router.push('/projects');
             }
         } catch (error: any) {
-            throw new Error(error.response?.data?.message || 'Invalid credentials');
+            const status = error?.response?.status;
+            const message = error?.response?.data?.message || error?.message || 'Invalid credentials';
+
+            if (status === 401) {
+                console.warn('[AuthContext] login:invalid_credentials', {
+                    email,
+                    status,
+                    message,
+                });
+            } else {
+                console.error('[AuthContext] login:failed', {
+                    email,
+                    status,
+                    message,
+                });
+            }
+
+            throw new Error(message);
         }
     }, [API_BASE, router, setProject]);
 

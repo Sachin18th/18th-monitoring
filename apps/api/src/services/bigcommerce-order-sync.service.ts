@@ -254,6 +254,7 @@ export class BigCommerceOrderSyncService {
     const data = {
       siteId: instance.siteId,
       tenantId: instance.tenantId,
+      connectorInstanceId: instance.id,
       orderId: String(canonical.orderId),
       externalReferenceId: canonical.externalReferenceId ? String(canonical.externalReferenceId) : null,
       sourceSystem: 'bigcommerce',
@@ -303,6 +304,7 @@ export class BigCommerceOrderSyncService {
         data: {
           orderInternalId: newId,
           projectId: instance.siteId,
+          connectorInstanceId: instance.id,
           lifecycleState: String(canonical.lifecycleState),
           totalAmount: Number(canonical.totalAmount || 0),
           metadata: {
@@ -316,6 +318,7 @@ export class BigCommerceOrderSyncService {
           id: crypto.randomUUID(),
           orderInternalId: newId,
           projectId: instance.siteId,
+          connectorInstanceId: instance.id,
           eventType: 'BIGCOMMERCE_SYNC_IMPORT',
           timestamp: new Date(),
           payload: rawOrder as Prisma.InputJsonValue,

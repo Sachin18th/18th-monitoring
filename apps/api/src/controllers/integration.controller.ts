@@ -24,10 +24,16 @@ export class IntegrationController {
                 id: true,
                 label: true,
                 providerId: true,
+                category: true,
+                family: true,
                 status: true,
                 healthStatus: true,
                 healthScore: true,
                 recordsByType: true,
+                lastSyncAt: true,
+                lastAttemptAt: true,
+                lastWebhookAt: true,
+                lastError: true,
                 createdAt: true,
                 updatedAt: true,
                 resyncJobs: {
@@ -51,9 +57,44 @@ export class IntegrationController {
                 }
             }
         });
+
+        const latestResyncJobs = await prisma.connectorResyncJob.findMany({
+            where: {
+                projectId: siteId,
+                connectorInstanceId: {
+                    in: integrations.map((integration: any) => integration.id)
+                }
+            },
+            orderBy: {
+                initiatedAt: 'desc'
+            },
+            select: {
+                jobId: true,
+                connectorInstanceId: true,
+                status: true,
+                syncTargets: true,
+                initiatedAt: true,
+                completedAt: true,
+                error: true
+            }
+        });
+
+        const latestResyncJobByConnector = new Map<string, any>();
+        for (const job of latestResyncJobs) {
+            if (!latestResyncJobByConnector.has(job.connectorInstanceId)) {
+                latestResyncJobByConnector.set(job.connectorInstanceId, job);
+            }
+        }
+
         const mapped = integrations.map((integration: any) => ({
             ...integration,
-            activeResyncJob: integration.resyncJobs?.[0] || null
+            activeResyncJob: integration.resyncJobs?.[0] || null,
+            latestResyncJob: latestResyncJobByConnector.get(integration.id) || null,
+            lastResyncAt:
+                latestResyncJobByConnector.get(integration.id)?.completedAt?.toISOString() ||
+                latestResyncJobByConnector.get(integration.id)?.initiatedAt?.toISOString() ||
+                integration.lastSyncAt?.toISOString() ||
+                null
         }));
         return reply.send(ResponseUtil.success(mapped, { siteId }, req.id as string));
     }

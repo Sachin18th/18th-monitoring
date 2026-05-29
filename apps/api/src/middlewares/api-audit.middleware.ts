@@ -21,6 +21,7 @@ export const apiAuditHandler = async (req: any, reply: FastifyReply) => {
         if (req.authMode === 'API_KEY' && req.user?.id) {
             const bytes = parseInt(reply.getHeader('content-length') as string) || 0;
             GovernanceService.trackUsage(req.user.id, bytes, isError);
+            const connectorInstanceId = req.query?.connector_instance_id || req.body?.connector_instance_id;
             
             // Detailed Audit Log for non-2xx or sensitive paths
             if (isError || req.method !== 'GET') {
@@ -28,6 +29,7 @@ export const apiAuditHandler = async (req: any, reply: FastifyReply) => {
                     action: `API_${req.method}_${req.url.split('/')[3]?.toUpperCase() || 'GENERAL'}`,
                     actorId: req.user.id,
                     siteId: req.siteId,
+                    connectorInstanceId,
                     targetId: req.siteId || 'global',
                     status: isError ? 'FAILURE' : 'SUCCESS',
                     metadata: {

@@ -1,6 +1,6 @@
 import React from 'react';
 
-export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'OPERATOR' | 'CUSTOMER';
+export type UserRole = 'SUPER_ADMIN' | 'TENANT_ADMIN' | 'PROJECT_ADMIN' | 'ADMIN' | 'OPERATOR' | 'VIEWER' | 'CUSTOMER';
 
 export interface RoleGateProps {
   children: React.ReactNode;

@@ -3,13 +3,15 @@
 
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { EventStream } from '@/components/rum/EventStream';
 import { DeviceDistribution } from '@/components/rum/DeviceDistribution';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Globe, Users, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
+import { PageRestricted } from '@/components/PageRestricted';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -120,6 +122,92 @@ type PagespeedMetricEntry = {
 
 type PagespeedLatestPayload = Partial<Record<DeviceType, Partial<Record<PagespeedMetricKey, PagespeedMetricEntry>>>>;
 
+const normalizeLookupValue = (value?: string | null) => {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase();
+};
+
+const collectLookupValues = (...values: any[]) =>
+  values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => normalizeLookupValue(value))
+    .filter(Boolean);
+
+const getRowMetadata = (row: any): any => {
+  const metadata = row?.metadata;
+  if (!metadata) return {};
+
+  if (typeof metadata === 'string') {
+    try {
+      return JSON.parse(metadata);
+    } catch {
+      return {};
+    }
+  }
+
+  return metadata;
+};
+
+const rowMatchesActiveConnector = (row: any, connectorInstanceId: string | null) => {
+  if (!connectorInstanceId) return true;
+
+  const metadata = getRowMetadata(row);
+  const connectorCandidates = collectLookupValues(
+    row?.connectorInstanceId,
+    row?.connectorId,
+    row?.connectorLabel,
+    row?.sourceSystem,
+    row?.channel,
+    row?.source,
+    metadata?.connectorInstanceId,
+    metadata?.connectorId,
+    metadata?.connectorLabel,
+    metadata?.connectorInstanceLabel,
+    metadata?.sourceSystem,
+    metadata?.source,
+    metadata?.platform,
+  );
+
+  return connectorCandidates.includes(normalizeLookupValue(connectorInstanceId));
+};
+
+const buildPagespeedPayloadForConnector = (
+  payload: PagespeedLatestPayload | null,
+  connectorInstanceId: string | null,
+) => {
+  if (!payload || !connectorInstanceId) return payload;
+
+  const scopedPayload: PagespeedLatestPayload = {};
+  const activeConnectorKey = normalizeLookupValue(connectorInstanceId);
+
+  (['mobile', 'desktop'] as DeviceType[]).forEach((deviceType) => {
+    const devicePayload = payload[deviceType] || {};
+    const scopedDevicePayload: Partial<Record<PagespeedMetricKey, PagespeedMetricEntry>> = {};
+
+    (['lcp', 'fid', 'cls', 'ttfb'] as PagespeedMetricKey[]).forEach((metricKey) => {
+      const entry = devicePayload[metricKey];
+      if (!entry) return;
+
+      const entryConnector = normalizeLookupValue(
+        (entry as any)?.connectorInstanceId ||
+          (entry as any)?.connectorId ||
+          (entry as any)?.metadata?.connectorInstanceId ||
+          (entry as any)?.metadata?.connectorId ||
+          (entry as any)?.metadata?.connectorLabel,
+      );
+
+      if (!entryConnector || entryConnector === activeConnectorKey) {
+        scopedDevicePayload[metricKey] = entry;
+      }
+    });
+
+    scopedPayload[deviceType] = scopedDevicePayload;
+  });
+
+  return scopedPayload;
+};
+
 const getRouteStatus = (avgLoadTime: number, status?: string): RoutePerformanceRow['status'] => {
   const normalized = status?.toLowerCase();
   if (normalized === 'healthy' || normalized === 'warning' || normalized === 'critical') {
@@ -149,6 +237,7 @@ const normalizeRoutePerformanceRows = (rows: any[]): RoutePerformanceRow[] => {
 export default function RumDashboardPage() {
   const { projectId } = useParams();
   const { apiFetch, token, user } = useAuth();
+  const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
   const tenantId = user?.tenantId;
   
   const [loading, setLoading] = useState(true);
@@ -162,14 +251,24 @@ export default function RumDashboardPage() {
   const [events, setEvents] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any>(null);
   const [topPages, setTopPages] = useState<RoutePerformanceRow[]>([]);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
+  const isLoadingRef = useRef(false);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
+    if (isLoadingRef.current) return;
+    isLoadingRef.current = true;
     
     setLoading(true);
     setError(null);
     
     try {
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((value: any) => String(value)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
+
+      if (!nextAllowedPageKeys.includes('rum')) return;
+
       const [perfSummary, deviceData, trendData, userAnalytics, slowestPages] = await Promise.all([
         apiFetch(`/api/v1/dashboard/performance/summary?siteId=${projectId}`),
         apiFetch(`/api/v1/dashboard/performance/device?siteId=${projectId}`),
@@ -184,26 +283,43 @@ export default function RumDashboardPage() {
         try {
           const latest = await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/latest`);
           const payload = latest?.data ? latest.data : latest;
-          setPagespeedMetrics(payload || null);
+          setPagespeedMetrics(buildPagespeedPayloadForConnector(payload || null, connectorInstanceId));
         } catch (psErr) {
           console.warn('[RUM] Failed to load latest PageSpeed metrics', psErr);
           setPagespeedMetrics(null);
         }
       }
 
-      setDevices(Array.isArray(deviceData) ? deviceData : []);
-      setLoadTimeTrend(Array.isArray(trendData) ? trendData : []);
+      const scopedDevices = Array.isArray(deviceData) ? deviceData.filter((row) => rowMatchesActiveConnector(row, connectorInstanceId)) : [];
+      const scopedTrends = Array.isArray(trendData) ? trendData.filter((row) => rowMatchesActiveConnector(row, connectorInstanceId)) : [];
+      const scopedSlowestPages = Array.isArray(slowestPages) ? slowestPages.filter((row) => rowMatchesActiveConnector(row, connectorInstanceId)) : [];
+
+      setDevices(scopedDevices);
+      setLoadTimeTrend(scopedTrends);
       setAnalytics(userAnalytics);
-      setTopPages(Array.isArray(slowestPages) ? normalizeRoutePerformanceRows(slowestPages) : []);
+      setTopPages(normalizeRoutePerformanceRows(scopedSlowestPages));
       setEvents([]); // Real events stream would go here
       
     } catch (err: any) {
       console.error('[RUM] Load failed', err);
       setError('Failed to synchronize frontend telemetry. Please check integration health.');
     } finally {
+      isLoadingRef.current = false;
       setLoading(false);
     }
-  }, [apiFetch, projectId, tenantId, token]);
+  }, [apiFetch, projectId, tenantId, token, connectorInstanceId]);
+
+  useEffect(() => {
+    if (!token || !projectId) return;
+    setLoading(true);
+    setError(null);
+    setPagespeedMetrics(null);
+    setDevices([]);
+    setLoadTimeTrend([]);
+    setEvents([]);
+    setAnalytics(null);
+    setTopPages([]);
+  }, [connectorSelectionTick, projectId, token]);
 
   const webVitals = useMemo(() => {
     const byDevice = (pagespeedMetrics?.[device] || {}) as Partial<Record<PagespeedMetricKey, PagespeedMetricEntry>>;
@@ -253,6 +369,7 @@ export default function RumDashboardPage() {
     try {
       await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/sync`, {
         method: 'POST',
+        body: connectorInstanceId ? JSON.stringify({ connectorInstanceId }) : undefined,
         timeout: 70000,
       });
       // After sync completes (may take 15-30s), reload dashboard data
@@ -271,6 +388,8 @@ export default function RumDashboardPage() {
     // Users must manually click Refresh to sync new PageSpeed metrics.
   }, [loadData]);
 
+  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('rum');
+
   if (loading && !analytics) {
     return (
       <div style={{ ...pageStyle, ...sectionSpacingStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -280,6 +399,10 @@ export default function RumDashboardPage() {
         </div>
       </div>
     );
+  }
+
+  if (isPageRestricted) {
+    return <PageRestricted pageKey="rum" />;
   }
 
   return (

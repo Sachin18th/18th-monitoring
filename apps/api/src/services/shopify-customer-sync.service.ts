@@ -244,6 +244,7 @@ export class ShopifyCustomerSyncService {
             id: crypto.randomUUID(),
             siteId: instance.siteId,
             tenantId: instance.tenantId,
+            connectorInstanceId: instance.id,
             externalIds: {
                 ...(existing ? {} : {}),
                 shopify: customerId

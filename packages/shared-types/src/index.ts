@@ -1,4 +1,5 @@
 export * from './config';
+export * from './page-access';
 import { z } from 'zod';
 import { BaseEventSchema, BrowserIngestPayloadSchema, ServerIngestPayloadSchema } from '../../events/src/schemas';
 

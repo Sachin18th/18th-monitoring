@@ -45,6 +45,7 @@ export interface ConnectorCardProps {
   onResync?: (id: string) => void;
   isResyncDisabled?: boolean;
   isResyncRunning?: boolean;
+  isSelected?: boolean;
 }
 
 export const ConnectorCard: React.FC<ConnectorCardProps> = ({
@@ -62,7 +63,8 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
   onActionsClick,
   onResync,
   isResyncDisabled = false,
-  isResyncRunning = false
+  isResyncRunning = false,
+  isSelected = false
 }) => {
   const getStatusVariant = (s: ConnectorHealth): BadgeVariant => {
     switch (s) {
@@ -84,7 +86,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
 
   return (
     <Card 
-      className="p-4 hover:border-primary/30 transition-all cursor-pointer group"
+      className={`p-4 transition-all cursor-pointer group ${isSelected ? 'border-primary ring-2 ring-primary/20 shadow-md' : 'hover:border-primary/30'}`}
       onClick={() => onInspect(id)}
     >
       {/* Header */}

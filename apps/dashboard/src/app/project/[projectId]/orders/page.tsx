@@ -2,6 +2,8 @@
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "../../../../context/AuthContext";
+import { PageRestricted } from "../../../../components/PageRestricted";
+import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 import { useParams } from "next/navigation";
 import { DiagnosticDrawer } from "@kpi-platform/ui";
 import {
@@ -23,7 +25,10 @@ import {
 import { OrderDetailDrawerContent } from "../../../../components/orders/OrderDetailDrawerContent";
 
 const pageStyle: React.CSSProperties = {
-  padding: "24px 28px",
+  paddingTop: "24px",
+  paddingRight: "28px",
+  paddingBottom: "24px",
+  paddingLeft: "28px",
   maxWidth: "1280px",
   margin: "0 auto",
   display: "block",
@@ -46,6 +51,89 @@ const cardStyle: React.CSSProperties = {
 };
 
 const ORDERS_PAGE_SIZE = 50;
+const ORDERS_FETCH_LIMIT = 10000;
+
+const normalizeLookupValue = (value?: string | null) => {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
+};
+
+const collectLookupValues = (...values: any[]) =>
+  values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => normalizeLookupValue(value))
+    .filter(Boolean);
+
+const getOrderMetadata = (order: any): any => {
+  const metadata = order?.metadata;
+  if (!metadata) return {};
+
+  if (typeof metadata === "string") {
+    try {
+      return JSON.parse(metadata);
+    } catch {
+      return {};
+    }
+  }
+
+  return metadata;
+};
+
+const orderMatchesActiveConnector = (order: any, connectorInstanceId: string | null) => {
+  if (!connectorInstanceId) return true;
+
+  const metadata = getOrderMetadata(order);
+  const connectorCandidates = collectLookupValues(
+    order?.connectorInstanceId,
+    order?.connectorId,
+    order?.connectorLabel,
+    order?.connectorInstanceLabel,
+    order?.sourceSystem,
+    order?.channel,
+    metadata?.connectorInstanceId,
+    metadata?.connectorId,
+    metadata?.connectorLabel,
+    metadata?.connectorInstanceLabel,
+    metadata?.sourceSystem,
+    metadata?.source,
+    metadata?.platform,
+  );
+
+  return connectorCandidates.includes(normalizeLookupValue(connectorInstanceId));
+};
+
+const buildOrderStats = (orders: any[]) => {
+  const now = Date.now();
+  const thisHour = orders.filter((order) => now - Number(new Date(order.createdAt || order.placedAt || 0)) < 60 * 60 * 1000);
+
+  const onlineSplit = orders.filter((order) => {
+    const source = String(order?.source || order?.sourceSystem || order?.channel || order?.orderSource || "").toLowerCase();
+    return source.includes("shopify") || source.includes("online") || source.includes("bigcommerce");
+  }).length;
+
+  const offlineSplit = orders.length - onlineSplit;
+
+  const delayedCount = orders.filter((order) => {
+    const status = String(order?.status || order?.lifecycleState || order?.normalizedStatus || "").toLowerCase();
+    return status === "pending" || status === "processing" || status === "placed";
+  }).length;
+
+  const failedCount = orders.filter((order) => {
+    const status = String(order?.status || order?.lifecycleState || order?.normalizedStatus || "").toLowerCase();
+    return status === "cancelled" || status === "canceled" || status === "failed" || status === "returned" || status === "refunded";
+  }).length;
+
+  return {
+    totalOrders: orders.length,
+    ordersThisHour: thisHour.length,
+    onlineSplit,
+    offlineSplit,
+    delayedCount,
+    failedCount,
+    ordersPerMinute: (thisHour.length / 60).toFixed(2),
+  };
+};
 
 const normalizeOrderRecord = (order: any) => {
   const lifecycleStatus = String(
@@ -120,6 +208,7 @@ export default function OrdersPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { token, apiFetch, user } = useAuth();
+  const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
   const tenantId = user?.tenantId;
 
   const [loading, setLoading] = useState(true);
@@ -137,17 +226,19 @@ export default function OrdersPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const drawerWidth = '700px';
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     if (!token || !projectId) return;
     
     // Debounce: prevent fetching more than once per 2 seconds using ref (not state)
     const now = Date.now();
-    if (now - lastFetchTimeRef.current < 2000) {
+    if (!force && now - lastFetchTimeRef.current < 2000) {
       return;
     }
     lastFetchTimeRef.current = now;
@@ -155,34 +246,58 @@ export default function OrdersPage() {
     setLoading(true);
     setError(null);
     try {
-      // Use Promise.all to fetch summary and list in parallel; avoid excessive sequential calls
-      const [summaryRes, listRes] = await Promise.all([
-        apiFetch(`/api/v1/dashboard/orders/summary?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}&limit=${ORDERS_PAGE_SIZE}&offset=0`),
-      ]);
-      
-      const s = summaryRes;
-      const oList = listRes;
+      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((value: any) => String(value)) : [];
+      setAllowedPageKeys(nextAllowedPageKeys);
 
-      setStats(s);
+      if (!nextAllowedPageKeys.includes('orders')) return;
+
+      // Use Promise.all to fetch summary and list in parallel; avoid excessive sequential calls
+      const [, listRes] = await Promise.all([
+        apiFetch(`/api/v1/dashboard/orders/summary?siteId=${projectId}`),
+        apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}&limit=${ORDERS_FETCH_LIMIT}&offset=0`),
+      ]);
+
+      const oList = listRes;
 
       // Fetch only first page and paginate client-side to avoid rate limiting
       const pageOrders = Array.isArray(oList) ? oList : [];
-      console.debug('[OrdersPage] Fetched orders:', pageOrders.length, 'orders');
-      setOrders(pageOrders.map(normalizeOrderRecord));
+      const scopedOrders = pageOrders.filter((order) => orderMatchesActiveConnector(order, connectorInstanceId));
+      console.debug('[OrdersPage] Fetched orders:', pageOrders.length, 'orders', 'Scoped orders:', scopedOrders.length, 'connector:', connectorInstanceId || 'none');
+      const normalizedOrders = scopedOrders.map(normalizeOrderRecord);
+      setOrders(normalizedOrders);
+      setStats(buildOrderStats(normalizedOrders));
     } catch (e) {
       console.error("Failed to sync order intelligence:", e);
       setError("Failed to synchronize order intelligence. Please retry.");
     } finally {
       setLoading(false);
     }
-  }, [projectId, token, apiFetch]);
+  }, [projectId, token, apiFetch, connectorInstanceId]);
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  useEffect(() => {
+    if (!token || !projectId) return;
+    lastFetchTimeRef.current = 0;
+    setLoading(true);
+    setError(null);
+    setOrders([]);
+    setStats({
+      totalOrders: 0,
+      ordersThisHour: 0,
+      onlineSplit: 0,
+      offlineSplit: 0,
+      delayedCount: 0,
+      failedCount: 0,
+      ordersPerMinute: '0.00',
+    });
+    fetchData(true);
+  }, [connectorSelectionTick, projectId, token, fetchData]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -226,6 +341,8 @@ export default function OrdersPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, filterStatus]);
+
+  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('orders');
 
   const timeline = useMemo<any[]>(() => {
     if (!selectedOrder) return [];
@@ -317,6 +434,10 @@ export default function OrdersPage() {
     return { bg: "var(--error-bg)", text: "var(--error-text)" };
   };
 
+  if (isPageRestricted) {
+    return <PageRestricted pageKey="orders" />;
+  }
+
   if (loading && orders.length === 0) {
     return (
       <div
@@ -370,6 +491,9 @@ export default function OrdersPage() {
         style={{
           ...pageStyle,
           ...sectionStyle,
+          boxSizing: 'border-box',
+          width: '100%',
+          paddingRight: isDrawerOpen ? drawerWidth : pageStyle.paddingRight,
           minHeight: "100vh",
           background: "var(--bg-page)",
           color: "var(--text-primary)",
@@ -482,7 +606,7 @@ export default function OrdersPage() {
               </span>
             </div>
             <button
-              onClick={fetchData}
+              onClick={() => fetchData(true)}
               style={{
                 marginLeft: "8px",
                 flexShrink: 0,
@@ -796,7 +920,7 @@ export default function OrdersPage() {
                   fontWeight: 700,
                 }}
               >
-                <span>Order Reference</span>
+                <span>Order ID</span>
                 <span>Channel</span>
                 <span>Status</span>
                 <span>Health</span>
@@ -843,7 +967,7 @@ export default function OrdersPage() {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {o.id}
+                        {o.externalOrderId || o.orderId || o.externalReferenceId || o.metadata?.orderNumber || "-"}
                       </div>
                       <div
                         style={{
@@ -855,7 +979,7 @@ export default function OrdersPage() {
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {o.externalOrderId || o.orderId || o.externalReferenceId || "-"}
+                        {o.id ? `Record: ${o.id}` : ""}
                       </div>
                     </div>
                     <div
@@ -1065,8 +1189,27 @@ export default function OrdersPage() {
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
         title="Order Details"
-        subtitle={`Site: ${projectId} • Integrity: ${selectedOrder?.health === "healthy" ? "Verified" : "Review Required"}`}
-        width="600px"
+        subtitle={
+          <>
+            <span>Site: {projectId}</span>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                borderRadius: '999px',
+                padding: '2px 8px',
+                background: 'rgba(34, 197, 94, 0.14)',
+                color: '#22c55e',
+                fontSize: '11px',
+                fontWeight: 400,
+                lineHeight: 1,
+              }}
+            >
+              Integrity · {selectedOrder?.health === 'healthy' ? 'Verified' : 'Review Required'}
+            </span>
+          </>
+        }
+        width={drawerWidth}
       >
         <OrderDetailDrawerContent
           order={selectedOrder}
