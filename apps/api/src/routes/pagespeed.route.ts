@@ -36,6 +36,24 @@ export const pagespeedRoutes = async (fastify: FastifyInstance) => {
         }
     });
 
+    fastify.get('/tenants/:tenantId/projects/:siteId/pagespeed/pages', async (req, reply) => {
+        const { tenantId, siteId } = req.params as any;
+        const { connector_instance_id: connectorInstanceId, strategy: strategyParam, refresh } = req.query as any;
+        const strategy = String(strategyParam || 'mobile').toLowerCase() === 'desktop' ? 'desktop' : 'mobile';
+        const forceRefresh = String(refresh || '').toLowerCase() === 'true' || refresh === '1';
+
+        console.log('[PAGESPEED] pages request', { requestId: req.id, tenantId, siteId, connectorInstanceId, strategy, forceRefresh });
+
+        try {
+            const data = await PageSpeedService.getPageTypeMetrics(tenantId, siteId, connectorInstanceId, strategy, forceRefresh);
+            return reply.send(ResponseUtil.success(data, { strategy }, req.id as string));
+        } catch (err) {
+            console.error('[PAGESPEED] pages failed', err);
+            const message = err instanceof Error ? err.message : 'Failed to fetch page-type PageSpeed metrics';
+            return reply.code(502).send(ResponseUtil.error(message, 'PAGESPEED_PAGES_FAILED', null, req.id as string));
+        }
+    });
+
     fastify.get('/tenants/:tenantId/projects/:siteId/pagespeed/latest', async (req, reply) => {
         const { tenantId, siteId } = req.params as any;
         const { connector_instance_id: connectorInstanceId } = req.query as any;

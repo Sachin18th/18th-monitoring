@@ -2,6 +2,7 @@ import { prisma } from '@kpi-platform/db';
 
 type PagespeedMetricName = 'lcp' | 'fid' | 'cls' | 'ttfb';
 type PagespeedStrategy = 'mobile' | 'desktop';
+type MetricStatusLabel = 'good' | 'needs-improvement' | 'poor';
 
 type PagespeedMetricRow = {
     metricName: PagespeedMetricName;
@@ -27,6 +28,18 @@ const METRIC_MAP: Array<{ key: PagespeedMetricName; auditName: string }> = [
 ];
 
 const PAGESPEED_SOURCE_PREFIX = 'pagespeed_api';
+
+// Page-type breakdown lives in the same PerformanceMetric table under a distinct
+// source prefix so it never mixes with the site-wide metrics above. The existing
+// (siteId, metricName, source) unique constraint gives us per-(strategy,pageType)
+// cache dedup for free — no schema migration required.
+const PAGE_SOURCE_PREFIX = 'pagespeed_page';
+const PAGE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+type PageType = 'homepage' | 'pdp' | 'plp' | 'checkout';
+const PAGE_TYPES: PageType[] = ['homepage', 'pdp', 'plp', 'checkout'];
+type PageMetricName = 'lcp' | 'tbt' | 'cls' | 'ttfb' | 'score';
+const PAGE_METRIC_NAMES: PageMetricName[] = ['lcp', 'tbt', 'cls', 'ttfb', 'score'];
 
 export class PageSpeedService {
     static async syncProjectMetrics(tenantId: string, projectId: string, connectorInstanceIdParam?: string) {
@@ -596,5 +609,317 @@ export class PageSpeedService {
                 timestamp: input.timestamp,
             },
         });
+    }
+
+    // ─── Page-type breakdown (Homepage / PDP / PLP / Checkout) ──────────────────
+
+    /**
+     * Discover representative Shopify URLs, run PageSpeed for each page type at the
+     * given strategy (cache-first, 1h TTL), and return one entry per page type.
+     */
+    static async getPageTypeMetrics(
+        tenantId: string,
+        projectId: string,
+        connectorInstanceIdParam: string | undefined,
+        strategy: PagespeedStrategy,
+        forceRefresh = false,
+    ): Promise<Record<PageType, any>> {
+        let connector = null;
+        if (connectorInstanceIdParam) {
+            connector = await prisma.connectorInstance.findFirst({
+                where: { id: connectorInstanceIdParam, tenantId, siteId: projectId },
+                select: {
+                    id: true, tenantId: true, siteId: true, providerId: true, syncConfig: true,
+                    credentials: { orderBy: { lastRotatedAt: 'desc' }, take: 1, select: { encryptedSecret: true } },
+                },
+            });
+        } else {
+            connector = await this.getConnectorInstance(tenantId, projectId);
+        }
+
+        const result = {} as Record<PageType, any>;
+
+        if (!connector) {
+            for (const pt of PAGE_TYPES) result[pt] = this.unavailablePage(pt, null, 'No connected store found for this project.');
+            return result;
+        }
+
+        const connectorInstanceId = connector.id;
+        const urls = await this.discoverPageUrls(connector);
+
+        // Resolve each page type concurrently; a single page failing never breaks the others.
+        await Promise.all(PAGE_TYPES.map(async (pageType) => {
+            const url = urls[pageType];
+            if (!url) {
+                result[pageType] = this.unavailablePage(pageType, null, this.missingUrlReason(pageType));
+                return;
+            }
+            try {
+                result[pageType] = await this.resolvePageMetrics({
+                    tenantId, projectId, connectorInstanceId, strategy, pageType, url, forceRefresh,
+                });
+            } catch (error) {
+                console.warn('[PageSpeedService] getPageTypeMetrics:page-failed', {
+                    projectId, pageType, url, error: error instanceof Error ? error.message : String(error),
+                });
+                // Cache an "unavailable" sentinel so we don't re-hit PSI within the TTL.
+                await this.upsertPageMetric({ tenantId, siteId: projectId, connectorInstanceId, strategy, pageType, metricName: 'score', metricValue: -1, url, timestamp: new Date() });
+                result[pageType] = this.unavailablePage(pageType, url, this.failureReason(pageType));
+            }
+        }));
+
+        return result;
+    }
+
+    private static async resolvePageMetrics(input: {
+        tenantId: string; projectId: string; connectorInstanceId: string;
+        strategy: PagespeedStrategy; pageType: PageType; url: string; forceRefresh: boolean;
+    }): Promise<any> {
+        const { tenantId, projectId, connectorInstanceId, strategy, pageType, url, forceRefresh } = input;
+        const source = this.buildPageSource(strategy, pageType);
+
+        // Cache-first.
+        if (!forceRefresh) {
+            const cached = await this.readCachedPage(projectId, connectorInstanceId, source);
+            if (cached && cached.ageMs < PAGE_CACHE_TTL_MS) {
+                if (cached.values.score !== undefined && cached.values.score < 0) {
+                    return this.unavailablePage(pageType, cached.url || url, this.failureReason(pageType), cached.timestamp);
+                }
+                return this.buildPageResult(pageType, cached.url || url, cached.values, cached.timestamp);
+            }
+        }
+
+        // Fetch fresh from PageSpeed.
+        const response = await this.fetchPageSpeedResultWithRetry(url, strategy);
+        const extracted = this.extractPageMetrics(response);
+
+        // Checkout (and other restricted pages) often return a 0 score / no lab data.
+        const hasVitals = ['lcp', 'tbt', 'cls', 'ttfb'].some((k) => Number.isFinite((extracted as any)[k]));
+        if (!hasVitals || extracted.score === 0) {
+            await this.upsertPageMetric({ tenantId, siteId: projectId, connectorInstanceId, strategy, pageType, metricName: 'score', metricValue: -1, url, timestamp: new Date() });
+            return this.unavailablePage(pageType, url, this.failureReason(pageType));
+        }
+
+        const timestamp = new Date();
+        const values: Partial<Record<PageMetricName, number>> = {};
+        await Promise.all(PAGE_METRIC_NAMES.map(async (metricName) => {
+            const raw = (extracted as any)[metricName];
+            if (!Number.isFinite(raw)) return;
+            values[metricName] = raw;
+            await this.upsertPageMetric({ tenantId, siteId: projectId, connectorInstanceId, strategy, pageType, metricName, metricValue: raw, url, timestamp });
+        }));
+
+        return this.buildPageResult(pageType, url, values, timestamp.toISOString());
+    }
+
+    private static extractPageMetrics(response: any): Record<PageMetricName, number> {
+        const audits = response?.lighthouseResult?.audits || {};
+        const rawScore = Number(response?.lighthouseResult?.categories?.performance?.score);
+        return {
+            lcp: Number(audits['largest-contentful-paint']?.numericValue),
+            tbt: Number(audits['total-blocking-time']?.numericValue),
+            cls: Number(audits['cumulative-layout-shift']?.numericValue),
+            ttfb: Number(audits['server-response-time']?.numericValue),
+            score: Number.isFinite(rawScore) ? Math.round(rawScore * 100) : NaN,
+        };
+    }
+
+    private static buildPageResult(pageType: PageType, url: string, values: Partial<Record<PageMetricName, number>>, timestamp: string | null): any {
+        const metric = (key: PageMetricName) => {
+            const value = values[key];
+            if (value === undefined || !Number.isFinite(value)) return null;
+            return {
+                value,
+                unit: key === 'cls' || key === 'score' ? '' : 'ms',
+                status: this.pageMetricStatus(key, value),
+                timestamp,
+            };
+        };
+        const score = values.score !== undefined && values.score >= 0 ? values.score : null;
+        return {
+            pageType,
+            url,
+            available: true,
+            score,
+            scoreStatus: score === null ? null : this.scoreStatus(score),
+            metrics: { lcp: metric('lcp'), tbt: metric('tbt'), cls: metric('cls'), ttfb: metric('ttfb') },
+            timestamp,
+        };
+    }
+
+    private static unavailablePage(pageType: PageType, url: string | null, reason: string, timestamp: string | null = null): any {
+        return {
+            pageType,
+            url,
+            available: false,
+            reason,
+            score: null,
+            scoreStatus: null,
+            metrics: { lcp: null, tbt: null, cls: null, ttfb: null },
+            timestamp,
+        };
+    }
+
+    private static missingUrlReason(pageType: PageType): string {
+        if (pageType === 'pdp') return 'No published product found in the store to test.';
+        if (pageType === 'plp') return 'No collection found in the store to test.';
+        return 'Could not resolve a URL for this page type.';
+    }
+
+    private static failureReason(pageType: PageType): string {
+        if (pageType === 'checkout') return 'Unavailable – Shopify restricts PageSpeed analysis for this page.';
+        return 'Unavailable – PageSpeed could not analyze this page.';
+    }
+
+    private static pageMetricStatus(key: PageMetricName, v: number): MetricStatusLabel {
+        const thresholds: Record<string, [number, number]> = {
+            lcp: [2500, 4000], tbt: [200, 600], cls: [0.1, 0.25], ttfb: [800, 1800],
+        };
+        const t = thresholds[key];
+        if (!t) return 'good';
+        if (v <= t[0]) return 'good';
+        if (v <= t[1]) return 'needs-improvement';
+        return 'poor';
+    }
+
+    private static scoreStatus(score: number): MetricStatusLabel {
+        if (score >= 90) return 'good';
+        if (score >= 50) return 'needs-improvement';
+        return 'poor';
+    }
+
+    private static buildPageSource(strategy: PagespeedStrategy, pageType: PageType): string {
+        return `${PAGE_SOURCE_PREFIX}:${strategy}:${pageType}`;
+    }
+
+    private static async readCachedPage(
+        projectId: string,
+        connectorInstanceId: string | undefined,
+        source: string,
+    ): Promise<{ values: Partial<Record<PageMetricName, number>>; url: string | null; timestamp: string | null; ageMs: number } | null> {
+        const rows = await (prisma.performanceMetric as any).findMany({
+            where: {
+                siteId: projectId,
+                ...(connectorInstanceId ? { connectorInstanceId } : {}),
+                source,
+                metricName: { in: PAGE_METRIC_NAMES },
+            },
+            orderBy: { timestamp: 'desc' },
+        });
+        if (!rows.length) return null;
+
+        const values: Partial<Record<PageMetricName, number>> = {};
+        let url: string | null = null;
+        let freshest: Date | null = null;
+        for (const row of rows) {
+            const key = row.metricName as PageMetricName;
+            if (values[key] === undefined) values[key] = Number(row.metricValue);
+            if (!url && row.route) url = row.route;
+            if (!freshest || row.timestamp > freshest) freshest = row.timestamp;
+        }
+
+        return {
+            values,
+            url,
+            timestamp: freshest ? freshest.toISOString() : null,
+            ageMs: freshest ? Date.now() - freshest.getTime() : Number.POSITIVE_INFINITY,
+        };
+    }
+
+    private static async upsertPageMetric(input: {
+        tenantId: string; siteId: string; connectorInstanceId?: string | null;
+        strategy: PagespeedStrategy; pageType: PageType; metricName: PageMetricName;
+        metricValue: number; url: string; timestamp: Date;
+    }) {
+        const source = this.buildPageSource(input.strategy, input.pageType);
+        const unit = input.metricName === 'cls' || input.metricName === 'score' ? 'score' : 'ms';
+        await (prisma.performanceMetric as any).upsert({
+            where: { siteId_metricName_source: { siteId: input.siteId, metricName: input.metricName, source } },
+            create: {
+                tenantId: input.tenantId, siteId: input.siteId, connectorInstanceId: input.connectorInstanceId || null,
+                category: 'WEB_VITALS', metricName: input.metricName, source,
+                metricValue: String(input.metricValue), unit, device: input.strategy, route: input.url, timestamp: input.timestamp,
+            },
+            update: {
+                tenantId: input.tenantId, connectorInstanceId: input.connectorInstanceId || null, category: 'WEB_VITALS',
+                metricValue: String(input.metricValue), unit, device: input.strategy, route: input.url, timestamp: input.timestamp,
+            },
+        });
+    }
+
+    // ─── Shopify representative-URL discovery ───────────────────────────────────
+
+    private static async discoverPageUrls(connector: ConnectorInstanceConfig): Promise<Record<PageType, string | null>> {
+        // Homepage works for any provider via the existing store-URL resolver.
+        const storeUrl = await this.resolveStoreUrl(connector);
+        const homepage = storeUrl ? `${storeUrl.replace(/\/$/, '')}/` : null;
+
+        // PDP / PLP / Checkout discovery is Shopify-specific (Admin REST).
+        if (connector.providerId !== 'shopify') {
+            return { homepage, pdp: null, plp: null, checkout: null };
+        }
+
+        const cfg = (connector.syncConfig || {}) as Record<string, any>;
+        const shopDomain = this.normalizeShopDomain(cfg.shopDomain);
+        const credentials = this.parseCredentials(connector.credentials?.[0]?.encryptedSecret);
+        const token = String(credentials.adminApiAccessToken || credentials.accessToken || credentials.token || '').trim();
+        const apiVersion = String(cfg.apiVersion || '2024-01').trim();
+
+        if (!shopDomain || !token) {
+            return { homepage, pdp: null, plp: null, checkout: null };
+        }
+
+        // Public domain: prefer the shop's primary domain over the myshopify domain.
+        let publicDomain = shopDomain;
+        const shop = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/shop.json');
+        const primary = shop?.shop?.domain || shop?.shop?.myshopify_domain;
+        if (primary) publicDomain = this.normalizeShopDomain(primary);
+
+        const base = `https://${publicDomain}`;
+
+        // PDP: first published product handle.
+        let pdp: string | null = null;
+        const products = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/products.json?limit=1&published_status=published');
+        const productHandle = products?.products?.[0]?.handle;
+        if (productHandle) pdp = `${base}/products/${productHandle}`;
+
+        // PLP: first collection handle (custom or smart).
+        let plp: string | null = null;
+        const custom = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/custom_collections.json?limit=1');
+        let collectionHandle = custom?.custom_collections?.[0]?.handle;
+        if (!collectionHandle) {
+            const smart = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/smart_collections.json?limit=1');
+            collectionHandle = smart?.smart_collections?.[0]?.handle;
+        }
+        if (collectionHandle) plp = `${base}/collections/${collectionHandle}`;
+
+        return {
+            homepage: `${base}/`,
+            pdp,
+            plp,
+            checkout: `${base}/checkout`,
+        };
+    }
+
+    private static normalizeShopDomain(value: unknown): string {
+        return String(value || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '').split('/')[0];
+    }
+
+    private static async shopifyAdminGet(shopDomain: string, token: string, apiVersion: string, path: string): Promise<any | null> {
+        try {
+            const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
+            const response = await fetchFn(`https://${shopDomain}/admin/api/${apiVersion}${path}`, {
+                method: 'GET',
+                headers: { 'X-Shopify-Access-Token': token, Accept: 'application/json', 'Content-Type': 'application/json' },
+            });
+            if (!response.ok) {
+                console.warn('[PageSpeedService] shopifyAdminGet:non-ok', { path, status: response.status });
+                return null;
+            }
+            return await response.json();
+        } catch (error) {
+            console.warn('[PageSpeedService] shopifyAdminGet:failed', { path, error: error instanceof Error ? error.message : String(error) });
+            return null;
+        }
     }
 }

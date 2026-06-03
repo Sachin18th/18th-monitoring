@@ -560,29 +560,67 @@ export class DashboardService {
             manualGatewayCount > 0 ? PaymentGatewayService.syncConfiguredGateways(siteId, tenantId) : []
         ]);
 
-        const sessions = sessionsCount || 1;
+        const connectorFilter = connectorInstanceId && connectorInstanceId !== 'all'
+            ? { connectorInstanceId }
+            : {};
+
+        // Real journey data backfilled from Shopify customer_sessions / customer_events.
+        const [journeySessions, convertedSessions, productViewEvents, sessionsBySource] = await Promise.all([
+            prisma.customerSession.count({ where: { siteId, ...connectorFilter } }),
+            prisma.customerSession.count({ where: { siteId, isConverted: 1, ...connectorFilter } }),
+            prisma.customerEvent.count({
+                where: { siteId, eventName: { in: ['product_viewed', 'product_view'] }, ...connectorFilter }
+            }),
+            prisma.customerSession.groupBy({
+                by: ['trafficSource'],
+                where: { siteId, ...connectorFilter },
+                _count: { _all: true },
+                _sum: { isConverted: true }
+            })
+        ]);
+
+        const hasJourneyData = journeySessions > 0;
+
+        // Prefer real session data when available; otherwise fall back to the
+        // performance-metric derived estimate so existing projects keep working.
+        const sessions = hasJourneyData ? journeySessions : (sessionsCount || 1);
+        const productViews = hasJourneyData ? productViewEvents : views;
+        const purchases = hasJourneyData ? convertedSessions : orders;
+
+        const topAttribution = hasJourneyData && sessionsBySource.length > 0
+            ? sessionsBySource
+                .map((row) => ({
+                    source: row.trafficSource || 'Direct / Unknown',
+                    sessions: row._count?._all || 0,
+                    conversion: row._count?._all
+                        ? Math.round((Number(row._sum?.isConverted || 0) / row._count._all) * 100)
+                        : 0
+                }))
+                .sort((a, b) => b.sessions - a.sessions)
+                .slice(0, 5)
+            : [
+                { source: 'Direct / Organic', sessions, conversion: Math.round((purchases / sessions) * 100) }
+            ];
 
         return {
             funnel: [
                 { stage: 'Visit', count: sessions, percent: 100 },
                 {
                     stage: 'Product View',
-                    count: views,
-                    percent: Math.max(0, Math.min(100, Math.round((views / sessions) * 100)))
+                    count: productViews,
+                    percent: Math.max(0, Math.min(100, Math.round((productViews / sessions) * 100)))
                 },
                 {
                     stage: 'Purchase',
-                    count: orders,
-                    percent: Math.max(0, Math.min(100, Math.round((orders / sessions) * 100)))
+                    count: purchases,
+                    percent: Math.max(0, Math.min(100, Math.round((purchases / sessions) * 100)))
                 }
             ],
             segments: [
-                { name: 'Identified Customers', size: customers.length, active: customers.length, conversion: Math.round((orders / (customers.length || 1)) * 100), growth: 0 },
+                { name: 'Identified Customers', size: customers.length, active: customers.length, conversion: Math.round((purchases / (customers.length || 1)) * 100), growth: 0 },
                 { name: 'Anonymous Guests', size: Math.max(0, sessions - customers.length), active: 0, conversion: 0, growth: 0 }
             ],
-            topAttribution: [
-                { source: 'Direct / Organic', sessions: sessions, conversion: Math.round((orders / sessions) * 100) }
-            ],
+            topAttribution,
             paymentGateways,
             recentIdentities: customers.map(c => ({
                 id: c.id,

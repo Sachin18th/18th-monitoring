@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { ShopifyOrderSyncService } from '../services/shopify-order-sync.service';
 import { AdobeCommerceOrderSyncService } from '../services/adobe-commerce-order-sync.service';
 import { ShopifyCustomerSyncService } from '../services/shopify-customer-sync.service';
+import { ShopifyJourneySyncService } from '../services/shopify-journey-sync.service';
 import { AdobeCommerceCustomerSyncService } from '../services/adobe-commerce-customer-sync.service';
 import { BigCommerceOrderSyncService } from '../services/bigcommerce-order-sync.service';
 import { BigCommerceCustomerSyncService } from '../services/bigcommerce-customer-sync.service';
@@ -204,7 +205,15 @@ export class IntegrationController {
             try {
                 const orderSync = await ShopifyOrderSyncService.syncConnectorInstance(id);
                 const customerSync = await ShopifyCustomerSyncService.syncConnectorInstance(id);
-                initialSync = { orders: orderSync, customers: customerSync };
+                // Journey/session backfill needs protected-customer-data access; never let it
+                // fail the order/customer sync that already succeeded.
+                let journeySync: any = null;
+                try {
+                    journeySync = await ShopifyJourneySyncService.syncConnectorInstance(id);
+                } catch (journeyErr: any) {
+                    journeySync = { ok: false, message: journeyErr?.message };
+                }
+                initialSync = { orders: orderSync, customers: customerSync, journey: journeySync };
             } catch (err: any) {
                 initialSync = {
                     ok: false,
@@ -275,10 +284,17 @@ export class IntegrationController {
             if (instance.providerId === 'shopify') {
                 const orderResult = await ShopifyOrderSyncService.syncConnectorInstance(instance.id);
                 const customerResult = await ShopifyCustomerSyncService.syncConnectorInstance(instance.id);
-                return reply.send(ResponseUtil.success({ 
-                    status: 'SYNC_COMPLETED', 
-                    orders: orderResult, 
-                    customers: customerResult 
+                let journeyResult: any = null;
+                try {
+                    journeyResult = await ShopifyJourneySyncService.syncConnectorInstance(instance.id);
+                } catch (journeyErr: any) {
+                    journeyResult = { ok: false, message: journeyErr?.message };
+                }
+                return reply.send(ResponseUtil.success({
+                    status: 'SYNC_COMPLETED',
+                    orders: orderResult,
+                    customers: customerResult,
+                    journey: journeyResult
                 }, {}, req.id as string));
             } else if (instance.providerId === 'adobe_commerce') {
                 const orderResult = await AdobeCommerceOrderSyncService.syncConnectorInstance(instance.id);

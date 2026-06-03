@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@kpi-platform/db';
 import { orderNormalizationService } from './order-normalization.service';
+import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
 type ConnectorRecord = {
   id: string;
@@ -192,20 +193,26 @@ export class AdobeCommerceOrderSyncService {
 
   private static async fetchOrders(instance: ConnectorRecord): Promise<any[]> {
     const config = instance.syncConfig || {};
-    const base = String(config.baseUrl || '').replace(/\/$/, '');
+    // The connect flow persists the store URL under `storeUrl`; older/alt configs
+    // may use `baseUrl`. Accept either so orders actually fetch.
+    const base = String(config.baseUrl || config.storeUrl || '').trim().replace(/\/$/, '');
     if (!base) {
       console.warn('[AdobeCommerceOrderSyncService] fetchOrders:no-base-url', { siteId: instance.siteId });
       return [];
     }
 
-    // Get credentials
+    // Get credentials — newest first. `lastRotatedAt` is nullable and unset on
+    // connect, so ordering by it is non-deterministic; use createdAt as the
+    // reliable tiebreaker so reconnects always use the freshest token.
     const credential = await prisma.connectorCredential.findFirst({
-      where: { connectorInstanceId: instance.id },
-      orderBy: { lastRotatedAt: 'desc' }
+      where: { connectorInstanceId: instance.id, isActive: true },
+      orderBy: [{ createdAt: 'desc' }]
     });
 
     const credentials = this.parseCredentials(credential?.encryptedSecret);
-    const accessToken = String(credentials.accessToken || credentials.token || credentials.apiKey || '').trim();
+    const accessToken = String(
+      credentials.accessToken || credentials.adminApiToken || credentials.adminApiAccessToken || credentials.token || credentials.apiKey || ''
+    ).trim();
 
     if (!accessToken) {
       throw new Error('Adobe Commerce integration is missing access token in credentials.');
@@ -245,7 +252,7 @@ export class AdobeCommerceOrderSyncService {
         statusText: response.statusText,
         body
       });
-      throw new Error(`Adobe Commerce API request failed (${response.status}): ${body || response.statusText}`);
+      throw new Error(interpretAdobeApiError(response.status, body, response.statusText));
     }
 
     const payload = await response.json();
@@ -273,7 +280,7 @@ export class AdobeCommerceOrderSyncService {
       // Ensure we expose `accessToken` regardless of the incoming key name
       if (parsed.accessToken) return parsed;
 
-      const altToken = parsed.accessToken || parsed.token || parsed.apiKey || parsed.api_key || parsed.bearerToken;
+      const altToken = parsed.accessToken || parsed.adminApiToken || parsed.adminApiAccessToken || parsed.token || parsed.apiKey || parsed.api_key || parsed.bearerToken;
       if (altToken) {
         return { ...parsed, accessToken: String(altToken) };
       }

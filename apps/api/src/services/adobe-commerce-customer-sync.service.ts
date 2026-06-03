@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@kpi-platform/db';
+import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
 type ConnectorRecord = {
     id: string;
@@ -31,9 +32,12 @@ export class AdobeCommerceCustomerSyncService {
                 label: true,
                 syncConfig: true,
                 credentials: {
-                    orderBy: { lastRotatedAt: 'desc' },
+                    // Newest active credential first. `lastRotatedAt` is nullable and
+                    // unset on connect, so it can't order deterministically; createdAt can.
+                    where: { isActive: true },
+                    orderBy: { createdAt: 'desc' },
                     take: 1,
-                    select: { encryptedSecret: true }
+                    select: { id: true, encryptedSecret: true, createdAt: true }
                 }
             }
         });
@@ -44,7 +48,9 @@ export class AdobeCommerceCustomerSyncService {
         const credentials = this.parseCredentials(instance.credentials?.[0]?.encryptedSecret);
         const config = (instance.syncConfig || {}) as Record<string, any>;
         const storeUrl = String(config.storeUrl || '').trim();
-        const accessToken = String(credentials.adminApiAccessToken || credentials.accessToken || '').trim();
+        const accessToken = String(
+            credentials.adminApiAccessToken || credentials.adminApiToken || credentials.accessToken || credentials.token || credentials.apiKey || ''
+        ).trim();
 
         if (!storeUrl) {
             throw new Error('Adobe Commerce integration is missing storeUrl in syncConfig.');
@@ -53,6 +59,15 @@ export class AdobeCommerceCustomerSyncService {
         if (!accessToken) {
             throw new Error('Adobe Commerce integration is missing accessToken credentials.');
         }
+
+        console.log('[AdobeCommerceCustomerSyncService] syncConnectorInstance:start', {
+            connectorInstanceId,
+            storeUrl,
+            credentialId: instance.credentials?.[0]?.id || null,
+            credentialCreatedAt: instance.credentials?.[0]?.createdAt || null,
+            tokenLength: accessToken.length,
+            maskedToken: `${accessToken.slice(0, 4)}...${accessToken.slice(-4)}`
+        });
 
         const runId = crypto.randomUUID();
         const startedAt = new Date();
@@ -152,86 +167,72 @@ export class AdobeCommerceCustomerSyncService {
         accessToken: string;
     }): Promise<any[]> {
         const baseUrl = input.storeUrl.replace(/\/+$/, '');
-        const graphqlUrl = `${baseUrl}/graphql`;
+        const fetchFunc: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
+
+        // Use the admin REST endpoint (GET /rest/V1/customers/search), NOT the
+        // storefront GraphQL `customers` query. The GraphQL query authenticates
+        // only with a per-customer session token ("Composite reader could not read
+        // a token" otherwise); bulk export needs an admin/integration token, which
+        // the REST search endpoint accepts (requires the Magento_Customer::manage ACL).
+        const pageSize = 100;
+        const maxPages = 50; // safety cap (~5,000 customers per resync)
+        const all: any[] = [];
 
         console.log('[AdobeCommerceCustomerSyncService] fetchCustomers:start', {
             storeUrl: input.storeUrl
         });
 
-        // GraphQL query for Adobe Commerce customers
-        const query = `
-            query GetCustomers {
-                customers(pageSize: 100) {
-                    items {
-                        id
-                        email
-                        firstname
-                        lastname
-                        created_at
-                        updated_at
-                        is_subscribed
-                        addresses {
-                            id
-                            firstname
-                            lastname
-                            street
-                            city
-                            region
-                            postcode
-                            country_code
-                            telephone
-                        }
-                    }
-                    page_info {
-                        page_size
-                        current_page
-                        total_pages
-                    }
+        for (let currentPage = 1; currentPage <= maxPages; currentPage++) {
+            const url = new URL(`${baseUrl}/rest/V1/customers/search`);
+            url.searchParams.set('searchCriteria[pageSize]', String(pageSize));
+            url.searchParams.set('searchCriteria[currentPage]', String(currentPage));
+            url.searchParams.set('searchCriteria[sortOrders][0][field]', 'updated_at');
+            url.searchParams.set('searchCriteria[sortOrders][0][direction]', 'DESC');
+
+            const response = await fetchFunc(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${input.accessToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
                 }
-            }
-        `;
-
-        const fetchFunc: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
-
-        const response = await fetchFunc(graphqlUrl, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${input.accessToken}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ query })
-        });
-
-        if (!response.ok) {
-            const body = await response.text();
-            console.error('[AdobeCommerceCustomerSyncService] fetchCustomers:error-response', {
-                status: response.status,
-                statusText: response.statusText,
-                body
             });
-            throw new Error(`Adobe Commerce API request failed (${response.status}): ${body || response.statusText}`);
+
+            if (!response.ok) {
+                const body = await response.text();
+                console.error('[AdobeCommerceCustomerSyncService] fetchCustomers:error-response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    body
+                });
+                throw new Error(interpretAdobeApiError(response.status, body, response.statusText));
+            }
+
+            const payload = await response.json();
+            const items = Array.isArray(payload?.items) ? payload.items : [];
+            all.push(...items);
+
+            const totalCount = Number(payload?.total_count || 0);
+            // Stop when the last (short) page is reached or we've collected everything.
+            if (items.length < pageSize || (totalCount > 0 && all.length >= totalCount)) {
+                break;
+            }
         }
-
-        const payload = await response.json();
-
-        if (payload.errors) {
-            throw new Error(`Adobe Commerce GraphQL error: ${JSON.stringify(payload.errors)}`);
-        }
-
-        const customers = payload?.data?.customers?.items || [];
 
         console.log('[AdobeCommerceCustomerSyncService] fetchCustomers:success', {
-            customerCount: customers.length,
-            firstCustomerId: customers[0]?.id || null
+            customerCount: all.length,
+            firstCustomerId: all[0]?.id || null
         });
 
-        return customers;
+        return all;
     }
 
     private static async upsertCustomerProfile(instance: ConnectorRecord, rawCustomer: any): Promise<'created' | 'updated'> {
         const customerId = String(rawCustomer?.id || '');
         const email = String(rawCustomer?.email || '').trim();
         const phone = rawCustomer?.addresses?.[0]?.telephone ? String(rawCustomer.addresses[0].telephone).trim() : null;
+        // REST exposes the subscription flag under extension_attributes; GraphQL had it top-level.
+        const isSubscribed = Boolean(rawCustomer?.is_subscribed ?? rawCustomer?.extension_attributes?.is_subscribed ?? false);
 
         // Check if customer already exists by external ID
         const existing = await prisma.customerProfile.findFirst({
@@ -259,7 +260,7 @@ export class AdobeCommerceCustomerSyncService {
             } as Prisma.InputJsonValue,
             emailHash: emailHash || undefined,
             phoneHash: phoneHash || undefined,
-            lifecycleState: rawCustomer?.is_subscribed ? 'RETURNING' : 'NEW_GUEST',
+            lifecycleState: isSubscribed ? 'RETURNING' : 'NEW_GUEST',
             firstSeenAt: new Date(rawCustomer?.created_at || new Date()),
             lastSeenAt: new Date(rawCustomer?.updated_at || new Date()),
             totalLtv: null,
@@ -269,7 +270,7 @@ export class AdobeCommerceCustomerSyncService {
                 lastName: rawCustomer?.lastname || null,
                 email: email || null,
                 phone: phone || null,
-                isSubscribed: rawCustomer?.is_subscribed || false,
+                isSubscribed,
                 addresses: rawCustomer?.addresses || [],
                 connectorInstanceId: instance.id,
                 connectorLabel: instance.label,
