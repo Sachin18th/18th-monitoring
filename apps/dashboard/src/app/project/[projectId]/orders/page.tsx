@@ -6,6 +6,7 @@ import { PageRestricted } from "../../../../components/PageRestricted";
 import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 import { useParams } from "next/navigation";
 import { DiagnosticDrawer } from "@kpi-platform/ui";
+import { canAccessRoute, normalizeRole } from "@kpi-platform/shared-types";
 import {
   Package,
   Clock,
@@ -105,7 +106,7 @@ const orderMatchesActiveConnector = (order: any, connectorInstanceId: string | n
 
 const buildOrderStats = (orders: any[]) => {
   const now = Date.now();
-  const thisHour = orders.filter((order) => now - Number(new Date(order.createdAt || order.placedAt || 0)) < 60 * 60 * 1000);
+  const thisHour = orders.filter((order) => now - Number(new Date(order.placedAt || order.createdAt || 0)) < 60 * 60 * 1000);
 
   const onlineSplit = orders.filter((order) => {
     const source = String(order?.source || order?.sourceSystem || order?.channel || order?.orderSource || "").toLowerCase();
@@ -170,6 +171,27 @@ const normalizeOrderRecord = (order: any) => {
   };
 };
 
+// Render an age (in ms) as "1y 2mo 3d 4h 5m 6s", showing higher units only when
+// non-zero and always including seconds. Years/months use 365/30-day approximations.
+const formatAge = (ms: number) => {
+  let s = Math.floor((Number.isFinite(ms) && ms > 0 ? ms : 0) / 1000);
+  const years = Math.floor(s / (365 * 24 * 3600)); s -= years * 365 * 24 * 3600;
+  const months = Math.floor(s / (30 * 24 * 3600)); s -= months * 30 * 24 * 3600;
+  const days = Math.floor(s / (24 * 3600)); s -= days * 24 * 3600;
+  const hours = Math.floor(s / 3600); s -= hours * 3600;
+  const minutes = Math.floor(s / 60); s -= minutes * 60;
+  const seconds = s;
+
+  const parts: string[] = [];
+  if (years) parts.push(`${years}y`);
+  if (months) parts.push(`${months}mo`);
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(' ');
+};
+
 const formatOrderAmount = (order: any) => {
   const amount = Number(order?.amount ?? order?.totalAmount ?? 0);
   const currency = String(order?.currency || "USD").trim().toUpperCase();
@@ -210,6 +232,8 @@ export default function OrdersPage() {
   const { token, apiFetch, user } = useAuth();
   const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
   const tenantId = user?.tenantId;
+  const normalizedRole = normalizeRole(user?.role);
+  const canAccessOrders = canAccessRoute(normalizedRole, 'orders');
 
   const [loading, setLoading] = useState(true);
   const lastFetchTimeRef = useRef(0);
@@ -226,7 +250,6 @@ export default function OrdersPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
-  const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -235,6 +258,7 @@ export default function OrdersPage() {
 
   const fetchData = useCallback(async (force = false) => {
     if (!token || !projectId) return;
+    if (!canAccessOrders) return;
     
     // Debounce: prevent fetching more than once per 2 seconds using ref (not state)
     const now = Date.now();
@@ -246,12 +270,6 @@ export default function OrdersPage() {
     setLoading(true);
     setError(null);
     try {
-      const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, { suppressUnauthorizedRedirect: true });
-      const nextAllowedPageKeys = Array.isArray(permissions?.allowedPageKeys) ? permissions.allowedPageKeys.map((value: any) => String(value)) : [];
-      setAllowedPageKeys(nextAllowedPageKeys);
-
-      if (!nextAllowedPageKeys.includes('orders')) return;
-
       // Use Promise.all to fetch summary and list in parallel; avoid excessive sequential calls
       const [, listRes] = await Promise.all([
         apiFetch(`/api/v1/dashboard/orders/summary?siteId=${projectId}`),
@@ -273,7 +291,7 @@ export default function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [projectId, token, apiFetch, connectorInstanceId]);
+  }, [projectId, token, apiFetch, connectorInstanceId, canAccessOrders]);
 
   useEffect(() => {
     fetchData();
@@ -342,7 +360,7 @@ export default function OrdersPage() {
     setCurrentPage(1);
   }, [searchQuery, filterStatus]);
 
-  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('orders');
+  const isPageRestricted = !canAccessOrders;
 
   const timeline = useMemo<any[]>(() => {
     if (!selectedOrder) return [];
@@ -910,7 +928,7 @@ export default function OrdersPage() {
                 style={{
                   display: "grid",
                   gridTemplateColumns:
-                    "1.3fr 0.7fr 0.8fr 0.8fr 1fr 0.7fr 0.6fr",
+                    "1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 0.7fr 1.2fr",
                   padding: "12px 16px",
                   borderBottom: "1px solid var(--border-card)",
                   color: "var(--text-muted)",
@@ -932,8 +950,10 @@ export default function OrdersPage() {
                 const status = statusColor(o.status || "");
                 const health = healthColor(o.health || "");
                 const syncError = o.syncStatus !== "synced";
-                const diff =
-                  (Date.now() - new Date(o.createdAt).getTime()) / 60000;
+                // Age is measured from canonical_order.placed_at (online + offline/CSV alike).
+                const ageBasis = o.placedAt || o.createdAt;
+                const ageMs = ageBasis ? Date.now() - new Date(ageBasis).getTime() : 0;
+                const diff = ageMs / 60000;
 
                 return (
                   <button
@@ -942,7 +962,7 @@ export default function OrdersPage() {
                     style={{
                       display: "grid",
                       gridTemplateColumns:
-                        "1.3fr 0.7fr 0.8fr 0.8fr 1fr 0.7fr 0.6fr",
+                        "1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 0.7fr 1.2fr",
                       alignItems: "center",
                       gap: "8px",
                       padding: "14px 16px",
@@ -990,30 +1010,75 @@ export default function OrdersPage() {
                         minWidth: 0,
                       }}
                     >
-                      <Activity
-                        style={{
-                          width: "14px",
-                          height: "14px",
-                          flexShrink: 0,
-                          color:
-                            o.channel === "online"
-                              ? "#60a5fa"
-                              : "var(--text-muted)",
-                        }}
-                      />
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          textTransform: "uppercase",
-                          fontWeight: 700,
-                          color: "var(--text-primary)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {o.channel || "unknown"}
-                      </span>
+                      {(() => {
+                        const ch = String(o.channel || "").toLowerCase();
+                        const isOffline =
+                          ch === "offline" ||
+                          ch === "pos" ||
+                          String(o.sourceSystem || "").toLowerCase() === "csv" ||
+                          o.metadata?.orderSource === "offline";
+                        if (isOffline) {
+                          return (
+                            <>
+                              <FileText
+                                style={{
+                                  width: "14px",
+                                  height: "14px",
+                                  flexShrink: 0,
+                                  color: "var(--text-muted)",
+                                }}
+                              />
+                              <span
+                                style={{
+                                  fontSize: "11px",
+                                  textTransform: "uppercase",
+                                  fontWeight: 700,
+                                  color: "var(--text-secondary)",
+                                  background: "rgba(148,163,184,0.15)",
+                                  border: "1px solid rgba(148,163,184,0.3)",
+                                  borderRadius: "999px",
+                                  padding: "2px 8px",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                OFFLINE
+                              </span>
+                            </>
+                          );
+                        }
+                        const isOnline =
+                          ch === "online" ||
+                          ch === "web" ||
+                          ch === "api" ||
+                          ch.includes("shopify") ||
+                          ch.includes("bigcommerce") ||
+                          ch.includes("commerce");
+                        return (
+                          <>
+                            <Activity
+                              style={{
+                                width: "14px",
+                                height: "14px",
+                                flexShrink: 0,
+                                color: isOnline ? "#60a5fa" : "var(--text-muted)",
+                              }}
+                            />
+                            <span
+                              style={{
+                                fontSize: "11px",
+                                textTransform: "uppercase",
+                                fontWeight: 700,
+                                color: "var(--text-primary)",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {isOnline ? "ONLINE" : o.channel || "unknown"}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
                     <span
                       style={{
@@ -1090,7 +1155,7 @@ export default function OrdersPage() {
                       <Clock
                         style={{ width: "14px", height: "14px", flexShrink: 0 }}
                       />
-                      {Math.floor(diff)}m
+                      {formatAge(ageMs)}
                       <ChevronRight
                         style={{
                           width: "14px",
@@ -1216,6 +1281,7 @@ export default function OrdersPage() {
           timeline={timeline}
           reconciliation={reconciliation}
           onAction={handleAction}
+          role={user?.role}
         />
       </DiagnosticDrawer>
     </>

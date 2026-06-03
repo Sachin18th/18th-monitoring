@@ -1,10 +1,12 @@
 import React from 'react';
 import { InformationState } from '@kpi-platform/ui';
+import { hasPermission, normalizeRole } from '@kpi-platform/shared-types';
 import {
   Activity,
   ArrowRightLeft,
   Building2,
   Clock3,
+  FileText,
   Link2,
   RefreshCw,
   Search,
@@ -15,19 +17,34 @@ export interface OrderDetailDrawerContentProps {
   timeline: any[];
   reconciliation: any[];
   onAction: (action: string) => void;
+  role?: string | null;
 }
 
 export const OrderDetailDrawerContent: React.FC<OrderDetailDrawerContentProps> = ({
   order,
   timeline = [],
   reconciliation = [],
-  onAction
+  onAction,
+  role
 }) => {
   if (!order) return <InformationState type="loading" />;
+  const normalizedRole = normalizeRole(role);
+  const canWrite = hasPermission(normalizedRole, 'canWrite');
+  const canRetriggerSync = hasPermission(normalizedRole, 'canRetriggerSync');
 
   const amount = Number(order.amount ?? order.totalAmount ?? 0);
   const currency = String(order.currency || 'USD').trim().toUpperCase();
   const channel = String(order.channel || order.orderSource || order.sourceSystem || 'unknown').toLowerCase();
+  const isOfflineChannel =
+    channel === 'offline' ||
+    channel === 'pos' ||
+    String(order.sourceSystem || '').toLowerCase() === 'csv' ||
+    order.metadata?.orderSource === 'offline';
+  const channelLabel = isOfflineChannel
+    ? 'OFFLINE'
+    : channel === 'unknown'
+      ? 'UNKNOWN'
+      : channel.toUpperCase();
   const status = String(order.status || order.lifecycleState || order.normalizedStatus || 'unknown').toLowerCase();
   const syncStatus = String(order.syncStatus || 'synced').toLowerCase();
   const siteLabel = String(order.siteName || order.projectName || order.siteId || order.projectId || 'Current Site');
@@ -131,10 +148,10 @@ export const OrderDetailDrawerContent: React.FC<OrderDetailDrawerContentProps> =
           <div className="grid grid-cols-2 gap-4">
             <div>
               <div className="mb-[6px] flex items-center gap-1 text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">
-                <Activity size={14} />
+                {isOfflineChannel ? <FileText size={14} /> : <Activity size={14} />}
                 CHANNEL
               </div>
-              <div className="text-[14px] font-medium text-[#111827]">WEB</div>
+              <div className="text-[14px] font-medium text-[#111827]">{channelLabel}</div>
             </div>
             <div className="text-right">
               <div className="mb-[6px] flex items-center justify-end gap-1 text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">
@@ -147,27 +164,33 @@ export const OrderDetailDrawerContent: React.FC<OrderDetailDrawerContentProps> =
         </div>
       </section>
 
-      <section>
-        <div className={actionLabelClassName}>ORDER CONTROL LAYER</div>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => onAction('reprocess')}
-            className="flex h-[36px] items-center justify-center gap-[6px] rounded-[8px] bg-[#2563eb] px-3 text-[13px] font-medium text-white shadow-none transition-colors hover:bg-[#1d4ed8]"
-          >
-            <RefreshCw size={14} />
-            Reprocess Order
-          </button>
-          <button
-            type="button"
-            onClick={() => onAction('re-sync')}
-            className="flex h-[36px] items-center justify-center gap-[6px] rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[13px] font-normal text-[#374151] shadow-none transition-colors hover:bg-[#f9fafb]"
-          >
-            <ArrowRightLeft size={14} />
-            Force Re-Sync
-          </button>
-        </div>
-      </section>
+      {canWrite || canRetriggerSync ? (
+        <section>
+          <div className={actionLabelClassName}>ORDER CONTROL LAYER</div>
+          <div className="grid grid-cols-2 gap-2">
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={() => onAction('reprocess')}
+                className="flex h-[36px] items-center justify-center gap-[6px] rounded-[8px] bg-[#2563eb] px-3 text-[13px] font-medium text-white shadow-none transition-colors hover:bg-[#1d4ed8]"
+              >
+                <RefreshCw size={14} />
+                Reprocess Order
+              </button>
+            ) : null}
+            {canRetriggerSync ? (
+              <button
+                type="button"
+                onClick={() => onAction('re-sync')}
+                className="flex h-[36px] items-center justify-center gap-[6px] rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[13px] font-normal text-[#374151] shadow-none transition-colors hover:bg-[#f9fafb]"
+              >
+                <ArrowRightLeft size={14} />
+                Force Re-Sync
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className={cardClassName}>
         <div className="flex items-center gap-2">

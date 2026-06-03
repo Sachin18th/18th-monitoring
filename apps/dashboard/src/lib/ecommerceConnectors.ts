@@ -235,9 +235,29 @@ export type ConnectedStore = ConnectorHealth & {
 
 export type ConnectorSetupValues = Record<string, string>;
 
+export type ConnectorTestMetadata = {
+  latencyMs?: number;
+  store?: {
+    name?: string;
+    currency?: string;
+    timezone?: string;
+    plan?: string;
+    domain?: string;
+  };
+  counts?: {
+    orders?: number;
+    customers?: number;
+    products?: number;
+  };
+  scopesGranted?: string[];
+  scopesMissing?: string[];
+  webhooksSupported?: boolean;
+  checks?: Array<{ name: string; ok: boolean; detail?: string }>;
+};
+
 export type ConnectorTestResult =
-  | { ok: true; message: string }
-  | { ok: false; error: string };
+  | { ok: true; message: string; metadata?: ConnectorTestMetadata }
+  | { ok: false; error: string; metadata?: ConnectorTestMetadata };
 
 export type ConnectorAlert = {
   id: string;

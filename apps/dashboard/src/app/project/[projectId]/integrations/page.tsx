@@ -161,6 +161,7 @@ export default function IntegrationsPage() {
     if (normalized === "adobe_commerce") return "Adobe Commerce";
     if (normalized === "bigcommerce") return "BigCommerce";
     if (normalized === "shopify") return "Shopify";
+    if (normalized === "csv") return "CSV Upload";
     return toText(value);
   };
 

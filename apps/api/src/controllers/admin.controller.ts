@@ -1,10 +1,49 @@
 import { prisma } from '@kpi-platform/db';
 import { AuthService } from '../services/auth.service';
 import { PagePermissionsService } from '../services/page-permissions.service';
-import { PROJECT_PAGE_KEYS } from '@kpi-platform/shared-types';
+import { PROJECT_PAGE_KEYS, normalizeRole as normalizeAppRole } from '@kpi-platform/shared-types';
 import crypto from 'crypto';
 
 const normalizeRole = (role: unknown) => String(role || '').toUpperCase();
+const normalizeRequesterRole = (role: unknown) => normalizeAppRole(role);
+
+const toStoredRole = (role: unknown) => {
+    switch (normalizeAppRole(role)) {
+        case 'super_admin':
+            return 'SUPER_ADMIN';
+        case 'admin':
+            return 'PROJECT_ADMIN';
+        case 'ops_lead':
+            return 'OPERATOR';
+        case 'analyst':
+        default:
+            return 'VIEWER';
+    }
+};
+
+const getAllowedInviteRoles = (role: unknown) => {
+    const requesterRole = normalizeRequesterRole(role);
+
+    if (requesterRole === 'super_admin') {
+        return new Set(['super_admin', 'admin', 'ops_lead', 'analyst']);
+    }
+
+    if (requesterRole === 'admin') {
+        return new Set(['ops_lead', 'analyst']);
+    }
+
+    return new Set<string>();
+};
+
+const canManageProjectAdministration = (role: unknown, assignedProjects: string[] | undefined, projectId: string) => {
+    const requesterRole = normalizeRequesterRole(role);
+
+    if (requesterRole === 'super_admin') {
+        return true;
+    }
+
+    return Array.isArray(assignedProjects) && assignedProjects.includes(projectId);
+};
 
 const normalizePageKeys = (pageKeys: unknown) => PagePermissionsService.normalizeSelectedPageKeys(pageKeys);
 
@@ -33,18 +72,16 @@ const writePagePermissions = async (tx: any, userId: string, projectId: string, 
 
 export const listPlatformUsers = async (req: any, reply: any) => {
     const { projectId } = req.params;
+    const requesterRole = normalizeRequesterRole(req.user.role);
     
     // Additional security for non-SuperAdmins
-    if (req.user.role !== 'SUPER_ADMIN' && !req.user.assignedProjects.includes(projectId)) {
+    if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
         return reply.code(403).send({ error: 'Forbidden', message: 'You do not have access to this project administration.' });
     }
 
     const users = await prisma.user.findMany({
-        where: {
-            role: {
-                not: 'SUPER_ADMIN'
-            },
-              projectAccess: {
+        where: requesterRole === 'super_admin' ? undefined : {
+            projectAccess: {
                 some: { projectId }
             }
         },
@@ -66,10 +103,19 @@ export const listPlatformUsers = async (req: any, reply: any) => {
         }
     });
 
-    return users.map((user) => ({
+    const normalizedUsers = users.map((user) => ({
         ...user,
         pagePermissions: Array.isArray(user.pagePermissions) ? user.pagePermissions : []
     }));
+
+    if (requesterRole === 'admin') {
+        return normalizedUsers.filter((user) => {
+            const role = normalizeRequesterRole(user.role);
+            return role === 'ops_lead' || role === 'analyst';
+        });
+    }
+
+    return normalizedUsers;
 };
 
 export const listPageKeys = async (_req: any, reply: any) => {
@@ -105,9 +151,10 @@ export const getCurrentUserPermissions = async (req: any, reply: any) => {
 export const invitePlatformUser = async (req: any, reply: any) => {
     const projectId = String(req.body?.projectId || req.params?.projectId || '').trim();
     const { email, name, password } = req.body;
-    const requestedRole = normalizeRole(req.body?.role);
-    const allowedRoles = ['PROJECT_ADMIN', 'OPERATOR', 'VIEWER'];
-    const role = allowedRoles.includes(requestedRole) ? requestedRole : 'VIEWER';
+    const requesterRole = normalizeRequesterRole(req.user.role);
+    const requestedRole = normalizeRequesterRole(req.body?.role);
+    const allowedRoles = getAllowedInviteRoles(req.user.role);
+    const role = allowedRoles.has(requestedRole) ? toStoredRole(requestedRole) : null;
     const roleOverride = req.body?.roleOverride ?? null;
     const pageKeys = normalizePageKeys(req.body?.pageKeys);
 
@@ -115,7 +162,11 @@ export const invitePlatformUser = async (req: any, reply: any) => {
         return reply.code(400).send({ error: 'Missing fields' });
     }
 
-    if (!allowedRoles.includes(role)) {
+    if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
+        return reply.code(403).send({ error: 'Forbidden', message: 'You do not have access to this project administration.' });
+    }
+
+    if (!role) {
         return reply.code(400).send({ error: 'Invalid role' });
     }
 
@@ -208,9 +259,14 @@ export const updateUserPagePermissions = async (req: any, reply: any) => {
     const { userId } = req.params;
     const projectId = String(req.body?.projectId || req.params?.projectId || '').trim();
     const pageKeys = normalizePageKeys(req.body?.pageKeys);
+    const requesterRole = normalizeRequesterRole(req.user.role);
 
     if (!projectId) {
         return reply.code(400).send({ error: 'Missing projectId' });
+    }
+
+    if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
+        return reply.code(403).send({ error: 'Forbidden', message: 'You do not have access to this project administration.' });
     }
 
     try {
@@ -221,6 +277,14 @@ export const updateUserPagePermissions = async (req: any, reply: any) => {
 
         if (!user) {
             return reply.code(404).send({ error: 'Not found', message: 'User not found.' });
+        }
+
+        if (requesterRole === 'admin') {
+            const targetRole = normalizeRequesterRole(user.role);
+
+            if (targetRole !== 'ops_lead' && targetRole !== 'analyst') {
+                return reply.code(403).send({ error: 'Forbidden', message: 'Admin users can only manage ops lead and analyst access.' });
+            }
         }
 
         await prisma.$transaction(async (tx) => {
@@ -256,16 +320,20 @@ export const updateUserPagePermissions = async (req: any, reply: any) => {
 export const createPlatformUser = async (req: any, reply: any) => {
     const { projectId } = req.params;
     const { email, name, password } = req.body;
-    const requestedRole = String(req.body?.role || '').toUpperCase();
-    const allowedRoles = ['PROJECT_ADMIN', 'OPERATOR', 'VIEWER'];
-    const role = allowedRoles.includes(requestedRole) ? requestedRole : 'VIEWER';
+    const requestedRole = normalizeRequesterRole(req.body?.role);
+    const allowedRoles = getAllowedInviteRoles(req.user.role);
+    const role = allowedRoles.has(requestedRole) ? toStoredRole(requestedRole) : null;
     const roleOverride = req.body?.roleOverride ?? null;
 
     if (!email || !password || !name) {
         return reply.code(400).send({ error: 'Missing fields' });
     }
 
-    if (!allowedRoles.includes(role)) {
+    if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
+        return reply.code(403).send({ error: 'Forbidden' });
+    }
+
+    if (!role) {
         return reply.code(400).send({ error: 'Invalid role' });
     }
 
@@ -368,11 +436,11 @@ export const createPlatformUser = async (req: any, reply: any) => {
 export const updatePlatformUser = async (req: any, reply: any) => {
     const { projectId, userId } = req.params;
     const { email, name, role, status } = req.body;
-    const requestedRole = String(role || '').toUpperCase();
-    const allowedRoles = ['PROJECT_ADMIN', 'OPERATOR', 'VIEWER'];
+    const requestedRole = normalizeRequesterRole(role);
+    const allowedRoles = getAllowedInviteRoles(req.user.role);
     const normalizedStatus = String(status || '').toUpperCase();
 
-    if (req.user.role !== 'SUPER_ADMIN' && !req.user.assignedProjects.includes(projectId)) {
+    if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
         return reply.code(403).send({ error: 'Forbidden', message: 'You do not have access to this project administration.' });
     }
 
@@ -380,7 +448,7 @@ export const updatePlatformUser = async (req: any, reply: any) => {
         return reply.code(400).send({ error: 'Missing fields' });
     }
 
-    if (role && !allowedRoles.includes(requestedRole)) {
+    if (role && !allowedRoles.has(requestedRole)) {
         return reply.code(400).send({ error: 'Invalid role' });
     }
 
@@ -407,7 +475,7 @@ export const updatePlatformUser = async (req: any, reply: any) => {
             data: {
                 email,
                 name,
-                ...(role ? { role: requestedRole } : {}),
+                ...(role ? { role: toStoredRole(requestedRole) } : {}),
                 ...(status ? { status: normalizedStatus } : {})
             },
             select: {
@@ -429,12 +497,35 @@ export const updatePlatformUser = async (req: any, reply: any) => {
 export const updatePlatformUserStatus = async (req: any, reply: any) => {
     const { userId } = req.params;
     const { status } = req.body;
+    const projectId = String(req.body?.projectId || req.params?.projectId || '').trim();
+    const requesterRole = normalizeRequesterRole(req.user.role);
 
     if (!['ACTIVE', 'INACTIVE'].includes(status)) {
         return reply.code(400).send({ error: 'Invalid status' });
     }
 
+    if (!projectId) {
+        return reply.code(400).send({ error: 'Missing projectId' });
+    }
+
+    if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
+        return reply.code(403).send({ error: 'Forbidden', message: 'You do not have access to this project administration.' });
+    }
+
     try {
+        const access = await prisma.userProjectAccess.findUnique({
+            where: {
+                userId_projectId: {
+                    userId,
+                    projectId
+                }
+            }
+        });
+
+        if (!access && requesterRole !== 'super_admin') {
+            return reply.code(404).send({ error: 'Not found', message: 'User is not assigned to this project.' });
+        }
+
         const updated = await prisma.user.update({
             where: { id: userId },
             data: { status },
@@ -486,6 +577,10 @@ export const deletePlatformUser = async (req: any, reply: any) => {
         }
 
         await prisma.$transaction(async (tx) => {
+            // 1. Remove the user from the project access table first. We clear page
+            //    permissions and project access for this project, then drop any
+            //    remaining project access rows so the user row can be deleted
+            //    (userProjectAccess has no cascade-on-delete to the user).
             await tx.userPagePermission.deleteMany({
                 where: {
                     userId,
@@ -501,12 +596,23 @@ export const deletePlatformUser = async (req: any, reply: any) => {
                     }
                 }
             });
+
+            await tx.userProjectAccess.deleteMany({
+                where: { userId }
+            });
+
+            // 2. Finally delete the user from the users table. Remaining page
+            //    permissions and sessions cascade automatically.
+            await tx.user.delete({
+                where: { id: userId }
+            });
         });
 
         return reply.code(200).send({
             success: true,
             userId,
-            projectId
+            projectId,
+            deleted: true
         });
     } catch (e: any) {
         return reply.code(400).send({ error: e.message || 'Failed to delete user.' });

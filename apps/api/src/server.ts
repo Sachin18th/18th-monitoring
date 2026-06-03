@@ -244,14 +244,14 @@ export const bootstrapApi = async () => {
     // System Access Management APIs
     server.get('/api/v1/admin/page-keys', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, listPageKeys);
     server.get('/api/admin/page-keys', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, listPageKeys);
-    server.post('/api/v1/admin/invite', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, invitePlatformUser);
-    server.post('/api/admin/invite', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, invitePlatformUser);
+    server.post('/api/v1/admin/invite', { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, invitePlatformUser);
+    server.post('/api/admin/invite', { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, invitePlatformUser);
     server.get('/api/v1/admin/projects/:projectId/users',   { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, listPlatformUsers);
     server.post('/api/v1/admin/projects/:projectId/users',  { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, createPlatformUser);
     server.patch('/api/v1/admin/projects/:projectId/users/:userId', { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, updatePlatformUser);
     server.delete('/api/v1/admin/projects/:projectId/users/:userId', { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, deletePlatformUser);
-    server.put('/api/v1/admin/users/:userId/permissions', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, updateUserPagePermissions);
-    server.put('/api/admin/users/:userId/permissions', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, updateUserPagePermissions);
+    server.put('/api/v1/admin/users/:userId/permissions', { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, updateUserPagePermissions);
+    server.put('/api/admin/users/:userId/permissions', { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, updateUserPagePermissions);
     server.patch('/api/v1/admin/users/:userId/status',      { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, updatePlatformUserStatus);
 
     // Legacy Aliases (Compatibility for customers -> users migration)

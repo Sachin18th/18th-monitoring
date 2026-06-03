@@ -233,6 +233,24 @@ export const uploadOfflineOrders = async (req: any, res: any) => {
     }
 };
 
+export const ingestCsvConnector = async (req: any, res: any) => {
+    const { siteId } = getFilters(req);
+    try {
+        const { OrderIngestionService } = require('../services/order-ingestion.service');
+        const { connectorName, rows, targetConnectorId, connectorInstanceId, currency } = req.body || {};
+        const result = await OrderIngestionService.ingestCsvRows(
+            siteId,
+            connectorName,
+            rows,
+            targetConnectorId || connectorInstanceId || null,
+            currency || null,
+        );
+        return res.code(200).send(successResponse(result));
+    } catch (err) {
+        return respondWithError(res, err, 'ingestCsvConnector', siteId);
+    }
+};
+
 export const syncIntegration = async (req: any, res: any) => {
     const { siteId } = getFilters(req);
     try {

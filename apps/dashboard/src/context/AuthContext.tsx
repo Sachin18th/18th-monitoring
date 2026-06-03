@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
 import { connectorFilterStore } from '../lib/connectorFilterStore';
+import { normalizeRole } from '@kpi-platform/shared-types';
 
 const getConnectorBridgeResponse = (url: string) => {
     if (typeof window === 'undefined') return undefined;
@@ -454,7 +455,7 @@ const parseStoredUser = (storedUser: string | null): User | null => {
 };
 
 const isGlobalProjectsAdmin = (role?: User['role'] | null) =>
-    role === 'SUPER_ADMIN' || role === 'TENANT_ADMIN';
+    normalizeRole(role) === 'super_admin' || normalizeRole(role) === 'admin';
 
 // Cache Management Utilities
 const MAX_CACHE_SIZE = 2 * 1024 * 1024; // 2MB limit

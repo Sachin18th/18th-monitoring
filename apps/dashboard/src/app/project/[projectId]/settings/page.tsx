@@ -176,7 +176,7 @@ export default function AdministrationPage() {
    };
 
   return (
-    <RoleGuard allowedRoles={['SUPER_ADMIN']}>
+   <RoleGuard allowedRoles={['SUPER_ADMIN', 'PROJECT_ADMIN']}>
          <div
             style={{
                ...pageStyle,

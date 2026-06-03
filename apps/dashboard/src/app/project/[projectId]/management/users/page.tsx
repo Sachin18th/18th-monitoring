@@ -5,18 +5,51 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button, Input, Typography } from '@kpi-platform/ui';
 import { Plus, RefreshCw, ShieldCheck, UserPlus, UserX, Users, X } from 'lucide-react';
-import { PROJECT_PAGE_ACCESS_OPTIONS, PROJECT_PAGE_KEYS } from '@kpi-platform/shared-types';
+import { PROJECT_PAGE_ACCESS_OPTIONS, PROJECT_PAGE_KEYS, normalizeRole } from '@kpi-platform/shared-types';
 import { useAuth } from '../../../../../context/AuthContext';
 import { RoleGuard } from '../../../../../components/auth/RoleGuard';
 import { MonitoringFilterBar } from '../../../../../components/ui/MonitoringFilterBar';
 import { SectionHeader } from '../../../../../components/ui/SectionHeader';
 import { SortableTable } from '../../../../../components/ui/SortableTable';
 
-const PROJECT_ROLE_OPTIONS = [
-  { value: 'PROJECT_ADMIN', label: 'Project Admin', description: 'Can manage project settings, access, and users.' },
-  { value: 'OPERATOR', label: 'Operator', description: 'Can work the project without changing governance settings.' },
-  { value: 'VIEWER', label: 'Viewer', description: 'Read-only access to the assigned project.' },
-] as const;
+const ROLE_OPTIONS_BY_ACCESS = {
+  super_admin: [
+    { value: 'super_admin', label: 'Super Admin', description: 'Full platform governance across tenants and projects.' },
+    { value: 'admin', label: 'Admin', description: 'Can manage project users, access, and governance settings.' },
+    { value: 'ops_lead', label: 'Ops Lead', description: 'Can work the project without changing governance settings.' },
+    { value: 'analyst', label: 'Analyst', description: 'Read-only access to the assigned project.' },
+  ],
+  admin: [
+    { value: 'ops_lead', label: 'Ops Lead', description: 'Can work the project without changing governance settings.' },
+    { value: 'analyst', label: 'Analyst', description: 'Read-only access to the assigned project.' },
+  ],
+} as const;
+
+type EditableRole = 'super_admin' | 'admin' | 'ops_lead' | 'analyst';
+
+const toStoredRole = (role: string) => {
+  switch (normalizeRole(role)) {
+    case 'super_admin':
+      return 'SUPER_ADMIN';
+    case 'admin':
+      return 'PROJECT_ADMIN';
+    case 'ops_lead':
+      return 'OPERATOR';
+    case 'analyst':
+    default:
+      return 'VIEWER';
+  }
+};
+
+const normalizeEditableRole = (role: string | undefined, fallback: EditableRole = 'analyst'): EditableRole => {
+  const normalized = normalizeRole(role);
+
+  if (normalized === 'super_admin' || normalized === 'admin' || normalized === 'ops_lead' || normalized === 'analyst') {
+    return normalized;
+  }
+
+  return fallback;
+};
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -154,7 +187,7 @@ const emptyFormState = {
   name: '',
   email: '',
   password: 'password123',
-  role: 'VIEWER',
+  role: 'analyst' as EditableRole,
   status: 'ACTIVE',
 };
 
@@ -176,6 +209,10 @@ export default function UserManagementPage() {
   const [formUser, setFormUser] = useState({ ...emptyFormState });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [selectedPageKeys, setSelectedPageKeys] = useState<string[]>(PROJECT_PAGE_KEYS.slice());
+  const currentRole = normalizeRole(user?.role);
+  const isSuperAdmin = currentRole === 'super_admin';
+  const roleOptions = isSuperAdmin ? ROLE_OPTIONS_BY_ACCESS.super_admin : ROLE_OPTIONS_BY_ACCESS.admin;
+  const defaultRole = roleOptions[0]?.value ?? 'analyst';
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -196,8 +233,15 @@ export default function UserManagementPage() {
   }, [loadUsers]);
 
   const visibleUsers = useMemo(() => {
-    return users.filter((user) => String(user.role || '').trim().toUpperCase() !== 'SUPER_ADMIN');
-  }, [users]);
+    if (isSuperAdmin) {
+      return users;
+    }
+
+    return users.filter((entry) => {
+      const normalizedUserRole = normalizeRole(entry.role);
+      return normalizedUserRole === 'ops_lead' || normalizedUserRole === 'analyst';
+    });
+  }, [isSuperAdmin, users]);
 
   const stats = useMemo(() => {
     const activeUsers = visibleUsers.filter((user) => normalizeStatus(user.status) === 'ACTIVE');
@@ -215,7 +259,7 @@ export default function UserManagementPage() {
   const openCreateModal = () => {
     setModalMode('create');
     setEditingUserId(null);
-    setFormUser({ ...emptyFormState });
+    setFormUser({ ...emptyFormState, role: defaultRole });
     setSelectedPageKeys(PROJECT_PAGE_KEYS.slice());
     setFormError(null);
     setShowModal(true);
@@ -235,7 +279,7 @@ export default function UserManagementPage() {
       name: user.name || '',
       email: user.email || '',
       password: 'password123',
-      role: String(user.role || 'VIEWER').toUpperCase(),
+      role: normalizeEditableRole(user.role, defaultRole),
       status: normalizeStatus(user.status) || 'ACTIVE',
     });
     setSelectedPageKeys(getPermissionSelection(user));
@@ -257,7 +301,7 @@ export default function UserManagementPage() {
             name: formUser.name,
             email: formUser.email,
             password: formUser.password,
-            role: formUser.role,
+            role: toStoredRole(formUser.role),
             pageKeys: selectedPageKeys,
           }),
         });
@@ -265,7 +309,7 @@ export default function UserManagementPage() {
 
       setShowModal(false);
       setEditingUserId(null);
-      setFormUser({ ...emptyFormState });
+      setFormUser({ ...emptyFormState, role: defaultRole });
       await loadUsers();
     } catch (saveError: any) {
       const message = saveError?.message || 'Failed to save user';
@@ -282,7 +326,7 @@ export default function UserManagementPage() {
       await apiFetch(`/api/v1/admin/users/${uid}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, projectId }),
       });
       await loadUsers();
     } catch (statusError: any) {
@@ -297,7 +341,9 @@ export default function UserManagementPage() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete ${user.name || user.email || 'this user'} from this project?`);
+    const confirmed = window.confirm(
+      `Permanently delete ${user.name || user.email || 'this user'}? This removes their project access and deletes their account. This cannot be undone.`,
+    );
 
     if (!confirmed) {
       return;
@@ -334,7 +380,7 @@ export default function UserManagementPage() {
         body: JSON.stringify({
           name: formUser.name,
           email: formUser.email,
-          role: formUser.role,
+          role: toStoredRole(formUser.role),
           status: formUser.status,
         }),
       });
@@ -395,7 +441,7 @@ export default function UserManagementPage() {
   };
 
   return (
-    <RoleGuard allowedRoles={['SUPER_ADMIN']}>
+    <RoleGuard allowedRoles={['SUPER_ADMIN', 'ADMIN']}>
       <div style={{ minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
         <div style={{ ...pageStyle, ...sectionSpacingStyle }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -535,14 +581,14 @@ export default function UserManagementPage() {
                         <Button variant="outline" size="sm" onClick={() => toggleStatus(row.id, row.status)}>
                           {normalizeStatus(row.status) === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}
                         </Button>
-                        {/* <Button
+                        <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleDeleteUser(row)}
                           disabled={deletingUserId === row.id || String(row.role || '').trim().toUpperCase() === 'SUPER_ADMIN'}
                         >
-                          Delete user
-                        </Button> */}
+                          {deletingUserId === row.id ? 'Deleting…' : 'Delete user'}
+                        </Button>
                       </div>
                     ),
                   },
@@ -593,7 +639,7 @@ export default function UserManagementPage() {
                       onChange={(event) => setFormUser({ ...formUser, email: event.target.value })}
                       required
                     />
-                    {modalMode === 'create' || modalMode === 'access' ? (
+                    {/* {modalMode === 'create' || modalMode === 'access' ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-card)', background: 'var(--bg-page)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
                           <div>
@@ -640,7 +686,9 @@ export default function UserManagementPage() {
                           })}
                         </div>
                       </div>
-                    ) : null}
+                    ) : null} */}
+
+
                     {modalMode === 'create' ? (
                       <Input
                         label="Temporary password"
@@ -658,7 +706,7 @@ export default function UserManagementPage() {
                       <select
                         id="invite-role"
                         value={formUser.role}
-                        onChange={(event) => setFormUser({ ...formUser, role: event.target.value })}
+                        onChange={(event) => setFormUser({ ...formUser, role: normalizeEditableRole(event.target.value, defaultRole) })}
                         style={{
                           width: '100%',
                           borderRadius: '8px',
@@ -669,14 +717,14 @@ export default function UserManagementPage() {
                           fontSize: '14px',
                         }}
                       >
-                        {PROJECT_ROLE_OPTIONS.map((option) => (
+                        {roleOptions.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
                         ))}
                       </select>
                       <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                        {PROJECT_ROLE_OPTIONS.find((option) => option.value === formUser.role)?.description}
+                        {roleOptions.find((option) => option.value === formUser.role)?.description}
                       </p>
                     </div>
 

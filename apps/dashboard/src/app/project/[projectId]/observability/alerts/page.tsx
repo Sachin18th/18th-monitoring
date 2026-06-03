@@ -14,6 +14,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PageRestricted } from '@/components/PageRestricted';
 
 const pageStyle: React.CSSProperties = {
@@ -142,11 +143,16 @@ const alertRowStyle: React.CSSProperties = {
 export default function AlertCenterPage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
+  // Active store selection — drives which connector's alerts are shown and
+  // triggers a live DB re-sync whenever the operator switches stores.
+  const { connectorInstanceId, connectorLabel, connectorSelectionTick } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [alerts, setAlerts]   = useState<any[]>([]);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<string[]>([]);
+  const [sourceFilter, setSourceFilter] = useState<string[]>([]);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
@@ -159,23 +165,43 @@ export default function AlertCenterPage() {
 
       if (!nextAllowedPageKeys.includes('observability/alerts')) return;
 
+      // apiFetch auto-appends connector_instance_id for the active store, so the
+      // backend scopes alerts to the selected connector. Do NOT add it to the URL
+      // here as well, or it gets sent twice and the backend receives an array.
       const res = await apiFetch(`/api/v1/dashboard/alerts?siteId=${projectId}`, { suppressUnauthorizedRedirect: true });
       // Handle both {alerts:[]} and plain []
       const list = Array.isArray(res) ? res : (res?.alerts ?? []);
-      setAlerts(list);
+      // Defensive client-side scoping: when a store is selected, drop any alert
+      // not tied to that connector (system-wide alerts have a null connector).
+      const scoped = connectorInstanceId
+        ? list.filter((a: any) => String(a?.connectorInstanceId ?? '') === connectorInstanceId)
+        : list;
+      setAlerts(scoped);
     } catch (err: any) {
       console.error('[AlertCenter] Load failed', err);
       setError('Failed to synchronize operational signals.');
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token]);
+  }, [apiFetch, projectId, token, connectorInstanceId]);
 
   useEffect(() => {
     loadData();
     const interval = setInterval(loadData, 30_000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  // Real-time re-synchronization when the operator switches the selected store.
+  // Clear stale alerts immediately so the panel never shows another store's data,
+  // then pull a fresh DB snapshot scoped to the newly selected connector.
+  useEffect(() => {
+    if (!token || !projectId) return;
+    setAlerts([]);
+    setSeverityFilter([]);
+    setSourceFilter([]);
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectorSelectionTick]);
 
   // Derive stats from live alerts
   const stats = useMemo(() => {
@@ -194,6 +220,42 @@ export default function AlertCenterPage() {
     timestamp: a.triggeredAt ? new Date(a.triggeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
     source: a.module || a.affectedEntity || 'System',
   })), [alerts]);
+
+  // Filter options derived from live alerts (no static/hardcoded lists).
+  const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'WARNING', 'MEDIUM', 'LOW', 'INFO'];
+  const availableSeverities = useMemo(() => {
+    const present = new Set(mappedAlerts.map((a) => a.severity));
+    return SEVERITY_ORDER.filter((s) => present.has(s));
+  }, [mappedAlerts]);
+  const availableSources = useMemo(
+    () => Array.from(new Set(mappedAlerts.map((a) => a.source).filter(Boolean))),
+    [mappedAlerts],
+  );
+
+  const toggle = (list: string[], value: string) =>
+    list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+
+  // Severity colour scheme: CRITICAL → orange, HIGH → red, others → neutral.
+  const severityStyle = (severity: string) => {
+    switch (String(severity || '').toUpperCase()) {
+      case 'CRITICAL':
+        return { icon: '#fb923c', bg: 'rgba(249,115,22,0.14)', text: '#f97316' };
+      case 'HIGH':
+        return { icon: '#f87171', bg: 'rgba(239,68,68,0.14)', text: '#ef4444' };
+      default:
+        return { icon: '#94a3b8', bg: 'rgba(148,163,184,0.16)', text: '#94a3b8' };
+    }
+  };
+
+  const visibleAlerts = useMemo(
+    () =>
+      mappedAlerts.filter(
+        (a) =>
+          (severityFilter.length === 0 || severityFilter.includes(a.severity)) &&
+          (sourceFilter.length === 0 || sourceFilter.includes(a.source)),
+      ),
+    [mappedAlerts, severityFilter, sourceFilter],
+  );
 
   if (allowedPageKeys !== null && !allowedPageKeys.includes('observability/alerts')) {
     return <PageRestricted pageKey="observability/alerts" />;
@@ -219,7 +281,10 @@ export default function AlertCenterPage() {
             <Bell style={{ width: '20px', height: '20px', color: '#818cf8', flexShrink: 0 }} />
             <span>Alert Center</span>
           </h1>
-          <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>Real-time operational alerts and threshold monitoring for {projectId as string}</p>
+          <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>
+            Real-time operational alerts and threshold monitoring for {projectId as string}
+            {connectorInstanceId ? <> · <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{connectorLabel}</span></> : ' · All stores'}
+          </p>
         </div>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
@@ -261,7 +326,7 @@ export default function AlertCenterPage() {
             </div>
             <div style={metricValueStyle}>{stat.value}</div>
             <div style={metricBottomRowStyle}>
-              <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: stat.label === 'Critical' ? 'var(--error-bg)' : 'var(--success-bg)', color: stat.label === 'Critical' ? 'var(--error-text)' : 'var(--success-text)' }}>{stat.label === 'Resolved (live)' ? 'RESOLVED' : stat.label === 'Total Signals' ? 'TOTAL' : stat.label === 'Active Alerts' ? 'ACTIVE' : 'CRITICAL'}</span>
+              <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: ['Critical', 'Active Alerts', 'Total Signals'].includes(stat.label) ? 'var(--error-bg)' : 'var(--success-bg)', color: ['Critical', 'Active Alerts', 'Total Signals'].includes(stat.label) ? 'var(--error-text)' : 'var(--success-text)' }}>{stat.label === 'Resolved (live)' ? 'RESOLVED' : stat.label === 'Total Signals' ? 'TOTAL' : stat.label === 'Active Alerts' ? 'ACTIVE' : 'CRITICAL'}</span>
               <span style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{stat.label}</span>
             </div>
           </div>
@@ -274,31 +339,49 @@ export default function AlertCenterPage() {
           <div style={filterPanelStyle}>
             <p style={filterTitleStyle}>Severity Filter</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {['Critical', 'High', 'Medium', 'Low'].map((s) => (
-                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                  <input type="checkbox" style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }} />
-                  {s}
-                </label>
-              ))}
+              {availableSeverities.length === 0 ? (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No active signals</span>
+              ) : (
+                availableSeverities.map((s) => (
+                  <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={severityFilter.includes(s)}
+                      onChange={() => setSeverityFilter((list) => toggle(list, s))}
+                      style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }}
+                    />
+                    {s.charAt(0) + s.slice(1).toLowerCase()}
+                  </label>
+                ))
+              )}
             </div>
           </div>
 
           <div style={filterPanelStyle}>
             <p style={filterTitleStyle}>Signal Source</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {['Backend API', 'Frontend RUM', 'Synthetic', 'Journey Engine'].map((s) => (
-                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                  <input type="checkbox" style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }} />
-                  {s}
-                </label>
-              ))}
+              {availableSources.length === 0 ? (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No sources</span>
+              ) : (
+                availableSources.map((s) => (
+                  <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={sourceFilter.includes(s)}
+                      onChange={() => setSourceFilter((list) => toggle(list, s))}
+                      style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }}
+                    />
+                    {s}
+                  </label>
+                ))
+              )}
             </div>
           </div>
         </div>
 
-        {/* Alert List */}
+
         <div style={alertPanelStyle}>
-          {mappedAlerts.length === 0 && !loading ? (
+          {visibleAlerts.length === 0 && !loading ? (
             <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
               <CheckCircle2 style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#10b981', flexShrink: 0 }} />
               <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>All Clear</h3>
@@ -306,20 +389,21 @@ export default function AlertCenterPage() {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {mappedAlerts.map((alert) => {
-                const isCritical = alert.severity === 'CRITICAL';
-                const rowIcon = alert.status === 'ACTIVE' ? ShieldAlert : CheckCircle2;
+              {visibleAlerts.map((alert) => {
+                const isActive = alert.status === 'ACTIVE';
+                const rowIcon = isActive ? ShieldAlert : CheckCircle2;
+                const sev = severityStyle(alert.severity);
                 return (
                   <div key={alert.id} style={alertRowStyle}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0 }}>
-                      {React.createElement(rowIcon, { style: { width: '16px', height: '16px', marginTop: '2px', flexShrink: 0, color: isCritical ? '#f87171' : '#4ade80' } })}
+                      {React.createElement(rowIcon, { style: { width: '16px', height: '16px', marginTop: '2px', flexShrink: 0, color: isActive ? sev.icon : '#4ade80' } })}
                       <div style={{ minWidth: 0 }}>
                         <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{alert.title}</p>
                         <p style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.08em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{alert.source}</p>
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, minWidth: 0 }}>
-                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', background: isCritical ? 'var(--error-bg)' : 'var(--success-bg)', color: isCritical ? 'var(--error-text)' : 'var(--success-text)', whiteSpace: 'nowrap', flexShrink: 0 }}>{alert.severity}</span>
+                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', background: sev.bg, color: sev.text, whiteSpace: 'nowrap', flexShrink: 0 }}>{alert.severity}</span>
                       <span style={{ fontSize: '11px', color: 'var(--text-label)', whiteSpace: 'nowrap', flexShrink: 0 }}>{alert.timestamp}</span>
                       <button style={{ fontSize: '11px', color: '#60a5fa', fontWeight: 500, letterSpacing: '0.05em', whiteSpace: 'nowrap', flexShrink: 0, background: 'transparent', border: 'none', cursor: 'pointer' }}>INVESTIGATE</button>
                     </div>

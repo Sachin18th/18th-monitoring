@@ -21,6 +21,7 @@ import {
     getOrderRCA,
     getOrderRecommendations,
     uploadOfflineOrders,
+    ingestCsvConnector,
     syncIntegration,
     getIntegrationStatus,
     getDelayedOrders,
@@ -88,6 +89,7 @@ export const dashboardRoutes = async (fastify: any) => {
     fastify.get('/orders/rca', { preHandler: [requirePageAccess('orders')] }, getOrderRCA);
     fastify.get('/orders/recommendations', { preHandler: [requirePageAccess('orders')] }, getOrderRecommendations);
     fastify.post('/orders/offline/upload', { preHandler: [requirePageAccess('orders')] }, uploadOfflineOrders);
+    fastify.post('/connectors/csv/ingest', { preHandler: [requirePageAccess('integrations')] }, ingestCsvConnector);
     fastify.post('/orders/integrations/sync', { preHandler: [requirePageAccess('orders')] }, syncIntegration);
     fastify.get('/orders/integrations/status', { preHandler: [requirePageAccess('orders')] }, getIntegrationStatus);
     fastify.get('/orders/list', getOrders);

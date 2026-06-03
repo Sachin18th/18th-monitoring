@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Eye, EyeOff, HelpCircle, CheckCircle2, AlertCircle } from 'lucide-react';
+import { ExternalLink, Eye, EyeOff, HelpCircle, CheckCircle2, AlertCircle, FileSpreadsheet } from 'lucide-react';
 import { useConnectorPlatform } from '../../context/ConnectorPlatformContext';
 import { useToast } from '@kpi-platform/ui';
 
@@ -34,7 +34,7 @@ const sectionStyle: React.CSSProperties = {
 };
 
 export const ConnectorSetupModal: React.FC = () => {
-  const { connectorSetup, connectorCatalog, closeConnectorSetup, testConnectorConnection, saveConnectorConnection, beginConnectorSetup, isSetupModalOpen } = useConnectorPlatform();
+  const { connectorSetup, connectorCatalog, closeConnectorSetup, testConnectorConnection, saveConnectorConnection, beginConnectorSetup, isSetupModalOpen, openCsvUpload } = useConnectorPlatform();
   const platform = connectorSetup.platform;
   const config = platform ? connectorCatalog[platform] : null;
 
@@ -142,6 +142,29 @@ export const ConnectorSetupModal: React.FC = () => {
                 </div>
               </button>
             ))}
+            <button
+              key="csv"
+              onClick={() => { closeConnectorSetup(); openCsvUpload(); }}
+              style={{
+                padding: '20px',
+                borderRadius: '12px',
+                border: '1.5px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                cursor: 'pointer',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: '10px'
+              }}
+            >
+              <div style={{ width: '36px', height: '36px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <FileSpreadsheet style={{ width: '18px', height: '18px', color: '#6b7280' }} />
+              </div>
+              <div style={{ textAlign: 'left' }}>
+                <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '3px' }}>CSV / Excel Upload</p>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Upload offline orders from a spreadsheet file</p>
+              </div>
+            </button>
           </div>
         </div>
       </div>

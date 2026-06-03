@@ -3,27 +3,13 @@
 import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../../../context/AuthContext';
-import { PROJECT_PAGE_ACCESS_OPTIONS } from '@kpi-platform/shared-types';
+import { getDefaultProjectPathForRole, normalizeRole } from '@kpi-platform/shared-types';
 
 export default function ProjectRedirectPage() {
   const params = useParams();
   const router = useRouter();
-  const { apiFetch } = useAuth();
+  const { apiFetch, user } = useAuth();
   const projectId = params.projectId;
-
-  const normalizeAllowedPageKeys = (permissions: any): string[] => {
-    const pageKeys = Array.isArray(permissions?.allowedPageKeys)
-      ? permissions.allowedPageKeys
-      : Array.isArray(permissions?.data?.allowedPageKeys)
-        ? permissions.data.allowedPageKeys
-        : Array.isArray(permissions?.pageKeys)
-          ? permissions.pageKeys
-          : Array.isArray(permissions?.data?.pageKeys)
-            ? permissions.data.pageKeys
-            : [];
-
-    return pageKeys.map((value: any) => String(value));
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -35,17 +21,7 @@ export default function ProjectRedirectPage() {
       }
 
       try {
-        const permissions = await apiFetch(`/api/v1/user/permissions?projectId=${projectId}`, {
-          suppressUnauthorizedRedirect: true,
-        });
-
-        const allowedPageKeys = normalizeAllowedPageKeys(permissions);
-
-        const firstAllowedPage = PROJECT_PAGE_ACCESS_OPTIONS.find(
-          (option) => allowedPageKeys.includes(option.key) && !option.superAdminOnly,
-        );
-
-        const targetPath = firstAllowedPage?.path || (allowedPageKeys.includes('overview') ? '/overview' : null);
+        const targetPath = getDefaultProjectPathForRole(normalizeRole(user?.role));
 
         if (cancelled) return;
 
@@ -66,7 +42,7 @@ export default function ProjectRedirectPage() {
     return () => {
       cancelled = true;
     };
-  }, [apiFetch, projectId, router]);
+  }, [apiFetch, projectId, router, user?.role]);
 
   return (
     <div className="flex h-screen w-full items-center justify-center bg-bg-base">

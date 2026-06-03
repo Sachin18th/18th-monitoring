@@ -4,6 +4,7 @@ import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memor
 import { HealthEngine } from '../services/health-engine.service';
 import { AlertEngine } from '../services/alert-engine.service';
 import { DashboardService } from '../services/dashboard.service';
+import { OrderAlertService } from '../services/order-alert.service';
 import { tenantAuthHandler } from '../middlewares/auth.middleware';
 import { tenantIsolationGuard } from '../middlewares/tenant-isolation.middleware';
 import { ResponseUtil } from '../utils/response';
@@ -128,16 +129,75 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
      * Lists all active alerts for the project, sorted by severity.
      */
     fastify.get('/tenants/:tenantId/projects/:siteId/alerts', async (req, reply) => {
-        const { siteId } = req.params as any;
-        const { status } = req.query as any;
+        const { tenantId, siteId } = req.params as any;
+        const { status, connector_instance_id } = req.query as any;
 
-        let alerts = GlobalMemoryStore.alerts.filter((a: any) => a.siteId === siteId);
-        if (status) {
-            alerts = alerts.filter((a: any) => a.status === status);
+        // Derive + persist live order-based alerts to the DB before reading,
+        // so the Alert Center renders real signals (delayed / failed orders)
+        // rather than static or stale data.
+        try {
+            await OrderAlertService.syncOrderAlerts(siteId, tenantId);
+        } catch (err) {
+            (req as any).log?.warn?.({ err }, '[Alerts] syncOrderAlerts failed');
         }
 
-        const severityOrder = { critical: 0, warning: 1, info: 2 };
-        alerts.sort((a: any, b: any) => (severityOrder[a.severity as keyof typeof severityOrder] ?? 3) - (severityOrder[b.severity as keyof typeof severityOrder] ?? 3));
+        const activeStatuses = ['TRIGGERED', 'ACTIVE', 'ACKNOWLEDGED'];
+        const where: any = { siteId };
+        // Normalize: a repeated query param arrives as an array (e.g. ?x=a&x=a).
+        // Collapse to a single string so Prisma receives a scalar filter.
+        const connectorInstanceId = Array.isArray(connector_instance_id)
+            ? connector_instance_id[0]
+            : connector_instance_id;
+        if (connectorInstanceId && connectorInstanceId !== 'all') {
+            where.connectorInstanceId = connectorInstanceId;
+        }
+        if (status === 'resolved') {
+            where.status = 'RESOLVED';
+        } else {
+            // Default + status=active: only actionable alerts.
+            where.status = { in: activeStatuses };
+        }
+
+        const rows = await prisma.alert.findMany({
+            where,
+            orderBy: { triggeredAt: 'desc' },
+            take: 200,
+        });
+
+        const severityRank: Record<string, number> = { critical: 0, high: 1, warning: 1, medium: 2, low: 3, info: 3 };
+        const toStatus = (value: string) => {
+            const v = String(value || '').toUpperCase();
+            if (v === 'RESOLVED') return 'resolved';
+            if (v === 'ACKNOWLEDGED') return 'acknowledged';
+            return 'active';
+        };
+
+        const alerts = rows
+            .map((a: any) => {
+                const severity = String(a.severity || 'high').toLowerCase();
+                const context = a.context && typeof a.context === 'object' ? a.context : {};
+                const triggeredAt = a.triggeredAt?.toISOString?.() || new Date().toISOString();
+                return {
+                    id: a.id,
+                    alertId: a.id,
+                    title: a.message,
+                    message: a.message,
+                    severity,
+                    status: toStatus(a.status),
+                    module: a.module || 'System',
+                    source: a.module || 'System',
+                    alertType: a.alertType,
+                    kpiName: a.alertType,
+                    affectedEntity: context.orderId || '-',
+                    connectorInstanceId: a.connectorInstanceId || null,
+                    context,
+                    triggeredAt,
+                    timestamp: triggeredAt,
+                    acknowledgedAt: a.acknowledgedAt?.toISOString?.() || null,
+                    resolvedAt: a.resolvedAt?.toISOString?.() || null,
+                };
+            })
+            .sort((x, y) => (severityRank[x.severity] ?? 4) - (severityRank[y.severity] ?? 4));
 
         return reply.send(ResponseUtil.success({ alerts, total: alerts.length }, {}, req.id as string));
     });
@@ -149,11 +209,13 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
     fastify.post('/tenants/:tenantId/projects/:siteId/alerts/:alertId/acknowledge', async (req, reply) => {
         const { alertId } = req.params as any;
         const { userId } = (req.body as any) || { userId: 'system' };
-        const alert = GlobalMemoryStore.alerts.find((a: any) => a.id === alertId || a.alertId === alertId);
-        if (alert) {
-            alert.status = 'acknowledged';
-            alert.acknowledgedBy = userId;
-            alert.acknowledgedAt = new Date().toISOString();
+        try {
+            await prisma.alert.update({
+                where: { id: alertId },
+                data: { status: 'ACKNOWLEDGED', acknowledgedBy: userId || 'system', acknowledgedAt: new Date() },
+            });
+        } catch (err) {
+            (req as any).log?.warn?.({ err, alertId }, '[Alerts] acknowledge failed');
         }
         return reply.send(ResponseUtil.success({ alertId, status: 'acknowledged' }, {}, req.id as string));
     });
@@ -164,17 +226,17 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
      */
     fastify.post('/tenants/:tenantId/projects/:siteId/alerts/:alertId/resolve', async (req, reply) => {
         const { alertId } = req.params as any;
-        const { userId } = (req.body as any) || { userId: 'system' };
-        const alert = GlobalMemoryStore.alerts.find((a: any) => a.id === alertId || a.alertId === alertId);
-        if (alert) {
-            alert.status = 'resolved';
-            alert.resolvedBy = userId;
-            alert.resolvedAt = new Date().toISOString();
+        try {
+            await prisma.alert.update({
+                where: { id: alertId },
+                data: { status: 'RESOLVED', resolvedAt: new Date() },
+            });
+        } catch (err) {
+            (req as any).log?.warn?.({ err, alertId }, '[Alerts] resolve failed');
         }
         return reply.send(ResponseUtil.success({ alertId, status: 'resolved' }, {}, req.id as string));
     });
 
-    // â”€â”€â”€ ALERT RULES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /**
      * GET /alert-rules

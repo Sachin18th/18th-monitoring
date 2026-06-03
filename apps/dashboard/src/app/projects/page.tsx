@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { normalizeRole } from '@kpi-platform/shared-types';
 import {
   Activity,
   AlertTriangle,
@@ -284,6 +285,8 @@ export default function ProjectsPage() {
   const { user, token, apiFetch, setProject, logout } = useAuth();
   const { theme, toggleTheme, mounted } = useTheme();
   const router = useRouter();
+  const normalizedRole = normalizeRole(user?.role);
+  const isGlobalProjectsAdmin = normalizedRole === 'super_admin' || normalizedRole === 'admin';
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
@@ -324,10 +327,6 @@ export default function ProjectsPage() {
     if (!token) return;
     setLoading(true);
     try {
-      const isGlobalProjectsAdmin = ["SUPER_ADMIN", "TENANT_ADMIN"].includes(
-        user?.role || "",
-      );
-
       if (!isGlobalProjectsAdmin) {
         const assignedIds = user?.assignedProjects || [];
         setProjects(
@@ -837,7 +836,7 @@ export default function ProjectsPage() {
                 </p>
               </div>
 
-              {user?.role === "SUPER_ADMIN" ? (
+              {normalizedRole === 'super_admin' ? (
                 <button
                   onClick={() => setShowCreateModal(true)}
                   style={{

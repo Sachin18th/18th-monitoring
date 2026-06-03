@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useRouter } from 'next/navigation';
+import { normalizeRole } from '@kpi-platform/shared-types';
 
 interface RoleGuardProps {
     children: React.ReactNode;
@@ -15,7 +16,12 @@ export const RoleGuard: React.FC<RoleGuardProps> = ({ children, allowedRoles }) 
 
     useEffect(() => {
         if (!isLoading) {
-            if (!user || !allowedRoles.includes(user.role)) {
+            const normalizedUserRole = normalizeRole(user?.role);
+            const normalizedAllowedRoles = allowedRoles
+                .map((role) => normalizeRole(role) || role.toLowerCase())
+                .filter(Boolean);
+
+            if (!normalizedUserRole || !normalizedAllowedRoles.includes(normalizedUserRole)) {
                 router.push('/unauthorized');
             } else {
                 setIsAuthorized(true);

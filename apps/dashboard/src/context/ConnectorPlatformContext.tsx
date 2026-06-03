@@ -75,6 +75,10 @@ type ConnectorPlatformContextValue = {
   openConnectorSetupModal: () => void;
   closeConnectorSetup: () => void;
   isSetupModalOpen: boolean;
+  isCsvUploadOpen: boolean;
+  openCsvUpload: () => void;
+  closeCsvUpload: () => void;
+  refreshConnectors: () => Promise<void> | void;
   testConnectorConnection: (
     platform: EcommercePlatform,
     values: ConnectorSetupValues,
@@ -252,6 +256,7 @@ export const ConnectorPlatformProvider: React.FC<{
     open: false,
   });
   const [isSetupModalOpen, setIsSetupModalOpen] = useState(false);
+  const [isCsvUploadOpen, setIsCsvUploadOpen] = useState(false);
 
   // Fetch integrations and restore from cache to prevent data loss on reload
   useEffect(() => {
@@ -491,6 +496,16 @@ export const ConnectorPlatformProvider: React.FC<{
     setIsSetupModalOpen(true);
     console.log("openConnectorSetupModal called");
   };
+
+  const openCsvUpload = () => {
+    setIsCsvUploadOpen(true);
+  };
+
+  const closeCsvUpload = () => {
+    setIsCsvUploadOpen(false);
+  };
+
+  const refreshConnectors = () => refreshPlatformData(activeConnectorId);
 
   useEffect(() => {
     console.log("ConnectorPlatformContext mounted");
@@ -951,6 +966,10 @@ export const ConnectorPlatformProvider: React.FC<{
     openConnectorSetupModal,
     closeConnectorSetup,
     isSetupModalOpen,
+    isCsvUploadOpen,
+    openCsvUpload,
+    closeCsvUpload,
+    refreshConnectors,
     testConnectorConnection,
     saveConnectorConnection,
     disconnectConnector,

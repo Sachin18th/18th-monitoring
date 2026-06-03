@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useConnectorPlatform } from '../../context/ConnectorPlatformContext';
 import { NavGroup, formatBreadcrumbLabel, useTheme } from '@kpi-platform/ui';
 import { useToast } from '@kpi-platform/ui';
-import { PROJECT_PAGE_ACCESS_OPTIONS } from '@kpi-platform/shared-types';
+import { PROJECT_PAGE_ACCESS_OPTIONS, ROLE_ACCESS, canAccessRoute, getDefaultProjectPathForRole, normalizeRole } from '@kpi-platform/shared-types';
 import type { ConnectedStore } from '../../lib/ecommerceConnectors';
 import {
   LayoutDashboard,
@@ -117,6 +117,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   const { theme, toggleTheme, mounted } = useTheme();
   const { success, error: showError } = useToast();
   const resyncPollerRef = useRef<number | null>(null);
+  const normalizedRole = useMemo(() => normalizeRole(user?.role), [user?.role]);
 
   const projectId = (params.projectId as string) || '';
   const isProjectRoute = pathname.startsWith('/project/') && !!projectId;
@@ -159,16 +160,15 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     if (!isLoading && user && isProjectRoute) {
       setProject(projectId);
 
-      const isSuperAdmin = user.role === 'SUPER_ADMIN';
-      const isTenantAdmin = user.role === 'TENANT_ADMIN';
+      const isPrivilegedRole = normalizedRole === 'super_admin' || normalizedRole === 'admin';
       const isAssigned = user.assignedProjects?.includes(projectId);
 
-      if (!isSuperAdmin && !isTenantAdmin && !isAssigned) {
+      if (!isPrivilegedRole && !isAssigned) {
         console.warn(`[RBAC] Unauthorized access attempt to project ${projectId} by user ${user.id}`);
         router.push('/unauthorized');
       }
     }
-  }, [user, projectId, isLoading, router, setProject, isProjectRoute]);
+  }, [user, projectId, isLoading, router, setProject, isProjectRoute, normalizedRole]);
 
   useEffect(() => {
     if (!token || !user || !isProjectRoute) return;
@@ -177,10 +177,9 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     // Non-admin roles (Project Admin, Ops Lead, Operator, Viewer) may not have
     // permission to list all projects and would receive a 403. Use the
     // user's assignedProjects to populate the selector instead.
-    const isSuperAdmin = user.role === 'SUPER_ADMIN';
-    const isTenantAdmin = user.role === 'TENANT_ADMIN';
+    const isPrivilegedRole = normalizedRole === 'super_admin' || normalizedRole === 'admin';
 
-    if (isSuperAdmin || isTenantAdmin) {
+    if (isPrivilegedRole) {
       apiFetch('/api/v1/projects')
         .then((data) => {
           if (Array.isArray(data)) {
@@ -196,7 +195,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
       const list = assigned.map((id: string) => ({ id, name: id.toUpperCase() }));
       setAvailableProjects(list);
     }
-  }, [token, user, apiFetch, isProjectRoute]);
+  }, [token, user, apiFetch, isProjectRoute, normalizedRole]);
 
   useEffect(() => {
     if (!token || !projectId || !isProjectRoute || !user?.tenantId) return;
@@ -222,7 +221,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    if (user.role === 'SUPER_ADMIN') {
+    if (normalizedRole === 'super_admin') {
       const allPageKeys = PROJECT_PAGE_ACCESS_OPTIONS.map((option) => option.key);
       setAllowedPageKeys(allPageKeys);
       setHasResolvedPagePermissions(true);
@@ -251,7 +250,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         setAllowedPageKeys((current) => current ?? []);
         setHasResolvedPagePermissions(true);
       });
-  }, [token, projectId, apiFetch, isProjectRoute, user]);
+  }, [token, projectId, apiFetch, isProjectRoute, user, normalizedRole]);
 
   useEffect(() => {
     if (!projectId || !user?.id || typeof window === 'undefined') {
@@ -294,27 +293,8 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     if (!isProjectRoute) return [];
 
     const prefix = `/project/${projectId}`;
-    const isSuperAdmin = user?.role === 'SUPER_ADMIN';
-    const effectiveAllowedPageKeys = isSuperAdmin
-      ? PROJECT_PAGE_ACCESS_OPTIONS.map((option) => option.key)
-      : hasResolvedPagePermissions
-        ? allowedPageKeys || []
-        : [];
-    const allowedSet = new Set(effectiveAllowedPageKeys);
-
-    const isVisible = (pageKey: string) => {
-      const option = PROJECT_PAGE_ACCESS_OPTIONS.find((entry) => entry.key === pageKey);
-
-      if (!option) {
-        return true;
-      }
-
-      if (option.superAdminOnly && !isSuperAdmin) {
-        return false;
-      }
-
-      return isSuperAdmin || allowedSet.has(pageKey as any);
-    };
+    const roleSidebarKeys = normalizedRole ? new Set(ROLE_ACCESS[normalizedRole].sidebar) : new Set<string>();
+    const isVisible = (pageKey: string) => canAccessRoute(normalizedRole, pageKey as any) || roleSidebarKeys.has(pageKey as any);
 
     const groups: any[] = [
       {
@@ -369,12 +349,14 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
     return groups.map((group) => ({
       ...group,
-      items: group.items.map((item) => ({
-        ...item,
-        icon: item.icon || AlertCircle
-      })).filter((item: any) => isVisible(item.pageKey))
+      items: group.items
+        .map((item) => ({
+          ...item,
+          icon: item.icon || AlertCircle
+        }))
+        .filter((item: any) => isVisible(item.pageKey))
     }));
-  }, [projectId, user?.role, alertCount, isProjectRoute, allowedPageKeys, hasResolvedPagePermissions]);
+  }, [projectId, normalizedRole, alertCount, isProjectRoute]);
 
   const breadcrumbs = useMemo(() => {
     if (!isProjectRoute) return [];

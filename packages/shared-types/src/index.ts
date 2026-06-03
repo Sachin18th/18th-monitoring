@@ -1,5 +1,6 @@
 export * from './config';
 export * from './page-access';
+export * from './permissions';
 import { z } from 'zod';
 import { BaseEventSchema, BrowserIngestPayloadSchema, ServerIngestPayloadSchema } from '../../events/src/schemas';
 
@@ -7,7 +8,17 @@ export type BaseEvent = z.infer<typeof BaseEventSchema>;
 export type BrowserIngestPayload = z.infer<typeof BrowserIngestPayloadSchema>;
 export type ServerIngestPayload = z.infer<typeof ServerIngestPayloadSchema>;
 
-export type Role = 'SUPER_ADMIN' | 'TENANT_ADMIN' | 'PROJECT_ADMIN' | 'OPERATOR' | 'VIEWER' | 'CUSTOMER';
+export type Role =
+    | 'super_admin'
+    | 'admin'
+    | 'ops_lead'
+    | 'analyst'
+    | 'SUPER_ADMIN'
+    | 'TENANT_ADMIN'
+    | 'PROJECT_ADMIN'
+    | 'OPERATOR'
+    | 'VIEWER'
+    | 'CUSTOMER';
 export type UserStatus = 'active' | 'suspended' | 'inactive';
 export type ProjectStatus = 'ACTIVE' | 'MAINTENANCE' | 'ARCHIVED';
 

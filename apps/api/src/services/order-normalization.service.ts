@@ -42,7 +42,7 @@ export class OrderNormalizationService {
     /**
      * Entry point for normalization.
      */
-    public async normalize(providerId: string, rawPayload: any, siteId: string, tenantId: string): Promise<CanonicalOrder> {
+    public async normalize(providerId: string, rawPayload: any, siteId: string, tenantId: string, options?: { defaultCurrency?: string }): Promise<CanonicalOrder> {
         let canonical: Partial<CanonicalOrder>;
 
         switch (providerId.toLowerCase()) {
@@ -54,6 +54,9 @@ export class OrderNormalizationService {
                 break;
             case 'magento':
                 canonical = this.mapMagento(rawPayload);
+                break;
+            case 'csv':
+                canonical = this.mapCsv(rawPayload, options?.defaultCurrency);
                 break;
             default:
                 canonical = this.mapGeneric(rawPayload);
@@ -135,6 +138,117 @@ export class OrderNormalizationService {
             placedAt: payload.created_at,
             metadata: { magento_state: payload.state }
         };
+    }
+
+    /**
+     * Maps a column-mapped spreadsheet row (CSV / Excel offline upload) into the CDM.
+     * The frontend sends rows already keyed to the standardized fields:
+     * order_id, order_date, customer_name, customer_email, sku, quantity,
+     * unit_price, total, status, shipping_address.
+     */
+    private mapCsv(payload: any, defaultCurrency?: string): Partial<CanonicalOrder> {
+        const toNum = (value: any) => {
+            const parsed = parseFloat(String(value ?? '').replace(/[^0-9.\-]/g, ''));
+            return Number.isFinite(parsed) ? parsed : 0;
+        };
+
+        const quantity = toNum(payload?.quantity) || 0;
+        const unitPrice = toNum(payload?.unit_price);
+        const explicitTotal = toNum(payload?.total);
+        const totalAmount = explicitTotal > 0 ? explicitTotal : unitPrice * (quantity || 1);
+
+        const rawDate = this.parseFlexibleDate(payload?.order_date);
+        const placedAt = rawDate ? rawDate.toISOString() : new Date().toISOString();
+
+        const lifecycleState = this.mapCsvStatus(String(payload?.status || ''));
+        const customerEmail = payload?.customer_email || null;
+
+        // Currency precedence: a value on the row (if a column was mapped) wins,
+        // otherwise the operator-selected import currency is applied. USD is only a
+        // last-resort safety net so the non-nullable column is never empty.
+        const normalizeCurrency = (value: any): string | null => {
+            const code = String(value ?? '').trim().toUpperCase();
+            return /^[A-Z]{3}$/.test(code) ? code : null;
+        };
+
+        return {
+            orderId: payload?.order_id ? String(payload.order_id) : 'CSV-' + Date.now(),
+            externalReferenceId: payload?.order_id ? String(payload.order_id) : undefined,
+            channel: 'offline',
+            lifecycleState,
+            currency: normalizeCurrency(payload?.currency) || normalizeCurrency(defaultCurrency) || 'USD',
+            totalAmount,
+            taxAmount: 0,
+            discountAmount: 0,
+            paidAmount: lifecycleState === LifecycleState.PLACED ? 0 : totalAmount,
+            refundedAmount: lifecycleState === LifecycleState.RETURNED ? totalAmount : 0,
+            placedAt,
+            metadata: {
+                orderSource: 'offline',
+                customerEmail,
+                customerName: payload?.customer_name || null,
+                sku: payload?.sku || null,
+                quantity: quantity || null,
+                unitPrice: unitPrice || null,
+                shippingAddress: payload?.shipping_address || null,
+                rawStatus: payload?.status || null,
+            }
+        };
+    }
+
+    private mapCsvStatus(status: string): LifecycleState {
+        const value = status.trim().toLowerCase();
+        if (!value) return LifecycleState.PLACED;
+        if (value.includes('refund') || value.includes('return')) return LifecycleState.RETURNED;
+        if (value.includes('cancel') || value.includes('void')) return LifecycleState.CANCELLED;
+        if (value.includes('deliver')) return LifecycleState.DELIVERED;
+        if (value.includes('ship') || value.includes('fulfil')) return LifecycleState.SHIPPED;
+        if (value.includes('paid') || value.includes('complete')) return LifecycleState.PAID;
+        return LifecycleState.PLACED;
+    }
+
+    /**
+     * Parses an order date from CSV/Excel cells, tolerating the formats JS's
+     * native `new Date()` mishandles so offline orders get a real placed_at:
+     *   - Date instances (xlsx cells already typed as dates)
+     *   - Excel serial numbers (days since 1899-12-30, e.g. 45000)
+     *   - ISO 8601 / RFC / "Jan 5 2024" (delegated to native parser)
+     *   - DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY (with optional time) — defaults to
+     *     day-first, swapping to month-first only when the day field exceeds 12.
+     * Returns null when the value is empty or unparseable.
+     */
+    private parseFlexibleDate(value: any): Date | null {
+        if (value === null || value === undefined || value === '') return null;
+        if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+
+        // Excel serial date number (modern dates land in ~40000-46000).
+        const numeric = typeof value === 'number'
+            ? value
+            : (/^\d+(\.\d+)?$/.test(String(value).trim()) ? Number(value) : NaN);
+        if (Number.isFinite(numeric) && numeric > 20000 && numeric < 80000) {
+            const d = new Date(Math.round((numeric - 25569) * 86400000));
+            return isNaN(d.getTime()) ? null : d;
+        }
+
+        const str = String(value).trim();
+
+        // DD/MM/YYYY (or MM/DD/YYYY) with / - or . separators and optional time.
+        const m = str.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+        if (m) {
+            let day = Number(m[1]);
+            let month = Number(m[2]);
+            let year = Number(m[3]);
+            if (year < 100) year += 2000;
+            if (month > 12 && day <= 12) { const t = day; day = month; month = t; }
+            if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                const d = new Date(year, month - 1, day, Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
+                if (!isNaN(d.getTime())) return d;
+            }
+        }
+
+        // Fallback: native parser (ISO 8601, "Jan 5 2024", US M/D/Y, etc.).
+        const native = new Date(str);
+        return isNaN(native.getTime()) ? null : native;
     }
 
     private mapGeneric(payload: any): Partial<CanonicalOrder> {
