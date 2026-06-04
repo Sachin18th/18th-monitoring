@@ -53,6 +53,7 @@ export class OrderNormalizationService {
                 canonical = this.mapBigCommerce(rawPayload);
                 break;
             case 'magento':
+            case 'adobe_commerce':
                 canonical = this.mapMagento(rawPayload);
                 break;
             case 'csv':
@@ -127,17 +128,52 @@ export class OrderNormalizationService {
     }
 
     private mapMagento(payload: any): Partial<CanonicalOrder> {
+        const totalAmount = parseFloat(payload.grand_total ?? payload.base_grand_total ?? '0');
+        const paidAmount = parseFloat(payload.total_paid ?? payload.base_total_paid ?? '0');
+        const refundedAmount = parseFloat(payload.total_refunded ?? payload.base_total_refunded ?? '0');
+
         return {
-            orderId: payload.increment_id,
+            // Human-facing order number; entity_id is the internal/external reference.
+            orderId: String(payload.increment_id ?? payload.entity_id ?? ''),
+            externalReferenceId: payload.entity_id != null ? String(payload.entity_id) : undefined,
             channel: 'magento_store',
-            lifecycleState: LifecycleState.PLACED, // Simplified
-            currency: payload.order_currency_code || 'USD',
-            totalAmount: parseFloat(payload.grand_total || '0'),
-            taxAmount: parseFloat(payload.tax_amount || '0'),
-            discountAmount: Math.abs(parseFloat(payload.discount_amount || '0')),
-            placedAt: payload.created_at,
-            metadata: { magento_state: payload.state }
+            lifecycleState: this.mapMagentoStatus(payload.state, payload.status),
+            currency: payload.order_currency_code || payload.base_currency_code || 'USD',
+            totalAmount,
+            taxAmount: parseFloat(payload.tax_amount ?? payload.base_tax_amount ?? '0'),
+            discountAmount: Math.abs(parseFloat(payload.discount_amount ?? payload.base_discount_amount ?? '0')),
+            paidAmount: Number.isFinite(paidAmount) ? paidAmount : 0,
+            refundedAmount: Number.isFinite(refundedAmount) ? refundedAmount : 0,
+            // Magento returns the real order time in `created_at` as "YYYY-MM-DD HH:mm:ss" (UTC).
+            // Normalize to a proper ISO instant so we record when the order was PLACED — not sync time.
+            placedAt: this.toMagentoIso(payload.created_at),
+            metadata: { magento_state: payload.state, magento_status: payload.status }
         };
+    }
+
+    /**
+     * Magento/Adobe Commerce timestamps come back as "2026-06-03 11:37:34" in UTC
+     * with no timezone marker. `new Date()` would treat that as local time. Convert
+     * to an explicit UTC ISO string so placed_at reflects the true order time.
+     */
+    private toMagentoIso(value: any): string {
+        if (!value) return new Date().toISOString();
+        const str = String(value).trim();
+        const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(str)
+            ? str.replace(' ', 'T') + 'Z'
+            : str;
+        const d = new Date(normalized);
+        return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+    }
+
+    private mapMagentoStatus(state: string, status: string): LifecycleState {
+        const value = String(state || status || '').toLowerCase();
+        if (value.includes('refund') || value.includes('return')) return LifecycleState.RETURNED;
+        if (value.includes('cancel') || value.includes('void')) return LifecycleState.CANCELLED;
+        if (value.includes('complete')) return LifecycleState.DELIVERED;
+        if (value.includes('ship')) return LifecycleState.SHIPPED;
+        if (value.includes('processing') || value.includes('paid')) return LifecycleState.PAID;
+        return LifecycleState.PLACED;
     }
 
     /**

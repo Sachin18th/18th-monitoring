@@ -6,6 +6,7 @@ import { AdobeCommerceOrderSyncService } from './adobe-commerce-order-sync.servi
 import { BigCommerceOrderSyncService } from './bigcommerce-order-sync.service';
 import { ShopifyCustomerSyncService } from './shopify-customer-sync.service';
 import { AdobeCommerceCustomerSyncService } from './adobe-commerce-customer-sync.service';
+import { AdobeCommerceJourneySyncService } from './adobe-commerce-journey-sync.service';
 
 type ResyncTarget = 'orders' | 'customers';
 
@@ -38,6 +39,14 @@ type TargetSummary = {
   upserted: number;
   failed: number;
   error?: string | null;
+  // Populated for Adobe Commerce 'orders' syncs: derived customer journey
+  // (sessions + events) backfilled from the same orders.
+  journey?: {
+    sessions: number;
+    events: number;
+    failed: number;
+    error?: string | null;
+  };
 };
 
 const SHOPIFY_API_VERSION = '2024-01';
@@ -334,7 +343,27 @@ export class ConnectorResyncService {
 
     if (target === 'orders') {
       const summary = await AdobeCommerceOrderSyncService.syncConnectorInstance(connector.id);
-      return this.mapSyncSummary(summary);
+      const mapped = this.mapSyncSummary(summary);
+
+      // Derive customer sessions + events from the same orders. This is
+      // best-effort: a journey failure must not fail the order sync that
+      // already succeeded, but it is still surfaced in the target result.
+      try {
+        const journey = await AdobeCommerceJourneySyncService.syncConnectorInstance(connector.id);
+        mapped.journey = {
+          sessions: journey.sessionsUpserted,
+          events: journey.eventsUpserted,
+          failed: journey.failed
+        };
+      } catch (journeyErr: any) {
+        console.error('[ConnectorResyncService] Adobe Commerce journey sync failed', {
+          connectorId: connector.id,
+          error: journeyErr?.message
+        });
+        mapped.journey = { sessions: 0, events: 0, failed: 0, error: journeyErr?.message || 'Journey sync failed.' };
+      }
+
+      return mapped;
     }
 
     const summary = await AdobeCommerceCustomerSyncService.syncConnectorInstance(connector.id);
