@@ -221,16 +221,26 @@ export default function AlertCenterPage() {
     source: a.module || a.affectedEntity || 'System',
   })), [alerts]);
 
-  // Filter options derived from live alerts (no static/hardcoded lists).
+  // Severity filter shows the full standard set of levels at all times so the
+  // operator can filter by any severity — even ones with no live alerts yet.
   const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'WARNING', 'MEDIUM', 'LOW', 'INFO'];
-  const availableSeverities = useMemo(() => {
-    const present = new Set(mappedAlerts.map((a) => a.severity));
-    return SEVERITY_ORDER.filter((s) => present.has(s));
+  const availableSeverities = SEVERITY_ORDER;
+  // Per-severity counts from live alerts, shown as a badge next to each option.
+  const severityCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const a of mappedAlerts) counts[a.severity] = (counts[a.severity] || 0) + 1;
+    return counts;
   }, [mappedAlerts]);
+  // Signal sources are dynamic (derived from the alert module/entity).
   const availableSources = useMemo(
     () => Array.from(new Set(mappedAlerts.map((a) => a.source).filter(Boolean))),
     [mappedAlerts],
   );
+  const sourceCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const a of mappedAlerts) counts[a.source] = (counts[a.source] || 0) + 1;
+    return counts;
+  }, [mappedAlerts]);
 
   const toggle = (list: string[], value: string) =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -339,10 +349,10 @@ export default function AlertCenterPage() {
           <div style={filterPanelStyle}>
             <p style={filterTitleStyle}>Severity Filter</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {availableSeverities.length === 0 ? (
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No active signals</span>
-              ) : (
-                availableSeverities.map((s) => (
+              {availableSeverities.map((s) => {
+                const sev = severityStyle(s);
+                const count = severityCounts[s] || 0;
+                return (
                   <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
@@ -350,10 +360,11 @@ export default function AlertCenterPage() {
                       onChange={() => setSeverityFilter((list) => toggle(list, s))}
                       style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }}
                     />
-                    {s.charAt(0) + s.slice(1).toLowerCase()}
+                    <span style={{ flex: 1 }}>{s.charAt(0) + s.slice(1).toLowerCase()}</span>
+                    <span style={{ padding: '1px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 600, background: sev.bg, color: sev.text, flexShrink: 0 }}>{count}</span>
                   </label>
-                ))
-              )}
+                );
+              })}
             </div>
           </div>
 
@@ -371,7 +382,8 @@ export default function AlertCenterPage() {
                       onChange={() => setSourceFilter((list) => toggle(list, s))}
                       style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }}
                     />
-                    {s}
+                    <span style={{ flex: 1 }}>{s}</span>
+                    <span style={{ padding: '1px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 600, background: 'var(--bg-input)', color: 'var(--text-muted)', flexShrink: 0 }}>{sourceCounts[s] || 0}</span>
                   </label>
                 ))
               )}

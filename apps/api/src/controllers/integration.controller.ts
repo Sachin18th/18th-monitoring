@@ -6,8 +6,7 @@ import crypto from 'crypto';
 import { ShopifyOrderSyncService } from '../services/shopify-order-sync.service';
 import { AdobeCommerceOrderSyncService } from '../services/adobe-commerce-order-sync.service';
 import { ShopifyCustomerSyncService } from '../services/shopify-customer-sync.service';
-import { ShopifyJourneySyncService } from '../services/shopify-journey-sync.service';
-import { AdobeCommerceJourneySyncService } from '../services/adobe-commerce-journey-sync.service';
+import { CheckoutSyncService } from '../services/checkout-sync.service';
 import { AdobeCommerceCustomerSyncService } from '../services/adobe-commerce-customer-sync.service';
 import { BigCommerceOrderSyncService } from '../services/bigcommerce-order-sync.service';
 import { BigCommerceCustomerSyncService } from '../services/bigcommerce-customer-sync.service';
@@ -206,15 +205,13 @@ export class IntegrationController {
             try {
                 const orderSync = await ShopifyOrderSyncService.syncConnectorInstance(id);
                 const customerSync = await ShopifyCustomerSyncService.syncConnectorInstance(id);
-                // Journey/session backfill needs protected-customer-data access; never let it
-                // fail the order/customer sync that already succeeded.
-                let journeySync: any = null;
+                let checkoutSync: any = null;
                 try {
-                    journeySync = await ShopifyJourneySyncService.syncConnectorInstance(id);
-                } catch (journeyErr: any) {
-                    journeySync = { ok: false, message: journeyErr?.message };
+                    checkoutSync = await CheckoutSyncService.syncConnectorInstance(id);
+                } catch (checkoutErr: any) {
+                    checkoutSync = { ok: false, message: checkoutErr?.message };
                 }
-                initialSync = { orders: orderSync, customers: customerSync, journey: journeySync };
+                initialSync = { orders: orderSync, customers: customerSync, checkouts: checkoutSync };
             } catch (err: any) {
                 initialSync = {
                     ok: false,
@@ -225,15 +222,13 @@ export class IntegrationController {
             try {
                 const orderSync = await AdobeCommerceOrderSyncService.syncConnectorInstance(id);
                 const customerSync = await AdobeCommerceCustomerSyncService.syncConnectorInstance(id);
-                // Derive customer sessions + events from the synced orders. Best-effort:
-                // never let it fail the order/customer sync that already succeeded.
-                let journeySync: any = null;
+                let checkoutSync: any = null;
                 try {
-                    journeySync = await AdobeCommerceJourneySyncService.syncConnectorInstance(id);
-                } catch (journeyErr: any) {
-                    journeySync = { ok: false, message: journeyErr?.message };
+                    checkoutSync = await CheckoutSyncService.syncConnectorInstance(id);
+                } catch (checkoutErr: any) {
+                    checkoutSync = { ok: false, message: checkoutErr?.message };
                 }
-                initialSync = { orders: orderSync, customers: customerSync, journey: journeySync };
+                initialSync = { orders: orderSync, customers: customerSync, checkouts: checkoutSync };
             } catch (err: any) {
                 initialSync = {
                     ok: false,
@@ -244,7 +239,13 @@ export class IntegrationController {
             try {
                 const orderSync = await BigCommerceOrderSyncService.syncConnectorInstance(id);
                 const customerSync = await BigCommerceCustomerSyncService.syncConnectorInstance(id);
-                initialSync = { orders: orderSync, customers: customerSync };
+                let checkoutSync: any = null;
+                try {
+                    checkoutSync = await CheckoutSyncService.syncConnectorInstance(id);
+                } catch (checkoutErr: any) {
+                    checkoutSync = { ok: false, message: checkoutErr?.message };
+                }
+                initialSync = { orders: orderSync, customers: customerSync, checkouts: checkoutSync };
             } catch (err: any) {
                 initialSync = {
                     ok: false,
@@ -293,39 +294,46 @@ export class IntegrationController {
             if (instance.providerId === 'shopify') {
                 const orderResult = await ShopifyOrderSyncService.syncConnectorInstance(instance.id);
                 const customerResult = await ShopifyCustomerSyncService.syncConnectorInstance(instance.id);
-                let journeyResult: any = null;
+                let checkoutResult: any = null;
                 try {
-                    journeyResult = await ShopifyJourneySyncService.syncConnectorInstance(instance.id);
-                } catch (journeyErr: any) {
-                    journeyResult = { ok: false, message: journeyErr?.message };
+                    checkoutResult = await CheckoutSyncService.syncConnectorInstance(instance.id);
+                } catch (checkoutErr: any) {
+                    checkoutResult = { ok: false, message: checkoutErr?.message };
                 }
                 return reply.send(ResponseUtil.success({
                     status: 'SYNC_COMPLETED',
                     orders: orderResult,
                     customers: customerResult,
-                    journey: journeyResult
+                    checkouts: checkoutResult
                 }, {}, req.id as string));
             } else if (instance.providerId === 'adobe_commerce') {
                 const orderResult = await AdobeCommerceOrderSyncService.syncConnectorInstance(instance.id);
                 const customerResult = await AdobeCommerceCustomerSyncService.syncConnectorInstance(instance.id);
-                let journeyResult: any = null;
+                let checkoutResult: any = null;
                 try {
-                    journeyResult = await AdobeCommerceJourneySyncService.syncConnectorInstance(instance.id);
-                } catch (journeyErr: any) {
-                    journeyResult = { ok: false, message: journeyErr?.message };
+                    checkoutResult = await CheckoutSyncService.syncConnectorInstance(instance.id);
+                } catch (checkoutErr: any) {
+                    checkoutResult = { ok: false, message: checkoutErr?.message };
                 }
                 return reply.send(ResponseUtil.success({
                     status: 'SYNC_COMPLETED',
                     orders: orderResult,
                     customers: customerResult,
-                    journey: journeyResult
+                    checkouts: checkoutResult
                 }, {}, req.id as string));
             } else if (instance.providerId === 'bigcommerce') {
                 const orderResult = await BigCommerceOrderSyncService.syncConnectorInstance(instance.id);
                 const customerResult = await BigCommerceCustomerSyncService.syncConnectorInstance(instance.id);
-                return reply.send(ResponseUtil.success({ 
-                    status: 'SYNC_COMPLETED', 
-                    orders: orderResult, 
+                let checkoutResult: any = null;
+                try {
+                    checkoutResult = await CheckoutSyncService.syncConnectorInstance(instance.id);
+                } catch (checkoutErr: any) {
+                    checkoutResult = { ok: false, message: checkoutErr?.message };
+                }
+                return reply.send(ResponseUtil.success({
+                    status: 'SYNC_COMPLETED',
+                    orders: orderResult,
+                    checkouts: checkoutResult,
                     customers: customerResult 
                 }, {}, req.id as string));
             }

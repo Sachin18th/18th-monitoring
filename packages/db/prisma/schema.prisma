@@ -42,6 +42,7 @@ model Tenant {
   deadLetterQueues     DeadLetterQueue[]
   recoveryJobs         RecoveryJob[]
   canonicalProducts    CanonicalProduct[]
+  canonicalCheckouts   CanonicalCheckout[]
 
   @@map("tenants")
 }
@@ -89,6 +90,7 @@ model Project {
   deadLetterQueues        DeadLetterQueue[]
   recoveryJobs            RecoveryJob[]
   canonicalProducts       CanonicalProduct[]
+  canonicalCheckouts      CanonicalCheckout[]
   paymentGatewayConfigs   PaymentGatewayConfig[]
   paymentGatewayStatusSnapshots PaymentGatewayStatusSnapshot[]
   userPagePermissions     UserPagePermission[]
@@ -383,6 +385,7 @@ model ConnectorInstance {
   orderSnapshots          OrderSnapshot[]
   orderEvents             OrderEvent[]
   canonicalProducts       CanonicalProduct[]
+  canonicalCheckouts      CanonicalCheckout[]
   auditLogs               IamAuditLog[]
   alerts                  Alert[]
   alertRules              AlertRule[]
@@ -772,6 +775,47 @@ model CanonicalProduct {
   @@index([tenantId], map: "idx_product_tenant")
   @@index([connectorInstanceId], map: "idx_product_connector")
   @@map("canonical_products")
+}
+
+model CanonicalCheckout {
+  id                   String    @id @db.VarChar(36)
+  siteId               String    @map("site_id") @db.VarChar(255)
+  tenantId             String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId  String?   @map("connector_instance_id") @db.VarChar(36)
+  checkoutId           String    @map("checkout_id") @db.VarChar(255)
+  sourceSystem         String    @map("source_system") @db.VarChar(255)
+  token                String?   @db.VarChar(255)
+  // Soft reference to customer_profiles.id (nullable; guest carts have no profile).
+  customerId           String?   @map("customer_id") @db.VarChar(36)
+  customerEmail        String?   @map("customer_email") @db.VarChar(255)
+  status               String    @db.VarChar(50)   // ABANDONED | ACTIVE | COMPLETED
+  currency             String    @db.VarChar(10)
+  subtotalAmount       Decimal?  @map("subtotal_amount") @db.Decimal(20, 4)
+  totalAmount          Decimal   @map("total_amount") @db.Decimal(20, 4)
+  taxAmount            Decimal?  @map("tax_amount") @db.Decimal(20, 4)
+  discountAmount       Decimal?  @map("discount_amount") @db.Decimal(20, 4)
+  lineItemsCount       Int?      @default(0) @map("line_items_count")
+  lineItems            Json      @default("[]") @map("line_items")
+  abandonedCheckoutUrl String?   @map("abandoned_checkout_url") @db.Text
+  completedOrderId     String?   @map("completed_order_id") @db.VarChar(255)
+  startedAt            DateTime  @map("started_at")
+  lastActivityAt       DateTime? @map("last_activity_at")
+  completedAt          DateTime? @map("completed_at")
+  metadata             Json      @default("{}")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @map("updated_at")
+
+  project              Project   @relation(fields: [siteId], references: [id])
+  tenant               Tenant    @relation(fields: [tenantId], references: [id])
+  connectorInstance    ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
+
+  @@unique([siteId, tenantId, sourceSystem, checkoutId], map: "uq_checkout_source_ref")
+  @@index([siteId], map: "idx_checkout_site")
+  @@index([tenantId], map: "idx_checkout_tenant")
+  @@index([connectorInstanceId], map: "idx_checkout_connector")
+  @@index([status], map: "idx_checkout_status")
+  @@index([startedAt], map: "idx_checkout_started_ts")
+  @@map("canonical_checkouts")
 }
 
 model OrderSnapshot {

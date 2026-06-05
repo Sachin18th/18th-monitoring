@@ -6,9 +6,9 @@ import { AdobeCommerceOrderSyncService } from './adobe-commerce-order-sync.servi
 import { BigCommerceOrderSyncService } from './bigcommerce-order-sync.service';
 import { ShopifyCustomerSyncService } from './shopify-customer-sync.service';
 import { AdobeCommerceCustomerSyncService } from './adobe-commerce-customer-sync.service';
-import { AdobeCommerceJourneySyncService } from './adobe-commerce-journey-sync.service';
+import { CheckoutSyncService } from './checkout-sync.service';
 
-type ResyncTarget = 'orders' | 'customers';
+type ResyncTarget = 'orders' | 'customers' | 'checkouts';
 
 type ConnectorContext = {
   id: string;
@@ -39,11 +39,9 @@ type TargetSummary = {
   upserted: number;
   failed: number;
   error?: string | null;
-  // Populated for Adobe Commerce 'orders' syncs: derived customer journey
-  // (sessions + events) backfilled from the same orders.
-  journey?: {
-    sessions: number;
-    events: number;
+  // Populated when an 'orders' sync also backfills checkout/cart data.
+  checkouts?: {
+    checkouts: number;
     failed: number;
     error?: string | null;
   };
@@ -189,11 +187,19 @@ export class ConnectorResyncService {
       for (const target of job.syncTargets as unknown as ResyncTarget[]) {
         try {
           const summary =
-            connector.providerId === 'shopify'
-              ? await this.syncShopifyTarget(connector, target)
-              : connector.providerId === 'adobe_commerce'
-                ? await this.syncAdobeTarget(connector, target)
-                : await this.syncBigCommerceTarget(connector, target);
+            target === 'checkouts'
+              ? await this.syncCheckoutsTarget(connector)
+              : connector.providerId === 'shopify'
+                ? await this.syncShopifyTarget(connector, target)
+                : connector.providerId === 'adobe_commerce'
+                  ? await this.syncAdobeTarget(connector, target)
+                  : await this.syncBigCommerceTarget(connector, target);
+
+          // Every orders sync also backfills checkout/cart data (best-effort),
+          // so sessions/events stay in step with orders for all providers.
+          if (target === 'orders') {
+            summary.checkouts = await this.runCheckoutSync(connector);
+          }
 
           targetResults[target] = summary;
           successfulCounts[target] = summary.upserted;
@@ -343,31 +349,45 @@ export class ConnectorResyncService {
 
     if (target === 'orders') {
       const summary = await AdobeCommerceOrderSyncService.syncConnectorInstance(connector.id);
-      const mapped = this.mapSyncSummary(summary);
-
-      // Derive customer sessions + events from the same orders. This is
-      // best-effort: a journey failure must not fail the order sync that
-      // already succeeded, but it is still surfaced in the target result.
-      try {
-        const journey = await AdobeCommerceJourneySyncService.syncConnectorInstance(connector.id);
-        mapped.journey = {
-          sessions: journey.sessionsUpserted,
-          events: journey.eventsUpserted,
-          failed: journey.failed
-        };
-      } catch (journeyErr: any) {
-        console.error('[ConnectorResyncService] Adobe Commerce journey sync failed', {
-          connectorId: connector.id,
-          error: journeyErr?.message
-        });
-        mapped.journey = { sessions: 0, events: 0, failed: 0, error: journeyErr?.message || 'Journey sync failed.' };
-      }
-
-      return mapped;
+      return this.mapSyncSummary(summary);
     }
 
     const summary = await AdobeCommerceCustomerSyncService.syncConnectorInstance(connector.id);
     return this.mapSyncSummary(summary);
+  }
+
+  /**
+   * Explicit 'checkouts' target — fetch checkout/cart data (and derived
+   * sessions + events) for any supported provider.
+   */
+  private static async syncCheckoutsTarget(connector: ConnectorContext): Promise<TargetSummary> {
+    const result = await CheckoutSyncService.syncConnectorInstance(connector.id);
+    return {
+      status: result.failed > 0 ? 'failed' : 'completed',
+      fetched: result.fetched,
+      upserted: result.checkoutsUpserted,
+      failed: result.failed,
+      error: result.failed > 0 ? `${result.failed} checkout(s) failed during sync.` : null,
+      checkouts: { checkouts: result.checkoutsUpserted, failed: result.failed }
+    };
+  }
+
+  /**
+   * Best-effort checkout backfill that piggybacks on an orders sync. A checkout
+   * failure must never fail the orders target, but is surfaced in the result.
+   */
+  private static async runCheckoutSync(connector: ConnectorContext): Promise<TargetSummary['checkouts']> {
+    try {
+      const result = await CheckoutSyncService.syncConnectorInstance(connector.id);
+      return { checkouts: result.checkoutsUpserted, failed: result.failed };
+    } catch (err: any) {
+      console.error('[ConnectorResyncService] Checkout sync failed', {
+        connectorId: connector.id,
+        provider: connector.providerId,
+        error: err?.message
+      });
+      return { checkouts: 0, failed: 0, error: err?.message || 'Checkout sync failed.' };
+    }
   }
 
   private static async syncBigCommerceTarget(connector: ConnectorContext, target: ResyncTarget): Promise<TargetSummary> {
@@ -988,18 +1008,18 @@ export class ConnectorResyncService {
   }
 
   private static normalizeTargets(value: Array<string>): ResyncTarget[] {
-    const allowed = new Set<ResyncTarget>(['orders', 'customers']);
+    const allowed = new Set<ResyncTarget>(['orders', 'customers', 'checkouts']);
     const normalizedInput = Array.from(new Set((value || []).map((target) => String(target).trim().toLowerCase())));
     const invalidTargets = normalizedInput.filter((target) => !allowed.has(target as ResyncTarget));
 
     if (invalidTargets.length > 0) {
-      throw this.createHttpError(400, `Invalid syncTargets: ${invalidTargets.join(', ')}. Allowed values are orders, customers.`);
+      throw this.createHttpError(400, `Invalid syncTargets: ${invalidTargets.join(', ')}. Allowed values are orders, customers, checkouts.`);
     }
 
     const normalized = normalizedInput.filter((target): target is ResyncTarget => allowed.has(target as ResyncTarget));
 
     if (normalized.length === 0) {
-      throw this.createHttpError(400, 'syncTargets must include at least one of: orders, customers.');
+      throw this.createHttpError(400, 'syncTargets must include at least one of: orders, customers, checkouts.');
     }
 
     return normalized;
