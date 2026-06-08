@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { OrderDetailDrawerContent } from "../../../../components/orders/OrderDetailDrawerContent";
+import { RevenueStrip, computeWindowRange, type TimeWindow } from "../../../../components/orders/RevenueStrip";
 
 const pageStyle: React.CSSProperties = {
   paddingTop: "24px",
@@ -254,6 +255,11 @@ export default function OrdersPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  // Lifted time window — shared by the revenue strip and the order table below.
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>("month");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const drawerWidth = '700px';
 
   const fetchData = useCallback(async (force = false) => {
@@ -285,6 +291,7 @@ export default function OrdersPage() {
       const normalizedOrders = scopedOrders.map(normalizeOrderRecord);
       setOrders(normalizedOrders);
       setStats(buildOrderStats(normalizedOrders));
+      setLastUpdated(new Date());
     } catch (e) {
       console.error("Failed to sync order intelligence:", e);
       setError("Failed to synchronize order intelligence. Please retry.");
@@ -330,8 +337,17 @@ export default function OrdersPage() {
     console.log(`Action triggered for ${selectedOrder?.id}: ${action}`);
   };
 
-  const filteredOrders = useMemo(() => {
+  // Time-window scope shared by the revenue strip and the table.
+  const windowedOrders = useMemo(() => {
+    const { start, end } = computeWindowRange(timeWindow, customFrom, customTo);
     return orders.filter((o) => {
+      const ts = Number(new Date(o.placedAt || o.createdAt || 0));
+      return Number.isFinite(ts) && ts >= start && ts <= end;
+    });
+  }, [orders, timeWindow, customFrom, customTo]);
+
+  const filteredOrders = useMemo(() => {
+    return windowedOrders.filter((o) => {
       const id = String(o.id || "").toLowerCase();
       const externalId = String(o.externalOrderId || "").toLowerCase();
       const query = searchQuery.toLowerCase();
@@ -339,7 +355,7 @@ export default function OrdersPage() {
       const matchesStatus = !filterStatus || o.status === filterStatus;
       return matchesSearch && matchesStatus;
     });
-  }, [orders, searchQuery, filterStatus]);
+  }, [windowedOrders, searchQuery, filterStatus]);
 
   const totalPages = useMemo(() => {
     return Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PAGE_SIZE));
@@ -358,7 +374,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, filterStatus]);
+  }, [searchQuery, filterStatus, timeWindow, customFrom, customTo]);
 
   const isPageRestricted = !canAccessOrders;
 
@@ -785,6 +801,17 @@ export default function OrdersPage() {
             </div>
           ))}
         </div>
+
+        <RevenueStrip
+          orders={windowedOrders}
+          timeWindow={timeWindow}
+          onWindowChange={setTimeWindow}
+          customFrom={customFrom}
+          customTo={customTo}
+          onCustomFrom={setCustomFrom}
+          onCustomTo={setCustomTo}
+          lastUpdated={lastUpdated}
+        />
 
         <div style={cardStyle}>
           <div
