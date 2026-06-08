@@ -537,7 +537,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         outageStatusRef.current = outageStatus;
     }, [outageStatus]);
 
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+    // In the browser, default to a relative base ('') so requests hit the
+    // dashboard's own origin and are proxied to the API (see next.config.mjs
+    // rewrites) — this is what lets ngrok / single-origin tunnels work. During
+    // SSR there is no origin, so fall back to the local API host.
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' ? '' : 'http://localhost:4000');
 
     const clearSessionState = React.useCallback(() => {
         setToken(null);

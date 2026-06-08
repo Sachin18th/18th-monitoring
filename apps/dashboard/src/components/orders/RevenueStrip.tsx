@@ -3,7 +3,7 @@
 import React, { useMemo } from 'react';
 import { Activity, AlertTriangle, Building2, CheckCircle2, ShoppingBag } from 'lucide-react';
 
-export type TimeWindow = 'today' | 'week' | 'month' | 'custom';
+export type TimeWindow = 'all' | 'today' | 'week' | 'month' | 'custom';
 
 export interface WindowRange {
   start: number; // epoch ms (inclusive)
@@ -16,6 +16,10 @@ export interface WindowRange {
  */
 export function computeWindowRange(window: TimeWindow, customFrom?: string, customTo?: string): WindowRange {
   const now = Date.now();
+
+  if (window === 'all') {
+    return { start: 0, end: now };
+  }
 
   if (window === 'today') {
     const d = new Date();
@@ -76,6 +80,7 @@ interface RevenueStripProps {
 }
 
 const WINDOW_TABS: Array<{ key: TimeWindow; label: string }> = [
+  { key: 'all', label: 'All Time' },
   { key: 'today', label: 'Today' },
   { key: 'week', label: 'This Week' },
   { key: 'month', label: 'This Month' },

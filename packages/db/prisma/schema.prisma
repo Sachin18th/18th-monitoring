@@ -392,6 +392,8 @@ model ConnectorInstance {
   performanceMetrics      PerformanceMetric[]
   performanceRollups      PerformanceRollup[]
   kpiValues               KpiValue[]
+  storefrontSessions      StorefrontSession[]
+  storefrontEvents        StorefrontEvent[]
 
   @@index([siteId], map: "idx_connector_site")
   @@index([tenantId], map: "idx_connector_tenant")
@@ -1005,4 +1007,51 @@ model RecoveryJob {
 
   @@index([siteId, status], map: "idx_recovery_site_status")
   @@map("recovery_jobs")
+}
+
+model StorefrontSession {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  sessionId           String   @map("session_id")
+  visitorId           String   @map("visitor_id")
+  startedAt           DateTime @default(now()) @map("started_at") @db.Timestamptz()
+  lastActiveAt        DateTime @default(now()) @map("last_active_at") @db.Timestamptz()
+  userAgent           String?  @map("user_agent")
+  referrer            String?
+  landingPage         String?  @map("landing_page")
+  deviceType          String?  @map("device_type")
+  metadata            Json     @default("{}")
+
+  connectorInstance   ConnectorInstance @relation(fields: [connectorInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectorInstanceId, sessionId], map: "uq_storefront_session_connector_session")
+  @@index([tenantId], map: "idx_storefront_session_tenant")
+  @@index([connectorInstanceId], map: "idx_storefront_session_connector")
+  @@index([connectorInstanceId, visitorId], map: "idx_storefront_session_visitor")
+  @@index([connectorInstanceId, lastActiveAt], map: "idx_storefront_session_last_active")
+  @@map("storefront_sessions")
+}
+
+model StorefrontEvent {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  sessionId           String   @map("session_id")
+  visitorId           String   @map("visitor_id")
+  eventType           String   @map("event_type")
+  pageUrl             String?  @map("page_url")
+  pageTitle           String?  @map("page_title")
+  occurredAt          DateTime @default(now()) @map("occurred_at") @db.Timestamptz()
+  receivedAt          DateTime @default(now()) @map("received_at") @db.Timestamptz()
+  properties          Json     @default("{}")
+
+  connectorInstance   ConnectorInstance @relation(fields: [connectorInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId], map: "idx_storefront_event_tenant")
+  @@index([connectorInstanceId], map: "idx_storefront_event_connector")
+  @@index([connectorInstanceId, occurredAt], map: "idx_storefront_event_connector_occurred")
+  @@index([connectorInstanceId, sessionId], map: "idx_storefront_event_session")
+  @@index([connectorInstanceId, eventType, occurredAt], map: "idx_storefront_event_type_occurred")
+  @@map("storefront_events")
 }

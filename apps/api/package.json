@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc",
+    "build:tracker": "esbuild src/public/tracker.src.js --bundle --minify --format=iife --target=es2017 --legal-comments=none --outfile=src/public/tracker.js",
     "start": "node dist/server.js",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -28,6 +29,7 @@
     "@types/node": "^20.0.0",
     "@types/supertest": "^7.2.0",
     "@vitest/coverage-v8": "^4.1.5",
+    "esbuild": "^0.27.0",
     "supertest": "^7.2.2",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",

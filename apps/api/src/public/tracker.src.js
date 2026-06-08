@@ -1,0 +1,555 @@
+/*!
+ * 18th Digitech — Universal storefront tracker (Phase 2).
+ * Zero dependencies. Self-contained IIFE. Silent-fail. Never blocks render.
+ *
+ *   <script src="https://<platform>/api/track/tracker.js"
+ *           data-connector-id="conn_xxx"
+ *           data-ingest-url="https://<platform>/api/track"></script>
+ *
+ * Config may alternatively be set via
+ *   window.__PLAT_CONFIG__ = { connectorId, ingestUrl }.
+ *
+ * Emits the purchase-journey events only — keeps storefront_events lean:
+ *   page_view        (a "Visit")
+ *   product_view     (PDP view — URL pattern + DOM signals)
+ *   checkout_step    (entered checkout)
+ *   checkout_abandon (left checkout without completing)
+ *   checkout_complete(a "Purchase" — order confirmation)
+ *   element_click    ONLY for elements tagged data-track="…" (opt-in; we do NOT
+ *                    log every anchor/button click — that would bloat the DB)
+ *   + window.track(type, props) for any custom event you want.
+ *
+ * No cookies, no PII, no input values are ever read.
+ */
+(function () {
+  'use strict';
+  try {
+    // ── Config ───────────────────────────────────────────────────────────────
+    // Resolution order: data-* attributes (manual paste / BigCommerce / Adobe)
+    // → script src query string (Shopify ScriptTag can't carry data-*: it is
+    //   installed as tracker.js?cid=...&ingest=...) → window.__PLAT_CONFIG__.
+    // When no ingest is given, derive it from the script's own origin.
+    var script = document.currentScript;
+    var ds = (script && script.dataset) || {};
+    var cfg = window.__PLAT_CONFIG__ || {};
+    var srcUrl = (script && script.src) || '';
+    var qp = {};
+    try {
+      var su = new URL(srcUrl, location.href);
+      su.searchParams.forEach(function (v, k) { qp[k] = v; });
+      srcUrl = su.href;
+    } catch (e) {}
+    function deriveIngest() {
+      try { return new URL(srcUrl, location.href).origin + '/api/track'; } catch (e) { return ''; }
+    }
+    var CONNECTOR = ds.connectorId || qp.cid || qp.connector_id || cfg.connectorId || '';
+    var INGEST = ds.ingestUrl || qp.ingest || qp.ingest_url || cfg.ingestUrl || deriveIngest();
+    if (!CONNECTOR || !INGEST) return; // not configured — do nothing
+
+    // ── Constants ──────────────────────────────────────────────────────────
+    var VID_KEY = '__plat_vid';   // localStorage  — persists across sessions
+    var SID_KEY = '__plat_sid';   // sessionStorage — rotating session id
+    var SLA_KEY = '__plat_sla';   // sessionStorage — session last-active epoch ms
+    var SESSION_TTL = 30 * 60 * 1000; // 30 min inactivity → new session
+    var FLUSH_MS = 5000;          // flush cadence
+    var MAX_BATCH = 10;           // flush threshold
+    var MAX_RETRY = 2;            // retries after the first send
+    var RETRY_MS = 2000;          // delay between retries
+    var PV_DEDUPE_MS = 1000;      // no duplicate page_view for same URL within 1s
+    var SENSITIVE = /(token|auth|email|password|secret|key|sig|otp)/i;
+
+    // ── Tiny helpers ─────────────────────────────────────────────────────────
+    function nowMs() { try { return Date.now(); } catch (e) { return +new Date(); } }
+
+    function uuid() {
+      try {
+        var c = window.crypto;
+        if (c && c.randomUUID) return c.randomUUID();
+        if (c && c.getRandomValues) {
+          var a = new Uint8Array(16);
+          c.getRandomValues(a);
+          a[6] = (a[6] & 0x0f) | 0x40;
+          a[8] = (a[8] & 0x3f) | 0x80;
+          var h = [];
+          for (var i = 0; i < 16; i++) h.push((a[i] + 256).toString(16).slice(1));
+          return h[0]+h[1]+h[2]+h[3]+'-'+h[4]+h[5]+'-'+h[6]+h[7]+'-'+h[8]+h[9]+'-'+h[10]+h[11]+h[12]+h[13]+h[14]+h[15];
+        }
+      } catch (e) {}
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (ch) {
+        var r = (Math.random() * 16) | 0;
+        return (ch === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+      });
+    }
+
+    // Storage with graceful fallback to memory (private mode / blocked storage).
+    var mem = {};
+    function store(area, key, val) {
+      try {
+        var s = area === 's' ? window.sessionStorage : window.localStorage;
+        if (val === undefined) return s.getItem(key);
+        s.setItem(key, val);
+        return val;
+      } catch (e) {
+        if (val === undefined) return key in mem ? mem[key] : null;
+        mem[key] = val;
+        return val;
+      }
+    }
+
+    function scrubUrl(href) {
+      try {
+        var u = new URL(href, location.href);
+        var drop = [];
+        u.searchParams.forEach(function (_v, k) { if (SENSITIVE.test(k)) drop.push(k); });
+        for (var i = 0; i < drop.length; i++) u.searchParams.delete(drop[i]);
+        return u.href;
+      } catch (e) {
+        return String(href || '').split('#')[0];
+      }
+    }
+
+    function meta(name, attr) {
+      try {
+        var el = document.querySelector('meta[' + (attr || 'property') + '="' + name + '"]');
+        return el ? el.getAttribute('content') : null;
+      } catch (e) { return null; }
+    }
+
+    // ── Identity ───────────────────────────────────────────────────────────
+    var VISITOR = store('l', VID_KEY);
+    if (!VISITOR) { VISITOR = uuid(); store('l', VID_KEY, VISITOR); }
+
+    function sessionId() {
+      var sid = store('s', SID_KEY);
+      var last = parseInt(store('s', SLA_KEY) || '0', 10);
+      var t = nowMs();
+      if (!sid || (last && t - last > SESSION_TTL)) {
+        sid = uuid();
+        store('s', SID_KEY, sid);
+      }
+      store('s', SLA_KEY, '' + t);
+      return sid;
+    }
+
+    // ── Platform + page-type detection ───────────────────────────────────────
+    // The three funnel stages — Visit (page_view), Product View, Purchase
+    // (checkout_complete) — must be detected reliably on each platform, which
+    // differ in URLs, DOM, and class names. Strategy per page-type call:
+    //   1) platform-NATIVE signal (most reliable): Shopify's analytics page
+    //      type, Magento's body class, BigCommerce's product DOM.
+    //   2) DOM signals (schema.org, data-* attributes, og:type).
+    //   3) URL patterns (per-platform, then generic) as a last resort.
+    function docClass() { try { return document.body ? (document.body.className || '') : ''; } catch (e) { return ''; } }
+
+    function detectPlatform() {
+      try {
+        if (window.Shopify || window.ShopifyAnalytics || window.__st) return 'shopify';
+        if (window.BCData || window.bcAnalytics || window.stencilBootstrap) return 'bigcommerce';
+        if (window.Magento || window.Mage || /(^|\s)(catalog-|checkout-|cms-|customer-|catalogsearch-)/.test(docClass())) return 'adobe_commerce';
+      } catch (e) {}
+      var gen = (meta('generator', 'name') || '').toLowerCase();
+      if (gen.indexOf('shopify') > -1) return 'shopify';
+      if (gen.indexOf('bigcommerce') > -1) return 'bigcommerce';
+      if (gen.indexOf('magento') > -1) return 'adobe_commerce';
+      return 'custom';
+    }
+
+    // Platform can be unknown if the script runs before body/globals exist
+    // (e.g. injected in <head>), so re-detect lazily until it locks on.
+    var _platform = null;
+    function platform() {
+      if (_platform && _platform !== 'custom') return _platform;
+      _platform = detectPlatform();
+      return _platform;
+    }
+
+    // 1) Shopify — its analytics object exposes the canonical page type.
+    function shopifyNativeType() {
+      try {
+        var a = window.ShopifyAnalytics;
+        var pt = a && a.meta && a.meta.page && a.meta.page.pageType;
+        pt = pt ? String(pt).toLowerCase() : '';
+        if (pt === 'product') return 'product';
+        if (pt === 'thank_you' || pt === 'order' || pt === 'order_status') return 'confirmation';
+        if (pt === 'checkout') return 'checkout';
+        if (pt === 'cart') return 'cart';
+        if (pt === 'collection' || pt === 'list-collections') return 'category';
+        if (pt === 'home' || pt === 'index') return 'home';
+      } catch (e) {}
+      return null;
+    }
+
+    // 1) Magento — page type is encoded in the <body> class.
+    function magentoNativeType() {
+      var c = docClass();
+      if (!c) return null;
+      if (/(^|\s)(checkout-onepage-success|checkout-success|onestepcheckout-success|firecheckout-success)(\s|$)/.test(c)) return 'confirmation';
+      if (/(^|\s)catalog-product-view(\s|$)/.test(c)) return 'product';
+      if (/(^|\s)checkout-cart-index(\s|$)/.test(c)) return 'cart';
+      if (/(^|\s)(checkout-index-index|onepage|opc-|firecheckout-index)/.test(c)) return 'checkout';
+      if (/(^|\s)(catalog-category-view|catalogsearch-result-index)(\s|$)/.test(c)) return 'category';
+      if (/(^|\s)cms-index-index(\s|$)/.test(c)) return 'home';
+      return null;
+    }
+
+    var PATTERNS = {
+      shopify: {
+        confirmation: /\/(thank_you|thank-you|orders\/[^/]+|checkouts\/[^/]+\/(thank[-_]you|orders))/i,
+        checkout: /\/checkouts?(\/|\b)/i,
+        product: /\/products\//i,
+        cart: /\/cart(\/|\b)/i,
+        category: /\/collections\//i
+      },
+      bigcommerce: {
+        confirmation: /(\/checkout\/order-confirmation|\/order-confirmation|finishorder\.php|\/confirmation)/i,
+        checkout: /\/checkout(\/|\b)/i,
+        product: /\/products?\//i,
+        cart: /(\/cart\.php|\/cart(\/|\b))/i,
+        category: /\/categories?\//i
+      },
+      adobe_commerce: {
+        confirmation: /\/(checkout\/onepage\/success|checkout\/success|onestepcheckout\/success)/i,
+        checkout: /\/checkout(\/|$)/i,
+        product: /\/catalog\/product\/view/i,
+        cart: /\/checkout\/cart/i,
+        category: /\/catalog\/category/i
+      }
+    };
+    var GENERIC = {
+      confirmation: /\/(thank[-_]?you|order[-_](received|confirmation|complete|success)|order-confirmation|success|orders?\/)/i,
+      checkout: /\/checkout(\/|\b)/i,
+      product: /\/(products?|item|p)\//i,
+      cart: /\/(cart|basket|bag)(\/|\b)/i,
+      category: /\/(collections?|categor|shop)(\/|\b)/i
+    };
+
+    function urlMatches(kind) {
+      var path = location.pathname + location.search;
+      var p = PATTERNS[platform()];
+      if (p && p[kind] && p[kind].test(path)) return true;
+      return GENERIC[kind].test(path);
+    }
+
+    // Cross-platform product signals (covers Shopify themes, Magento, and
+    // BigCommerce Stencil which has no fixed product URL prefix).
+    function domProduct() {
+      try {
+        var c = docClass();
+        if (/(^|\s)(catalog-product-view|template-product|product-template|productView)(\s|$)/.test(c)) return true;
+        if (document.querySelector(
+          '[data-product-id],[data-product-handle],[data-entity-id],' +
+          'form[action*="/cart/add"],form[action*="cart.php"],input[name="product_id"],' +
+          '[itemtype$="schema.org/Product"],[itemtype$="/Product"],[data-test="product-title"]'
+        )) return true;
+        var og = meta('og:type');
+        if (og && /product/i.test(og)) return true;
+      } catch (e) {}
+      return false;
+    }
+
+    // A rendered order id/number is the strongest "Purchase" signal.
+    function hasOrderId() {
+      try {
+        return !!document.querySelector('[data-order-id],[data-order-number],[data-checkout-order-number],.order-number,.order-confirmation');
+      } catch (e) { return false; }
+    }
+
+    function pageType() {
+      var native = platform() === 'shopify' ? shopifyNativeType()
+        : platform() === 'adobe_commerce' ? magentoNativeType()
+        : null;
+      if (native) return native;
+
+      // DOM + URL fallback (order matters: confirmation before checkout,
+      // since /checkout/onepage/success contains "/checkout").
+      if (hasOrderId() || urlMatches('confirmation')) return 'confirmation';
+      if (urlMatches('checkout') || /(^|\s)checkout/.test(docClass())) return 'checkout';
+      if (domProduct() || urlMatches('product')) return 'product';
+      if (urlMatches('cart')) return 'cart';
+      if (urlMatches('category')) return 'category';
+      var path = location.pathname;
+      if (path === '/' || path === '') return 'home';
+      return 'other';
+    }
+
+    // ── Event envelope + queue ─────────────────────────────────────────────
+    function envelope(type, props) {
+      return {
+        event_type: type,
+        session_id: sessionId(),
+        visitor_id: VISITOR,
+        page_url: scrubUrl(location.href),
+        page_title: (document.title || '').slice(0, 300) || null,
+        occurred_at: new Date().toISOString(),
+        properties: props || {}
+      };
+    }
+
+    var queue = [];
+    function emit(type, props) {
+      try { enqueue(envelope(type, props)); } catch (e) {}
+    }
+    function enqueue(ev) {
+      if (!ev) return;
+      queue.push(ev);
+      if (queue.length >= MAX_BATCH) flush(false);
+    }
+
+    // ── Transport: fetch primary, XHR fallback, beacon on unload ─────────────
+    function payload(batch) {
+      return JSON.stringify({ connector_instance_id: CONNECTOR, events: batch });
+    }
+
+    function flush(useBeacon) {
+      if (!queue.length) return;
+      var batch = queue.splice(0, queue.length);
+      send(batch, 0, !!useBeacon);
+    }
+
+    function send(batch, attempt, useBeacon) {
+      var data = payload(batch);
+
+      if (useBeacon) {
+        try {
+          if (navigator.sendBeacon && navigator.sendBeacon(INGEST, new Blob([data], { type: 'application/json' }))) return;
+        } catch (e) {}
+        // beacon unavailable/failed → fall through to a best-effort sync send
+      }
+
+      var onFail = function () { retry(batch, attempt, useBeacon); };
+
+      if (window.fetch) {
+        try {
+          window.fetch(INGEST, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: data,
+            keepalive: true,
+            credentials: 'omit'
+          }).then(function (r) { if (!r || !r.ok) onFail(); }, onFail);
+          return;
+        } catch (e) { /* fall through to XHR */ }
+      }
+      sendXHR(data, onFail);
+    }
+
+    function sendXHR(data, onFail) {
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', INGEST, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.onreadystatechange = function () {
+          if (xhr.readyState === 4 && (xhr.status < 200 || xhr.status >= 300)) onFail();
+        };
+        xhr.onerror = onFail;
+        xhr.send(data);
+      } catch (e) { onFail(); }
+    }
+
+    function retry(batch, attempt, useBeacon) {
+      if (attempt >= MAX_RETRY) return; // 2 retries exhausted → silent drop
+      setTimeout(function () { send(batch, attempt + 1, useBeacon); }, RETRY_MS);
+    }
+
+    // ── Auto events ───────────────────────────────────────────────────────
+    var lastUrl = null;
+    var lastPvUrl = null;
+    var lastPvAt = 0;
+    var inCheckout = false;
+    var completed = false;
+    var lastCheckoutStep = null;
+
+    function emitPageView() {
+      var url = location.href;
+      var t = nowMs();
+      if (url === lastPvUrl && t - lastPvAt < PV_DEDUPE_MS) return; // dedupe
+      lastPvUrl = url;
+      lastPvAt = t;
+      emit('page_view', {
+        page_type: pageType(),
+        referrer: document.referrer ? scrubUrl(document.referrer) : null,
+        platform: platform(),
+        path: location.pathname
+      });
+    }
+
+    function checkoutStep() {
+      try {
+        var el = document.querySelector('[data-checkout-step]');
+        if (el) return el.getAttribute('data-checkout-step');
+        var cls = docClass();
+        var m = cls.match(/checkout-(\w+)/);
+        if (m) return m[1];
+      } catch (e) {}
+      return null;
+    }
+
+    function orderId() {
+      try {
+        var el = document.querySelector('[data-order-id]');
+        if (el) return (el.getAttribute('data-order-id') || '').slice(0, 100) || null;
+      } catch (e) {}
+      return null;
+    }
+
+    function productInfo() {
+      var info = {};
+      try {
+        var idEl = document.querySelector('[data-product-id]');
+        if (idEl) info.product_id = (idEl.getAttribute('data-product-id') || '').slice(0, 100);
+
+        var nameEl = document.querySelector('[data-product-name]');
+        var name = (nameEl && nameEl.getAttribute('data-product-name')) || meta('og:title');
+        if (name) info.product_name = String(name).slice(0, 200);
+
+        var price = meta('product:price:amount') || meta('og:price:amount');
+        if (price) info.price = String(price).slice(0, 40);
+      } catch (e) {}
+      return info;
+    }
+
+    // Fire the funnel event that corresponds to the current page, once per nav.
+    function emitForPage() {
+      var type = pageType();
+      try {
+        if (type === 'product') {
+          emit('product_view', productInfo());
+        } else if (type === 'checkout') {
+          inCheckout = true;
+          lastCheckoutStep = checkoutStep();
+          emit('checkout_step', { step: lastCheckoutStep });
+        } else if (type === 'confirmation') {
+          completed = true;
+          inCheckout = false;
+          emit('checkout_complete', { order_id: orderId() });
+        }
+      } catch (e) {}
+    }
+
+    function onNav() {
+      try {
+        var url = location.href;
+        if (url === lastUrl) return;
+        lastUrl = url;
+        emitPageView();
+        emitForPage();
+      } catch (e) {}
+    }
+
+    // SPA navigation: history patch + popstate + hashchange + poll backstop.
+    function scheduleNav() {
+      try {
+        if (window.requestAnimationFrame) window.requestAnimationFrame(function () { setTimeout(onNav, 60); });
+        else setTimeout(onNav, 60);
+      } catch (e) { onNav(); }
+    }
+
+    function patchHistory(method) {
+      try {
+        var orig = history[method];
+        if (typeof orig !== 'function') return;
+        history[method] = function () {
+          var r = orig.apply(this, arguments);
+          try { scheduleNav(); } catch (e) {}
+          return r;
+        };
+      } catch (e) {}
+    }
+
+    // Click tracking is OPT-IN only: we record a click ONLY when the clicked
+    // element (or an ancestor within 6 levels) carries a [data-track] attribute.
+    // Tracking every anchor/button click floods storefront_events and bloats the
+    // DB, so we deliberately skip untagged clicks. Tag the few elements you care
+    // about, e.g. <button data-track="add_to_cart">.
+    function onClick(e) {
+      try {
+        var node = e.target;
+        var match = null;
+        var depth = 0;
+        while (node && depth <= 6) {
+          if (node.nodeType === 1 && node.getAttribute && node.getAttribute('data-track') !== null) {
+            match = node;
+            break;
+          }
+          node = node.parentNode;
+          depth++;
+        }
+        if (!match) return; // untagged click — ignored (keeps the DB lean)
+
+        var props = {
+          tag: (match.tagName || '').toLowerCase(),
+          id: match.id || null,
+          classes: classOf(match),
+          text: (match.innerText || match.textContent || '').trim().slice(0, 80) || null,
+          track: match.getAttribute ? match.getAttribute('data-track') : null,
+          href: null
+        };
+        if (props.tag === 'a' && match.getAttribute) {
+          var href = match.getAttribute('href');
+          if (href && href.charAt(0) !== '#' && href.toLowerCase().indexOf('javascript:') !== 0) {
+            props.href = scrubUrl(href);
+          }
+        }
+        emit('element_click', props);
+      } catch (err) {}
+    }
+
+    function classOf(el) {
+      try {
+        var c = el.className;
+        if (c && typeof c !== 'string' && c.baseVal != null) c = c.baseVal; // SVG
+        return ('' + (c || '')).trim().slice(0, 120) || null;
+      } catch (e) { return null; }
+    }
+
+    // Abandonment + final flush on unload.
+    function onUnload() {
+      try {
+        if (inCheckout && !completed) {
+          enqueue(envelope('checkout_abandon', { step: lastCheckoutStep }));
+        }
+        flush(true);
+      } catch (e) {}
+    }
+
+    // ── Public API ─────────────────────────────────────────────────────────
+    window.track = function (type, props) {
+      try { if (type) emit(String(type), props && typeof props === 'object' ? props : {}); } catch (e) {}
+    };
+    // Drain any pre-load queued calls: window._platq = [['type', {..}], ...]
+    try {
+      var pre = window._platq;
+      if (pre && pre.length) {
+        for (var i = 0; i < pre.length; i++) {
+          try { window.track.apply(null, pre[i]); } catch (e) {}
+        }
+        window._platq = [];
+      }
+    } catch (e) {}
+
+    // ── Wire up ──────────────────────────────────────────────────────────
+    patchHistory('pushState');
+    patchHistory('replaceState');
+    try {
+      window.addEventListener('popstate', scheduleNav);
+      window.addEventListener('hashchange', scheduleNav);
+      document.addEventListener('click', onClick, true);
+      window.addEventListener('pagehide', onUnload);
+      window.addEventListener('beforeunload', onUnload);
+      document.addEventListener('visibilitychange', function () {
+        try { if (document.visibilityState === 'hidden') flush(true); } catch (e) {}
+      });
+    } catch (e) {}
+
+    // 500ms poll backstop for SPA frameworks that bypass history hooks.
+    try { setInterval(function () { try { onNav(); } catch (e) {} }, 500); } catch (e) {}
+
+    // Periodic flush.
+    try { setInterval(function () { try { flush(false); } catch (e) {} }, FLUSH_MS); } catch (e) {}
+
+    // First navigation (initial page load).
+    onNav();
+  } catch (e) {
+    // Whole-script guard: never throw into the host page.
+  }
+})();

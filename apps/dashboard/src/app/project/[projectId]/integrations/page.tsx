@@ -103,7 +103,9 @@ export default function IntegrationsPage() {
   const projectId = params.projectId as string;
   const { token, apiFetch } = useAuth();
   const { connectorInstanceId, setConnectorInstanceId } = useConnectorFilter();
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+  // Relative base in the browser → same-origin, proxied to the API via
+  // next.config.mjs rewrites (required for ngrok / single-origin tunnels).
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined" ? "" : "http://localhost:4000");
 
   // State
   const [loading, setLoading] = useState(true);

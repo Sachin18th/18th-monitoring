@@ -256,7 +256,7 @@ export default function OrdersPage() {
   const [filterStatus, setFilterStatus] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   // Lifted time window — shared by the revenue strip and the order table below.
-  const [timeWindow, setTimeWindow] = useState<TimeWindow>("month");
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);

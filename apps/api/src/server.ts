@@ -41,6 +41,7 @@ import { transformationRoutes } from './routes/transformation';
 import { pipelineRoutes } from './routes/pipeline';
 import { kpiRoutes } from './routes/kpi';
 import { pagespeedRoutes } from './routes/pagespeed.route';
+import { trackRoutes } from './routes/track';
 import { cache } from '../../../packages/cache/src';
 import { BackendMonitor } from './utils/backend-monitor';
 
@@ -218,6 +219,11 @@ export const bootstrapApi = async () => {
 
     await server.register(pagespeedRoutes, {
         prefix: '/api/v1'
+    });
+
+    // Storefront session/event tracking (public ingest + analyst queries)
+    await server.register(trackRoutes, {
+        prefix: '/api/track'
     });
 
 
