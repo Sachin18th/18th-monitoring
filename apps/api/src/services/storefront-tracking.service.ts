@@ -514,7 +514,38 @@ export class StorefrontTrackingService {
          (connector_instance_id, tenant_id, session_id, visitor_id, event_type, canonical_stage, page_url, page_title, occurred_at, properties)
        VALUES ` + placeholders.join(', ');
 
-    await prisma.$executeRawUnsafe(sql, ...params);
+    try {
+      await prisma.$executeRawUnsafe(sql, ...params);
+    } catch (err) {
+      // A single bad row (e.g. an event_type not yet allowed by the DB CHECK
+      // constraint) would otherwise fail the whole multi-row INSERT and drop
+      // every event in the batch. Fall back to per-row inserts so one rejected
+      // row can't poison its neighbours; log the offenders for visibility.
+      console.error('[TRACK] bulk event insert failed; retrying row-by-row', err);
+      const rowSql =
+        `INSERT INTO storefront_events
+           (connector_instance_id, tenant_id, session_id, visitor_id, event_type, canonical_stage, page_url, page_title, occurred_at, properties)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::jsonb)`;
+      for (const ev of events) {
+        try {
+          await prisma.$executeRawUnsafe(
+            rowSql,
+            connectorInstanceId,
+            tenantId,
+            ev.sessionId,
+            ev.visitorId,
+            ev.eventType,
+            ev.canonicalStage,
+            ev.pageUrl,
+            ev.pageTitle,
+            ev.occurredAt.toISOString(),
+            JSON.stringify(ev.properties ?? {}),
+          );
+        } catch (rowErr) {
+          console.error('[TRACK] dropped event row', { eventType: ev.eventType, sessionId: ev.sessionId }, rowErr);
+        }
+      }
+    }
   }
 
   /**
