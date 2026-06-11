@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { ConnectorRegistry } from '../../../../packages/connector-framework/src/registry';
-import { prisma } from '@kpi-platform/db';
+import { prisma, encryptSecret } from '@kpi-platform/db';
 import { ResponseUtil } from '../utils/response';
 import crypto from 'crypto';
 import { ShopifyOrderSyncService } from '../services/shopify-order-sync.service';
@@ -180,7 +180,8 @@ export class IntegrationController {
                 connectorInstanceId: id,
                 tenantId,
                 authType: 'API_KEY',
-                encryptedSecret: JSON.stringify(credentials || {}), // In production, use actual encryption
+                // AES-256-GCM encrypted at rest; raw tokens never hit the DB in plaintext.
+                encryptedSecret: encryptSecret(credentials || {}),
                 vaultKey: `vault/${tenantId}/${id}/secret`
             }
         });

@@ -13,6 +13,7 @@
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",
     "lint": "npm run lint --workspaces",
+    "secrets:check-encryption": "node scripts/check-secret-encryption.mjs",
     "toxic-clean": "taskkill /F /IM node.exe /T || true"
   },
   "workspaces": [

@@ -12,7 +12,8 @@
  * Emits the purchase-journey events only — keeps storefront_events lean:
  *   page_view        (a "Visit")
  *   product_view     (PDP view — URL pattern + DOM signals)
- *   checkout_step    (entered checkout)
+ *   add_to_cart      (add-to-cart click / form submit — AJAX-safe, no nav needed)
+ *   checkout_step    (entered checkout, OR clicked a "begin checkout" control)
  *   checkout_abandon (left checkout without completing)
  *   checkout_complete(a "Purchase" — order confirmation)
  *   element_click    ONLY for elements tagged data-track="…" (opt-in; we do NOT
@@ -163,9 +164,19 @@
       return _platform;
     }
 
-    // 1) Shopify — its analytics object exposes the canonical page type.
+    // 1) Shopify — its analytics object exposes the canonical page type. On the
+    // hosted checkout (URL contains /checkouts/) ShopifyAnalytics.meta may be
+    // absent, but window.Shopify.Checkout is present and tells us the step — so we
+    // check it first: a "thank_you"/order-status step is the Purchase, any other
+    // step is the Checkout stage.
     function shopifyNativeType() {
       try {
+        var co = window.Shopify && window.Shopify.Checkout;
+        if (co && /\/checkouts?(\/|\b)/i.test(location.pathname)) {
+          var step = String(co.step || co.page || '').toLowerCase();
+          if (step.indexOf('thank') > -1 || co.isOrderStatusPage || co.OrderStatus) return 'confirmation';
+          return 'checkout';
+        }
         var a = window.ShopifyAnalytics;
         var pt = a && a.meta && a.meta.page && a.meta.page.pageType;
         pt = pt ? String(pt).toLowerCase() : '';
@@ -289,6 +300,14 @@
     function emit(type, props) {
       try { enqueue(envelope(type, props)); } catch (e) {}
     }
+    // For interaction milestones (add_to_cart, begin-checkout) the page often
+    // navigates immediately (Magento's "redirect to cart", "proceed to checkout"),
+    // so the 5s flush timer never fires and only the unload beacon would carry
+    // them — which the browser drops cross-origin for application/json. Send these
+    // right away over fetch({keepalive:true}): survives navigation, real CORS.
+    function emitNow(type, props) {
+      try { enqueue(envelope(type, props)); flush(false); } catch (e) {}
+    }
     function enqueue(ev) {
       if (!ev) return;
       queue.push(ev);
@@ -384,12 +403,28 @@
       return null;
     }
 
-    function orderId() {
+    // Purchase details for the order-confirmation / thank-you page. Shopify
+    // exposes the order on window.Shopify.checkout (order_id, order_number,
+    // total_price, currency); fall back to DOM order-number markup otherwise.
+    function orderInfo() {
+      var info = {};
       try {
-        var el = document.querySelector('[data-order-id]');
-        if (el) return (el.getAttribute('data-order-id') || '').slice(0, 100) || null;
+        var co = window.Shopify && window.Shopify.checkout;
+        if (co) {
+          if (co.order_id != null) info.order_id = String(co.order_id).slice(0, 100);
+          if (co.order_number != null) info.order_number = String(co.order_number).slice(0, 100);
+          if (co.total_price != null) info.total = String(co.total_price).slice(0, 40);
+          if (co.currency) info.currency = String(co.currency).slice(0, 10);
+        }
+        if (!info.order_id) {
+          var el = document.querySelector('[data-order-id],[data-order-number],[data-checkout-order-number]');
+          if (el) {
+            var v = el.getAttribute('data-order-id') || el.getAttribute('data-order-number') || el.getAttribute('data-checkout-order-number');
+            if (v) info.order_id = String(v).slice(0, 100);
+          }
+        }
       } catch (e) {}
-      return null;
+      return info;
     }
 
     function productInfo() {
@@ -417,11 +452,13 @@
         } else if (type === 'checkout') {
           inCheckout = true;
           lastCheckoutStep = checkoutStep();
-          emit('checkout_step', { step: lastCheckoutStep });
+          // Flush now: Shopify checkout steps live on /checkouts/ and the shopper
+          // may advance/redirect before the periodic flush.
+          emitNow('checkout_step', { step: lastCheckoutStep });
         } else if (type === 'confirmation') {
           completed = true;
           inCheckout = false;
-          emit('checkout_complete', { order_id: orderId() });
+          emitNow('checkout_complete', orderInfo());
         }
       } catch (e) {}
     }
@@ -502,6 +539,165 @@
       } catch (e) { return null; }
     }
 
+    // ── Commerce interactions: add_to_cart + begin-checkout ──────────────────
+    // Page-type detection alone misses two funnel stages:
+    //   • Add-to-cart is almost always an AJAX action (Magento's
+    //     #product-addtocart-button, Shopify/BigCommerce themes) that never
+    //     navigates to /cart — so a cart page_view never fires and the stage
+    //     reads zero. We capture the click/submit itself.
+    //   • "Begin checkout" frequently redirects to an off-site checkout
+    //     (Shopify Shop Pay, hosted checkout) where this script isn't installed,
+    //     so checkout_step never fires. We capture the intent click before the
+    //     redirect. The on-page checkout_step (emitForPage) still fires too.
+    // Both map to canonical stages server-side; the session flags are monotonic
+    // so a little duplication never double-counts a session in the funnel.
+    var ADD_TO_CART_SEL =
+      'form[action*="/cart/add"],form[action*="cart.php?action=add"],form[action*="checkout/cart/add"],' +
+      '#product-addtocart-button,button.tocart,.action.tocart,[data-button-type="add-cart"],' +
+      '#form-action-addToCart,button[name="add"],[data-add-to-cart],[data-track="add_to_cart"]';
+    // Shopify: name="checkout" cart button, dynamic "Buy it now"
+    // (.shopify-payment-button) and accelerated checkouts all leave for the
+    // off-domain checkout. BigCommerce: [data-button-type="checkout"]. Adobe:
+    // [data-role="proceed-to-checkout"].
+    var CHECKOUT_SEL =
+      '[name="checkout"],[data-button-type="checkout"],[data-role="proceed-to-checkout"],' +
+      '#checkout,.cart__checkout,.shopify-payment-button,.additional-checkout-buttons,' +
+      '[data-track="checkout_start"],[data-track="begin_checkout"]';
+    var ADD_TEXT = /\badd\s*(to)?\s*(cart|bag|basket)\b/i;
+    var CHECKOUT_TEXT = /\b(check\s?out|proceed to (payment|checkout)|place order)\b/i;
+
+    var lastAddAt = 0;       // debounce form-submit + click double-fire
+    var beganCheckout = false; // begin-checkout intent fires once per page load
+
+    function closestMatch(node, selector) {
+      var depth = 0;
+      while (node && depth <= 6) {
+        try {
+          if (node.nodeType === 1 && node.matches && node.matches(selector)) return node;
+        } catch (e) {}
+        node = node.parentNode;
+        depth++;
+      }
+      return null;
+    }
+
+    function ctrlText(el) {
+      try { return (('' + (el.innerText || el.textContent || el.value || '')).trim()); }
+      catch (e) { return ''; }
+    }
+
+    function onCommerce(e) {
+      try {
+        var target = e.target;
+
+        // add_to_cart — selector match, or a button/submit labelled "add to cart".
+        var add = closestMatch(target, ADD_TO_CART_SEL);
+        if (!add) {
+          var btn = closestMatch(target, 'button,input[type="submit"],input[type="button"]');
+          if (btn && ADD_TEXT.test(ctrlText(btn))) add = btn;
+        }
+        if (add) {
+          var t = nowMs();
+          if (t - lastAddAt > 800) { lastAddAt = t; emitNow('add_to_cart', productInfo()); }
+          return;
+        }
+
+        // begin checkout — once per page load (the redirect/AJAX takes over next).
+        if (!beganCheckout) {
+          var co = closestMatch(target, CHECKOUT_SEL);
+          if (!co) {
+            var link = closestMatch(target, 'a[href]');
+            if (link) {
+              var hp = (link.getAttribute('href') || '').toLowerCase();
+              // a checkout link, but NOT the cart page (Adobe's cart is /checkout/cart).
+              if (/\/checkout/.test(hp) && !/\/checkout\/cart/.test(hp) && !/cart\.php/.test(hp)) co = link;
+            }
+          }
+          if (!co) {
+            // A cart form that posts to /checkout(s) (Shopify/BigCommerce cart submit).
+            var cf = closestMatch(target, 'form[action*="/checkout"]');
+            if (cf) {
+              var fa = (cf.getAttribute('action') || '').toLowerCase();
+              if (!/\/checkout\/cart/.test(fa) && !/cart\.php/.test(fa)) co = cf;
+            }
+          }
+          if (!co) {
+            var b2 = closestMatch(target, 'button,input[type="submit"],input[type="button"]');
+            if (b2 && CHECKOUT_TEXT.test(ctrlText(b2))) co = b2;
+          }
+          if (co) {
+            beganCheckout = true;
+            inCheckout = true;
+            emitNow('checkout_step', { step: 'begin', trigger: 'click' });
+          }
+        }
+      } catch (err) {}
+    }
+
+    // ── Network-level add-to-cart detection (theme-independent) ──────────────
+    // DOM-click detection misses custom Magento frontends (Hyvä, PWA/GraphQL)
+    // whose buttons don't use Luma's #product-addtocart-button / .tocart markup.
+    // Every add-to-cart, however, hits a known endpoint: Luma POSTs
+    // /checkout/cart/add, GraphQL stores POST an addProductsToCart mutation to
+    // /graphql, the REST API hits /rest/.../carts/.../items (and Shopify
+    // /cart/add.js, BigCommerce /cart.php?action=add). We observe — never alter —
+    // those requests by wrapping fetch + XHR, so add_to_cart fires on every
+    // platform/theme regardless of how the button is built.
+    var ADD_URL = /(\/checkout\/cart\/add)|(\/cart\/add(\.js)?(\?|\/|$))|(cart\.php\?[^]*action=add)|(\/rest\/[^]*\/carts?\/[^]*\/items)/i;
+    var CART_GQL = /add(simple|configurable|bundle|virtual|downloadable)?products?tocart|addtocart|additemtocart/i;
+
+    function noteCartRequest(url, method, body) {
+      try {
+        if (!url) return;
+        var u = String(url);
+        if (INGEST && u.indexOf(INGEST) === 0) return;        // never our own ingest
+        if (String(method || 'GET').toUpperCase() !== 'POST') return;
+        if (/\/graphql(\?|$|\/)/i.test(u)) {
+          // /graphql carries everything — only count add-to-cart mutations.
+          if (!body || !CART_GQL.test(String(body))) return;
+        } else if (!ADD_URL.test(u)) {
+          return;
+        }
+        var t = nowMs();
+        if (t - lastAddAt > 800) { lastAddAt = t; emitNow('add_to_cart', productInfo()); } // debounce vs DOM-click
+      } catch (e) {}
+    }
+
+    function patchNetwork() {
+      try {
+        if (window.fetch && !window.fetch.__plat) {
+          var of = window.fetch;
+          var pf = function (input, init) {
+            try {
+              var url = typeof input === 'string' ? input : (input && input.url) || '';
+              var method = (init && init.method) || (input && input.method) || 'GET';
+              var b = init && init.body;
+              noteCartRequest(url, method, typeof b === 'string' ? b : null);
+            } catch (e) {}
+            return of.apply(this, arguments);
+          };
+          pf.__plat = true;
+          window.fetch = pf;
+        }
+      } catch (e) {}
+      try {
+        var XHR = window.XMLHttpRequest;
+        if (XHR && XHR.prototype && !XHR.prototype.__plat) {
+          var oo = XHR.prototype.open;
+          var os = XHR.prototype.send;
+          XHR.prototype.open = function (method, url) {
+            try { this.__platM = method; this.__platU = url; } catch (e) {}
+            return oo.apply(this, arguments);
+          };
+          XHR.prototype.send = function (body) {
+            try { noteCartRequest(this.__platU, this.__platM, typeof body === 'string' ? body : null); } catch (e) {}
+            return os.apply(this, arguments);
+          };
+          XHR.prototype.__plat = true;
+        }
+      } catch (e) {}
+    }
+
     // Abandonment + final flush on unload.
     function onUnload() {
       try {
@@ -528,12 +724,15 @@
     } catch (e) {}
 
     // ── Wire up ──────────────────────────────────────────────────────────
+    patchNetwork(); // observe add-to-cart XHR/fetch (theme-independent)
     patchHistory('pushState');
     patchHistory('replaceState');
     try {
       window.addEventListener('popstate', scheduleNav);
       window.addEventListener('hashchange', scheduleNav);
       document.addEventListener('click', onClick, true);
+      document.addEventListener('click', onCommerce, true);
+      document.addEventListener('submit', onCommerce, true);
       window.addEventListener('pagehide', onUnload);
       window.addEventListener('beforeunload', onUnload);
       document.addEventListener('visibilitychange', function () {

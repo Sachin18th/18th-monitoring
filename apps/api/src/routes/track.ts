@@ -127,9 +127,11 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
         connectorInstanceId: connectorInstanceId ? String(connectorInstanceId) : null,
         accepted: result.accepted,
         rejected: result.rejected,
+        stored: result.stored,
       });
       // Beacon ignores the body; report counts for fetch-based callers.
-      return reply.code(200).send({ accepted: result.accepted, rejected: result.rejected });
+      // `accepted` = events folded into sessions; `stored` = milestone rows written.
+      return reply.code(200).send({ received: result.accepted, accepted: result.accepted, rejected: result.rejected, stored: result.stored });
     } catch (err) {
       // Never surface internals from a public endpoint, and never 500.
       console.error('[TRACK] ingest route failed', err);
@@ -209,6 +211,29 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     } catch (err) {
       console.error('[TRACK] funnel query failed', err);
       return reply.code(500).send(ResponseUtil.error('Failed to compute funnel', 'TRACK_FUNNEL_FAILED'));
+    }
+  });
+
+  // Session-derived KPIs (conversion, abandonment, engagement, platform split).
+  fastify.get('/kpis', authed, async (req, reply) => {
+    const q = (req.query as any) || {};
+    const connectorInstanceId = q.connector_instance_id || q.connectorInstanceId || q.connectorId;
+    if (!connectorInstanceId) {
+      return reply
+        .code(400)
+        .send(ResponseUtil.error('connector_instance_id query parameter is required', 'MISSING_CONNECTOR_ID'));
+    }
+    try {
+      const data = await StorefrontTrackingService.sessionKpis({
+        tenantId: String((req as any).tenantId ?? req.user.tenantId),
+        connectorInstanceId: String(connectorInstanceId),
+        from: parseDate(q.from),
+        to: parseDate(q.to),
+      });
+      return reply.code(200).send(ResponseUtil.success(data, {}, req.id as string));
+    } catch (err) {
+      console.error('[TRACK] kpis query failed', err);
+      return reply.code(500).send(ResponseUtil.error('Failed to compute KPIs', 'TRACK_KPIS_FAILED'));
     }
   });
 

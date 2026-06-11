@@ -1,8 +1,9 @@
 //apps/api/src/services/dashboard.service.ts
-import { prisma } from '@kpi-platform/db';
+import { prisma, decryptEmail } from '@kpi-platform/db';
 import type { MetricFilterDto, KpiSummaryResponse, AlertSummaryResponse } from '../models/dashboard.dto';
 import { AnalyticsEngine } from './analytics-engine.service';
 import { PaymentGatewayService } from './payment-gateway.service';
+import { StorefrontTrackingService } from './storefront-tracking.service';
 
 // Removed GlobalMemoryStore usage - now using DB queries
 
@@ -602,20 +603,26 @@ export class DashboardService {
                 { source: 'Direct / Organic', sessions, conversion: Math.round((purchases / sessions) * 100) }
             ];
 
+        // Purchase Journey Funnel — sourced from storefront_sessions (the tracker
+        // session aggregate), which is the authoritative funnel record. Scoped to
+        // this project's connector instances (one project may have several).
+        const connectorRows = await prisma.connectorInstance.findMany({
+            where: {
+                siteId,
+                tenantId,
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { id: connectorInstanceId } : {})
+            },
+            select: { id: true }
+        });
+        const connectorIds = connectorRows.map((c) => c.id);
+        const [journey, insights] = await Promise.all([
+            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds }),
+            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds })
+        ]);
+
         return {
-            funnel: [
-                { stage: 'Visit', count: sessions, percent: 100 },
-                {
-                    stage: 'Product View',
-                    count: productViews,
-                    percent: Math.max(0, Math.min(100, Math.round((productViews / sessions) * 100)))
-                },
-                {
-                    stage: 'Purchase',
-                    count: purchases,
-                    percent: Math.max(0, Math.min(100, Math.round((purchases / sessions) * 100)))
-                }
-            ],
+            funnel: journey.funnel,
+            sessionIntelligence: { ...journey.sessionIntelligence, ...insights },
             segments: [
                 { name: 'Identified Customers', size: customers.length, active: customers.length, conversion: Math.round((purchases / (customers.length || 1)) * 100), growth: 0 },
                 { name: 'Anonymous Guests', size: Math.max(0, sessions - customers.length), active: 0, conversion: 0, growth: 0 }
@@ -1160,7 +1167,12 @@ export class DashboardService {
                 ...(customer?.metadata || {})
             } as Record<string, any>;
             const rawCustomer = metadata?.rawCustomer || {};
-            const derivedEmail = this.deriveCustomerEmail(customer);
+
+            // The plaintext email is never stored in the DB — only the reversible
+            // `emailEncrypted` envelope. Decrypt it here for display; fall back to
+            // any legacy derivable email for rows synced before the column existed.
+            const decryptedEmail = decryptEmail(customer?.emailEncrypted);
+            const derivedEmail = decryptedEmail || this.deriveCustomerEmail(customer);
 
             if (derivedEmail && !metadata.email) {
                 metadata.email = derivedEmail;
@@ -1182,8 +1194,11 @@ export class DashboardService {
                 metadata.orderCount = rawCustomer.orders_count;
             }
 
+            // Drop the ciphertext from the API response — the client only needs the
+            // decrypted email (now in metadata.email), never the envelope.
+            const { emailEncrypted: _emailEncrypted, ...safeCustomer } = customer;
             return {
-                ...customer,
+                ...safeCustomer,
                 metadata
             };
         });

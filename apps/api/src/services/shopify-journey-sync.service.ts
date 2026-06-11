@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, hashEmail, encryptEmail, decryptSecret } from '@kpi-platform/db';
 
 type ConnectorRecord = {
     id: string;
@@ -457,7 +457,7 @@ export class ShopifyJourneySyncService {
     ): Promise<string> {
         const shopifyCustomerId = extractNumericId(order.customer?.id);
         const email = String(order.customer?.email || '').trim().toLowerCase();
-        const emailHash = email ? crypto.createHash('sha256').update(email).digest('hex') : null;
+        const emailHash = hashEmail(email);
 
         if (shopifyCustomerId) {
             const byExternalId = await prisma.customerProfile.findFirst({
@@ -495,6 +495,8 @@ export class ShopifyJourneySyncService {
                 connectorInstanceId: instance.id,
                 externalIds: (shopifyCustomerId ? { shopify: shopifyCustomerId } : {}) as Prisma.InputJsonValue,
                 emailHash: emailHash || undefined,
+                // Reversible, encrypted-at-rest copy for dashboard display.
+                emailEncrypted: encryptEmail(email) || undefined,
                 lifecycleState: shopifyCustomerId ? 'RETURNING' : 'NEW_GUEST',
                 metadata: {
                     source: 'shopify-journey-sync',
@@ -525,7 +527,9 @@ export class ShopifyJourneySyncService {
         }
 
         try {
-            const parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
+            // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+            // Never log the returned credentials.
+            const parsed = decryptSecret(serialized);
             if (!parsed || typeof parsed !== 'object') return {};
 
             if (parsed.adminApiAccessToken) return parsed;

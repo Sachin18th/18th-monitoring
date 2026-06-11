@@ -1,4 +1,4 @@
-import { prisma } from '@kpi-platform/db';
+import { prisma, decryptSecret } from '@kpi-platform/db';
 
 type PagespeedMetricName = 'lcp' | 'fid' | 'cls' | 'ttfb';
 type PagespeedStrategy = 'mobile' | 'desktop';
@@ -453,12 +453,9 @@ export class PageSpeedService {
     }
 
     private static parseCredentials(encryptedSecret: unknown): Record<string, any> {
-        if (!encryptedSecret) return {};
-        try {
-            return typeof encryptedSecret === 'string' ? JSON.parse(encryptedSecret) : (encryptedSecret as Record<string, any>);
-        } catch {
-            return {};
-        }
+        // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+        // Never log the returned credentials.
+        return decryptSecret(encryptedSecret);
     }
 
     private static buildSource(strategy: PagespeedStrategy): string {

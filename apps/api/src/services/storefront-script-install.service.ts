@@ -1,4 +1,4 @@
-import { prisma } from '@kpi-platform/db';
+import { prisma, decryptSecret } from '@kpi-platform/db';
 
 /**
  * Programmatic install of the storefront tracker onto a merchant's storefront,
@@ -45,13 +45,9 @@ export class StorefrontScriptInstallService {
   }
 
   private static parseSecret(serialized: string | null | undefined): Record<string, any> {
-    if (!serialized) return {};
-    try {
-      const parsed = JSON.parse(serialized);
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-      return {};
-    }
+    // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+    // Never log the returned credentials.
+    return decryptSecret(serialized);
   }
 
   private static normalizePlatform(providerId: string): Platform {

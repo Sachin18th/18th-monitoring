@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, decryptSecret } from '@kpi-platform/db';
 import { orderNormalizationService } from './order-normalization.service';
 
 type ConnectorRecord = {
@@ -343,12 +343,9 @@ export class BigCommerceOrderSyncService {
   }
 
   private static parseCredentials(encryptedSecret: any): Record<string, any> {
-    if (!encryptedSecret) return {};
-    try {
-      return typeof encryptedSecret === 'string' ? JSON.parse(encryptedSecret) : encryptedSecret;
-    } catch {
-      return {};
-    }
+    // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+    // Never log the returned credentials.
+    return decryptSecret(encryptedSecret);
   }
 
   private static async logLifecycleEvent(

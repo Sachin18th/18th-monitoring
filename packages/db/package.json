@@ -12,6 +12,8 @@
     "db:push": "prisma db push --schema=./prisma/schema.prisma",
     "seed:auth": "tsx src/seeders/seed-18th-auth-users.ts"
     ,"seed:auth:prisma": "tsx src/seeders/seed-18th-auth-users-prisma.ts"
+    ,"secrets:encrypt": "tsx src/scripts/encrypt-connector-credentials.ts"
+    ,"secrets:rotate": "tsx src/scripts/rotate-connector-secret.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, hashEmail, encryptEmail, decryptSecret } from '@kpi-platform/db';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
 type ConnectorRecord = {
@@ -341,7 +341,7 @@ export class AdobeCommerceJourneySyncService {
     private static async resolveCustomerProfileId(instance: ConnectorRecord, order: any): Promise<string> {
         const adobeCustomerId = order?.customer_id != null ? String(order.customer_id) : null;
         const email = String(order?.customer_email || order?.billing_address?.email || '').trim().toLowerCase();
-        const emailHash = email ? crypto.createHash('sha256').update(email).digest('hex') : null;
+        const emailHash = hashEmail(email);
 
         if (adobeCustomerId) {
             const byExternalId = await prisma.customerProfile.findFirst({
@@ -379,14 +379,16 @@ export class AdobeCommerceJourneySyncService {
                 connectorInstanceId: instance.id,
                 externalIds: (adobeCustomerId ? { adobe_commerce: adobeCustomerId } : {}) as Prisma.InputJsonValue,
                 emailHash: emailHash || undefined,
+                // Reversible, encrypted-at-rest copy for dashboard display.
+                emailEncrypted: encryptEmail(email) || undefined,
                 lifecycleState: adobeCustomerId ? 'RETURNING' : 'NEW_GUEST',
+                // Raw email is NOT stored here — identity lives in emailHash above.
                 metadata: {
                     source: 'adobe-commerce-journey-sync',
                     adobeCustomerId: adobeCustomerId || null,
                     isGuest: Boolean(order?.customer_is_guest),
                     firstName: order?.customer_firstname || null,
                     lastName: order?.customer_lastname || null,
-                    email: email || null,
                     connectorInstanceId: instance.id
                 } as Prisma.InputJsonValue
             },
@@ -434,7 +436,9 @@ export class AdobeCommerceJourneySyncService {
     private static parseCredentials(serialized: string | null | undefined): Record<string, any> {
         if (!serialized) return {};
         try {
-            const parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
+            // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+            // Never log the returned credentials.
+            const parsed = decryptSecret(serialized);
             if (!parsed || typeof parsed !== 'object') return {};
             if (parsed.accessToken) return parsed;
 

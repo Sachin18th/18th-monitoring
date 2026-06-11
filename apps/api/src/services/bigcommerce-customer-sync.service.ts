@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
 
 type ConnectorRecord = {
   id: string;
@@ -213,8 +213,8 @@ export class BigCommerceCustomerSyncService {
       select: { id: true }
     });
 
-    const emailHash = email ? crypto.createHash('sha256').update(email).digest('hex') : null;
-    const phoneHash = phone ? crypto.createHash('sha256').update(phone).digest('hex') : null;
+    const emailHash = hashEmail(email);
+    const phoneHash = hashPhone(phone);
     const firstName = rawCustomer?.first_name || rawCustomer?.firstname || null;
     const lastName = rawCustomer?.last_name || rawCustomer?.lastname || null;
 
@@ -227,17 +227,19 @@ export class BigCommerceCustomerSyncService {
         bigcommerce: customerId
       } as Prisma.InputJsonValue,
       emailHash: emailHash || undefined,
+      // Reversible, encrypted-at-rest copy for dashboard display.
+      emailEncrypted: encryptEmail(email) || undefined,
       phoneHash: phoneHash || undefined,
       lifecycleState: rawCustomer?.is_subscribed ? 'RETURNING' : 'NEW_GUEST',
       firstSeenAt: new Date(rawCustomer?.date_created || rawCustomer?.created_at || new Date()),
       lastSeenAt: new Date(rawCustomer?.date_modified || rawCustomer?.updated_at || new Date()),
       totalLtv: rawCustomer?.store_credit_amount ? Number(rawCustomer.store_credit_amount) : null,
-      metadata: {
+      // Raw email/phone are NOT stored here — they live only in emailHash/phoneHash.
+      // scrubEmails() neutralizes any address email nested in `addresses`.
+      metadata: scrubEmails({
         bigcommerceCustomerId: customerId,
         firstName,
         lastName,
-        email: email || null,
-        phone: phone || null,
         company: rawCustomer?.company || null,
         customerGroupId: rawCustomer?.customer_group_id || null,
         isSubscribed: rawCustomer?.is_subscribed || false,
@@ -245,7 +247,7 @@ export class BigCommerceCustomerSyncService {
         connectorInstanceId: instance.id,
         connectorLabel: instance.label,
         lastSyncedAt: new Date().toISOString()
-      } as Prisma.InputJsonValue
+      }) as Prisma.InputJsonValue
     };
 
     if (existing) {
@@ -255,6 +257,8 @@ export class BigCommerceCustomerSyncService {
           lastSeenAt: new Date(rawCustomer?.date_modified || rawCustomer?.updated_at || new Date()),
           totalLtv: rawCustomer?.store_credit_amount ? Number(rawCustomer.store_credit_amount) : undefined,
           emailHash: emailHash || undefined,
+          // Reversible, encrypted-at-rest copy for dashboard display.
+          emailEncrypted: encryptEmail(email) || undefined,
           phoneHash: phoneHash || undefined,
           metadata: data.metadata
         }
@@ -283,12 +287,9 @@ export class BigCommerceCustomerSyncService {
   }
 
   private static parseCredentials(encryptedSecret: any): Record<string, any> {
-    if (!encryptedSecret) return {};
-    try {
-      return typeof encryptedSecret === 'string' ? JSON.parse(encryptedSecret) : encryptedSecret;
-    } catch {
-      return {};
-    }
+    // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+    // Never log the returned credentials.
+    return decryptSecret(encryptedSecret);
   }
 }
 

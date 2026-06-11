@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, hashEmail, encryptEmail, decryptSecret } from '@kpi-platform/db';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
 type ConnectorRecord = {
@@ -466,7 +466,7 @@ export class CheckoutSyncService {
     ): Promise<string> {
         const externalId = checkout.customerExternalId ? String(checkout.customerExternalId) : null;
         const email = String(checkout.customerEmail || '').trim().toLowerCase();
-        const emailHash = email ? crypto.createHash('sha256').update(email).digest('hex') : null;
+        const emailHash = hashEmail(email);
 
         if (externalId) {
             const byExternalId = await prisma.customerProfile.findFirst({
@@ -502,15 +502,18 @@ export class CheckoutSyncService {
                 connectorInstanceId: instance.id,
                 externalIds: (externalId ? { [sourceSystem]: externalId } : {}) as Prisma.InputJsonValue,
                 emailHash: emailHash || undefined,
+                // Reversible, encrypted-at-rest copy for dashboard display.
+                emailEncrypted: encryptEmail(email) || undefined,
                 lifecycleState: 'NEW_GUEST',
+                // Raw email is NOT stored here — identity lives in emailHash above.
                 metadata: {
                     source: 'checkout-sync',
                     sourceSystem,
-                    email: email || null,
                     connectorInstanceId: instance.id
                 } as Prisma.InputJsonValue
             },
-            update: {}
+            // Backfill the encrypted email if this profile predates the column.
+            update: emailHash ? { emailEncrypted: encryptEmail(email) || undefined } : {}
         });
 
         return profileId;
@@ -552,13 +555,9 @@ export class CheckoutSyncService {
     }
 
     private static parseCredentials(serialized: string | null | undefined): Record<string, any> {
-        if (!serialized) return {};
-        try {
-            const parsed = typeof serialized === 'string' ? JSON.parse(serialized) : serialized;
-            return parsed && typeof parsed === 'object' ? parsed : {};
-        } catch {
-            return {};
-        }
+        // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+        // Never log the returned credentials.
+        return decryptSecret(serialized);
     }
 }
 

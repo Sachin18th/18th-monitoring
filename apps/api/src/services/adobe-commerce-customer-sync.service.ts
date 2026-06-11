@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
 type ConnectorRecord = {
@@ -247,8 +247,8 @@ export class AdobeCommerceCustomerSyncService {
             select: { id: true }
         });
 
-        const emailHash = email ? crypto.createHash('sha256').update(email.toLowerCase()).digest('hex') : null;
-        const phoneHash = phone ? crypto.createHash('sha256').update(phone).digest('hex') : null;
+        const emailHash = hashEmail(email);
+        const phoneHash = hashPhone(phone);
 
         const data: Prisma.CustomerProfileUncheckedCreateInput = {
             id: crypto.randomUUID(),
@@ -259,23 +259,25 @@ export class AdobeCommerceCustomerSyncService {
                 adobe_commerce: customerId
             } as Prisma.InputJsonValue,
             emailHash: emailHash || undefined,
+            // Reversible, encrypted-at-rest copy for dashboard display.
+            emailEncrypted: encryptEmail(email) || undefined,
             phoneHash: phoneHash || undefined,
             lifecycleState: isSubscribed ? 'RETURNING' : 'NEW_GUEST',
             firstSeenAt: new Date(rawCustomer?.created_at || new Date()),
             lastSeenAt: new Date(rawCustomer?.updated_at || new Date()),
             totalLtv: null,
-            metadata: {
+            // Raw email/phone are NOT stored here — they live only in emailHash/phoneHash.
+            // scrubEmails() neutralizes any address email nested in `addresses`.
+            metadata: scrubEmails({
                 adobeCustomerId: customerId,
                 firstName: rawCustomer?.firstname || null,
                 lastName: rawCustomer?.lastname || null,
-                email: email || null,
-                phone: phone || null,
                 isSubscribed,
                 addresses: rawCustomer?.addresses || [],
                 connectorInstanceId: instance.id,
                 connectorLabel: instance.label,
                 lastSyncedAt: new Date().toISOString()
-            } as Prisma.InputJsonValue
+            }) as Prisma.InputJsonValue
         };
 
         if (existing) {
@@ -283,6 +285,9 @@ export class AdobeCommerceCustomerSyncService {
                 where: { id: existing.id },
                 data: {
                     lastSeenAt: new Date(rawCustomer?.updated_at || new Date()),
+                    // Refresh identity columns so existing rows backfill on re-sync.
+                    emailHash: emailHash || undefined,
+                    emailEncrypted: encryptEmail(email) || undefined,
                     metadata: data.metadata
                 }
             });
@@ -300,12 +305,8 @@ export class AdobeCommerceCustomerSyncService {
     }
 
     private static parseCredentials(encryptedSecret: any): Record<string, any> {
-        if (!encryptedSecret) return {};
-        try {
-            return typeof encryptedSecret === 'string' ? JSON.parse(encryptedSecret) : encryptedSecret;
-        } catch (err) {
-            console.warn('[AdobeCommerceCustomerSyncService] Failed to parse credentials', err);
-            return {};
-        }
+        // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+        // Never log the returned credentials.
+        return decryptSecret(encryptedSecret);
     }
 }

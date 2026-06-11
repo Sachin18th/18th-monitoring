@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { AdobeCommerceOrderSyncService } from './adobe-commerce-order-sync.service';
 import { BigCommerceOrderSyncService } from './bigcommerce-order-sync.service';
@@ -844,16 +844,17 @@ export class ConnectorResyncService {
       select: { id: true }
     });
 
-    const hashEmail = email ? crypto.createHash('sha256').update(email).digest('hex') : null;
-    const hashPhone = phone ? crypto.createHash('sha256').update(phone).digest('hex') : null;
-    const metadata = {
+    const emailHashValue = hashEmail(email);
+    const phoneHashValue = hashPhone(phone);
+    // Raw email/phone are NOT stored in metadata — they live only in emailHash/phoneHash.
+    // scrubEmails() deep-scrubs the captured `rawCustomer` and `addresses`, which can
+    // otherwise carry plaintext emails nested several levels down.
+    const metadata = scrubEmails({
       connectorInstanceId: connector.id,
       connectorLabel: connector.label,
       sourceSystem,
       rawCustomer,
       lastSyncedAt: new Date().toISOString(),
-      email: email || null,
-      phone: phone || null,
       firstName: rawCustomer?.first_name || rawCustomer?.firstname || null,
       lastName: rawCustomer?.last_name || rawCustomer?.lastname || null,
       orders: rawCustomer?.orders_count ?? 0,
@@ -861,17 +862,20 @@ export class ConnectorResyncService {
       tags: rawCustomer?.tags || [],
       addresses: rawCustomer?.addresses || [],
       isSubscribed: rawCustomer?.is_subscribed || false
-    } as Prisma.InputJsonValue;
+    }) as Prisma.InputJsonValue;
 
     const payload: Prisma.CustomerProfileUncheckedCreateInput = {
       id: existing?.id || crypto.randomUUID(),
       siteId: connector.siteId,
       tenantId: connector.tenantId,
+      connectorInstanceId: connector.id,
       externalIds: {
         [sourceSystem]: externalId
       } as Prisma.InputJsonValue,
-      emailHash: hashEmail || undefined,
-      phoneHash: hashPhone || undefined,
+      emailHash: emailHashValue || undefined,
+      // Reversible, encrypted-at-rest copy for dashboard display.
+      emailEncrypted: encryptEmail(email) || undefined,
+      phoneHash: phoneHashValue || undefined,
       lifecycleState: sourceSystem === 'shopify'
         ? (Array.isArray(rawCustomer?.tags) && rawCustomer.tags.includes('vip') ? 'VIP' : 'RETURNING')
         : (rawCustomer?.is_subscribed ? 'RETURNING' : 'NEW_GUEST'),
@@ -889,8 +893,11 @@ export class ConnectorResyncService {
         data: {
           lastSeenAt: payload.lastSeenAt,
           totalLtv: payload.totalLtv ?? undefined,
-          emailHash: hashEmail || undefined,
-          phoneHash: hashPhone || undefined,
+          // Backfill the connector instance + encrypted email on existing rows.
+          connectorInstanceId: connector.id,
+          emailHash: emailHashValue || undefined,
+          emailEncrypted: encryptEmail(email) || undefined,
+          phoneHash: phoneHashValue || undefined,
           lifecycleState: payload.lifecycleState,
           metadata: payload.metadata
         }
@@ -1116,23 +1123,9 @@ export class ConnectorResyncService {
   }
 
   private static parseCredentials(serialized: unknown): Record<string, any> {
-    if (!serialized) {
-      return {};
-    }
-
-    if (typeof serialized === 'string') {
-      try {
-        return JSON.parse(serialized);
-      } catch {
-        return {};
-      }
-    }
-
-    if (typeof serialized === 'object') {
-      return serialized as Record<string, any>;
-    }
-
-    return {};
+    // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+    // Never log the returned credentials.
+    return decryptSecret(serialized);
   }
 
   private static mapJob(job: any): ResyncJobState {

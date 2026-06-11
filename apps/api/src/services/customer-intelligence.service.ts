@@ -1,4 +1,4 @@
-import { prisma } from '@kpi-platform/db';
+import { prisma, hashEmail, encryptEmail } from '@kpi-platform/db';
 import { 
     CustomerProfile, 
     CustomerEvent, 
@@ -19,11 +19,8 @@ export class CustomerIntelligenceService {
         externalId?: { system: string; id: string };
         visitorId?: string;
     }): Promise<string> {
-        let emailHash: string | undefined;
-        if (options.email) {
-            // Privacy-safe hashing (Requirement 18)
-            emailHash = crypto.createHash('sha256').update(options.email.toLowerCase()).digest('hex');
-        }
+        // Privacy-safe hashing (Requirement 18) — canonical hash shared across all writers.
+        const emailHash: string | undefined = hashEmail(options.email) ?? undefined;
 
         const project = await prisma.project.findUnique({
             where: { id: options.siteId },
@@ -56,6 +53,8 @@ export class CustomerIntelligenceService {
                 siteId: options.siteId,
                 tenantId,
                 emailHash,
+                // Reversible, encrypted-at-rest copy for dashboard display.
+                emailEncrypted: encryptEmail(options.email) || undefined,
                 externalIds: options.externalId ? { [options.externalId.system]: options.externalId.id } : {},
                 lifecycleState: 'NEW_GUEST',
                 identityConfidence: emailHash ? '1.0' : '0.5'

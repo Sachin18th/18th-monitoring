@@ -333,6 +333,36 @@ export default function JourneyIntelligencePage() {
   const lastStep = funnelSteps[funnelSteps.length - 1]?.count || 0;
   const completion = firstStep > 0 ? ((lastStep / firstStep) * 100).toFixed(2) : '0.00';
   const frictionSignals = funnelSteps.filter((s) => s.dropRate > 50).length;
+
+  // Session Intelligence (live, from storefront_sessions + storefront_events).
+  const si = intelligence?.sessionIntelligence || {};
+  const fmtDuration = (secs: number) => {
+    const s = Math.max(0, Math.round(secs || 0));
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+  };
+  // Real stage-to-stage drop-off attribution, derived from the funnel.
+  const dropAttribution = funnelSteps.slice(1).map((step, i) => {
+    const prev = funnelSteps[i];
+    const lost = Math.max(0, (prev?.count || 0) - (step?.count || 0));
+    const pctLost = prev?.count > 0 ? Math.round((lost / prev.count) * 100) : 0;
+    return { label: `${prev?.label} → ${step?.label}`, lost, pctLost };
+  });
+  const biggestDrop = [...dropAttribution].sort((a, b) => b.pctLost - a.pctLost)[0];
+  const dropColors = ['#f43f5e', '#a855f7', '#f59e0b', '#38bdf8'];
+
+  // Content & acquisition insights (from storefront_sessions + storefront_events).
+  const shortPath = (u: string) => {
+    if (!u) return '(none)';
+    try { const url = new URL(u); return (url.pathname + url.search) || url.hostname; } catch { return u; }
+  };
+  const insightPanels = [
+    { title: 'Top Viewed Products', rows: (si.top_products || []).map((p: any) => ({ label: p.product, value: p.sessions })) },
+    { title: 'Top Entry Pages', rows: (si.top_entry_pages || []).map((p: any) => ({ label: shortPath(p.page), value: p.sessions })) },
+    { title: 'Top Exit Pages', rows: (si.top_exit_pages || []).map((p: any) => ({ label: shortPath(p.page), value: p.sessions })) },
+    { title: 'Top Referrers', rows: (si.top_referrers || []).map((r: any) => ({ label: r.referrer, value: r.sessions })) },
+    { title: 'Devices', rows: (si.device_breakdown || []).map((d: any) => ({ label: d.device, value: d.sessions })) },
+    { title: 'Checkout Steps', rows: (si.checkout_steps || []).map((s: any) => ({ label: s.step, value: s.sessions })) }
+  ].filter((panel) => panel.rows.length > 0);
   const gatewayHealth = useMemo(() => {
     if (!paymentGateways.length) {
       return {
@@ -952,46 +982,112 @@ export default function JourneyIntelligencePage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                       <AlertTriangle style={{ width: '16px', height: '16px', color: '#f87171' }} />
                       <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>
-                        Technical Loss
+                        Bounce Rate
                       </span>
                     </div>
-                    <div style={{ fontSize: '18px', fontWeight: 500, color: '#f87171' }}>0.8%</div>
+                    <div style={{ fontSize: '18px', fontWeight: 500, color: '#f87171' }}>{(si.bounce_rate ?? 0).toFixed(1)}%</div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {intelligence?.sessionIntelligence && (
+              <div style={cardStyle}>
+                <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
+                  Session Intelligence
+                </div>
+                <p style={{ margin: '0 0 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Behavioral metrics derived from storefront sessions.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+                  {[
+                    { label: 'Avg Pages / Session', value: (intelligence.sessionIntelligence.avg_pages_per_session ?? 0).toFixed(1) },
+                    { label: 'Sessions / Visitor', value: (intelligence.sessionIntelligence.sessions_per_visitor ?? 0).toFixed(1) },
+                    { label: 'Cart Abandonment', value: `${(intelligence.sessionIntelligence.cart_abandonment_rate ?? 0).toFixed(1)}%`, tone: '#f87171' },
+                    { label: 'Checkout Abandonment', value: `${(intelligence.sessionIntelligence.checkout_abandonment_rate ?? 0).toFixed(1)}%`, tone: '#f59e0b' },
+                    { label: 'New Visitors', value: String(intelligence.sessionIntelligence.new_visitors ?? 0), tone: '#22c55e' },
+                    { label: 'Returning Visitors', value: String(intelligence.sessionIntelligence.returning_visitors ?? 0) }
+                  ].map((kpi) => (
+                    <div
+                      key={kpi.label}
+                      style={{
+                        borderRadius: '12px',
+                        border: '1px solid var(--border-card)',
+                        background: 'var(--bg-input)',
+                        padding: '14px'
+                      }}
+                    >
+                      <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-label)', marginBottom: '6px' }}>
+                        {kpi.label}
+                      </div>
+                      <div style={{ fontSize: '18px', fontWeight: 600, color: (kpi as any).tone || 'var(--text-primary)' }}>
+                        {kpi.value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {Array.isArray(intelligence.sessionIntelligence.platform_breakdown) &&
+                  intelligence.sessionIntelligence.platform_breakdown.length > 0 && (
+                    <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid var(--border-card)' }}>
+                      <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-label)', marginBottom: '10px' }}>
+                        Sessions by Platform
+                      </div>
+                      {(() => {
+                        const rows = intelligence.sessionIntelligence.platform_breakdown as Array<{ platform: string; sessions: number }>;
+                        const max = Math.max(1, ...rows.map((r) => r.sessions));
+                        return rows.map((r) => (
+                          <div key={r.platform} style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-primary)' }}>
+                              <span style={{ textTransform: 'capitalize' }}>{r.platform.replace('_', ' ')}</span>
+                              <span style={{ color: 'var(--text-secondary)' }}>{r.sessions.toLocaleString()}</span>
+                            </div>
+                            <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${(r.sessions / max) * 100}%`, background: '#6366f1', borderRadius: '999px' }} />
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
               </div>
             )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible' }}>
             <div style={cardStyle}>
-              <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '20px' }}>
-                Abandonment Attribution
+              <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
+                Stage Drop-off Attribution
               </div>
-              {[
-                { label: 'Network/API Failure', value: '35%', color: '#f43f5e' },
-                { label: 'UX Friction (Rage Click)', value: '24%', color: '#a855f7' },
-                { label: 'Performance (Slow Load)', value: '18%', color: '#f59e0b' },
-                { label: 'Other / Intent-based', value: '23%', color: '#334155' }
-              ].map((attr, idx, arr) => (
-                <div
-                  key={attr.label}
-                  style={{
-                    padding: '14px 0',
-                    borderBottom: idx === arr.length - 1 ? 'none' : '1px solid var(--border-card)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '8px'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{attr.label}</span>
-                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{attr.value}</span>
+              <p style={{ margin: '0 0 16px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                Where sessions are lost between funnel stages.
+              </p>
+              {dropAttribution.length === 0 ? (
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No funnel data yet.</p>
+              ) : (
+                dropAttribution.map((attr, idx, arr) => (
+                  <div
+                    key={attr.label}
+                    style={{
+                      padding: '14px 0',
+                      borderBottom: idx === arr.length - 1 ? 'none' : '1px solid var(--border-card)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{attr.label}</span>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        {attr.pctLost}% · {attr.lost.toLocaleString()} lost
+                      </span>
+                    </div>
+                    <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px' }}>
+                      <div style={{ height: '100%', width: `${attr.pctLost}%`, background: dropColors[idx % dropColors.length], borderRadius: '999px' }} />
+                    </div>
                   </div>
-                  <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px' }}>
-                    <div style={{ height: '100%', width: attr.value, background: attr.color, borderRadius: '999px' }} />
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
 
             <div
@@ -1015,20 +1111,14 @@ export default function JourneyIntelligencePage() {
                       margin: '0 0 8px'
                     }}
                   >
-                    Checkout drop-offs increased by 12% in the last hour. Correlation signals suggest a link to Stripe Payment gateway latency spikes.
+                    {biggestDrop && biggestDrop.pctLost > 0
+                      ? `Largest drop-off is ${biggestDrop.label} — ${biggestDrop.pctLost}% of sessions (${biggestDrop.lost.toLocaleString()}) are lost here. ${
+                          (si.bounce_rate ?? 0) > 0 ? `Bounce rate is ${(si.bounce_rate).toFixed(1)}%.` : ''
+                        }`
+                      : firstStep > 1
+                        ? `No major funnel drop-off detected. Overall conversion is ${completion}% across ${firstStep.toLocaleString()} visits.`
+                        : 'Not enough session data yet to surface an insight. Ingest more storefront traffic to begin.'}
                   </p>
-                  <button
-                    style={{
-                      fontSize: '11px',
-                      color: '#60a5fa',
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      padding: 0
-                    }}
-                  >
-                    Investigate Cause
-                  </button>
                 </div>
               </div>
             </div>
@@ -1045,25 +1135,25 @@ export default function JourneyIntelligencePage() {
         >
           {[
             {
-              label: 'Broken CTAs',
-              value: '12',
-              note: 'Buttons with no response detected',
+              label: 'Bounce Rate',
+              value: `${(si.bounce_rate ?? 0).toFixed(1)}%`,
+              note: 'Single-page sessions',
               icon: ZapOff,
               iconColor: '#f87171',
               iconBg: 'rgba(244,63,94,0.12)'
             },
             {
-              label: 'Rage Click Spots',
-              value: '5',
-              note: 'High friction zones identified',
+              label: 'Avg Session Duration',
+              value: fmtDuration(si.avg_session_duration_seconds ?? 0),
+              note: 'Time from first to last activity',
               icon: MousePointerClick,
               iconColor: '#c084fc',
               iconBg: 'rgba(168,85,247,0.12)'
             },
             {
-              label: 'Stalled Journeys',
-              value: `${funnelSteps.filter((s) => s.dropRate > 50).length * 24 || 0}`,
-              note: 'Users currently waiting > 30s',
+              label: 'Repeat Visitor Rate',
+              value: `${(si.repeat_visitor_rate ?? 0).toFixed(1)}%`,
+              note: 'Visitors with more than one session',
               icon: TrendingUp,
               iconColor: '#fbbf24',
               iconBg: 'rgba(245,158,11,0.12)'
@@ -1086,6 +1176,42 @@ export default function JourneyIntelligencePage() {
             );
           })}
         </div>
+
+        {insightPanels.length > 0 && (
+          <div style={cardStyle}>
+            <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
+              Content &amp; Acquisition
+            </div>
+            <p style={{ margin: '0 0 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
+              Top products, entry &amp; exit points, traffic sources and devices from storefront sessions.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '24px' }}>
+              {insightPanels.map((panel) => {
+                const max = Math.max(1, ...panel.rows.map((r: any) => Number(r.value) || 0));
+                return (
+                  <div key={panel.title}>
+                    <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-label)', marginBottom: '12px' }}>
+                      {panel.title}
+                    </div>
+                    {panel.rows.slice(0, 6).map((row: any, i: number) => (
+                      <div key={`${row.label}-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', color: 'var(--text-primary)' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textTransform: 'capitalize' }} title={String(row.label)}>
+                            {String(row.label).replace(/_/g, ' ')}
+                          </span>
+                          <span style={{ color: 'var(--text-secondary)', flexShrink: 0 }}>{Number(row.value).toLocaleString()}</span>
+                        </div>
+                        <div style={{ height: '6px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${(Number(row.value) / max) * 100}%`, background: '#6366f1', borderRadius: '999px' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {intelligence?.generatedAt && (
           <div style={{ fontSize: '11px', color: 'var(--text-label)' }}>

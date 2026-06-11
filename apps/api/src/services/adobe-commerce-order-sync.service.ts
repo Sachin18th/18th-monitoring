@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma } from '@kpi-platform/db';
+import { prisma, decryptSecret } from '@kpi-platform/db';
 import { orderNormalizationService } from './order-normalization.service';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
@@ -274,7 +274,9 @@ export class AdobeCommerceOrderSyncService {
     }
 
     try {
-      const parsed = JSON.parse(serialized);
+      // Decrypts the AES-256-GCM envelope in memory (with legacy-plaintext fallback).
+      // Never log the returned credentials.
+      const parsed = decryptSecret(serialized);
       if (!parsed || typeof parsed !== 'object') return {};
 
       // Ensure we expose `accessToken` regardless of the incoming key name
