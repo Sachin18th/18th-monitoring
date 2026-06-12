@@ -615,12 +615,22 @@ export class DashboardService {
             select: { id: true }
         });
         const connectorIds = connectorRows.map((c) => c.id);
+
+        // Journey Intel range: allowlisted 7d/30d/90d, default 30d.
+        const RANGE_DAYS: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
+        const range = RANGE_DAYS[(filters as any).timeRange] ? (filters as any).timeRange : '30d';
+        const to = new Date();
+        const from = new Date(to.getTime() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000);
+
         const [journey, insights] = await Promise.all([
-            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds }),
-            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds })
+            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds, from, to }),
+            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds, from, to })
         ]);
 
         return {
+            meta: { generatedAt: to.toISOString(), range },
+            generatedAt: to.toISOString(),
+            range,
             funnel: journey.funnel,
             sessionIntelligence: { ...journey.sessionIntelligence, ...insights },
             segments: [

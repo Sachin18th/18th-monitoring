@@ -24,12 +24,21 @@ export const rumRoutes = async (fastify: FastifyInstance) => {
     const body = (req.body as any) || {};
     const errors = Array.isArray(body.errors) ? body.errors : [];
 
-    if (!projectId) {
-      return reply.code(400).send(ResponseUtil.error('Missing projectId', 'MISSING_PROJECT_ID', null, req.id as string));
+    const connector = connectorId ? String(connectorId) : null;
+    // The storefront tracker only carries connector_instance_id, not a project
+    // id — derive the project (= connector_instances.site_id) from it so the
+    // tracker can post with just ?connectorId=. An explicit projectId still wins.
+    let resolvedProjectId = projectId ? String(projectId) : null;
+    if (!resolvedProjectId && connector) {
+      resolvedProjectId = await StorefrontErrorService.projectIdForConnector(connector);
+    }
+
+    if (!resolvedProjectId) {
+      return reply.code(400).send(ResponseUtil.error('Missing projectId or resolvable connectorId', 'MISSING_PROJECT_ID', null, req.id as string));
     }
 
     try {
-      const result = await StorefrontErrorService.ingestBatch(String(projectId), connectorId ? String(connectorId) : null, errors);
+      const result = await StorefrontErrorService.ingestBatch(resolvedProjectId, connector, errors);
       return reply.code(200).send(result); // { accepted, rejected } — beacon ignores the body
     } catch (err) {
       console.error('[RUM] ingest failed', err);

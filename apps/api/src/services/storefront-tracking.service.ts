@@ -564,6 +564,26 @@ export class StorefrontTrackingService {
     const ids = (connectorInstanceIds || []).filter(Boolean);
     if (ids.length === 0) return 0;
     try {
+      // Synced orders are only merged into the funnel for platforms whose
+      // checkout + confirmation are OFF-domain and therefore invisible to the
+      // storefront tracker (Shopify, BigCommerce). For on-domain platforms
+      // (Adobe Commerce / Magento) the tracked storefront_sessions already
+      // capture checkout + purchase, so merging synced orders would re-add the
+      // same buyers against a tracked-session base — clamping every funnel stage
+      // up to the order count (visit=…=purchase) and forcing ~100% conversion
+      // with 0% drop-off. Restrict the merge to off-domain connectors.
+      const providers = await prisma.$queryRawUnsafe<Array<{ id: string; provider_id: string | null }>>(
+        `SELECT id, provider_id FROM connector_instances WHERE id = ANY($1::text[])`,
+        ids,
+      );
+      const offDomainIds = providers
+        .filter((p) => {
+          const platform = platformFromProviderId(p.provider_id);
+          return platform === 'shopify' || platform === 'bigcommerce';
+        })
+        .map((p) => p.id);
+      if (offDomainIds.length === 0) return 0;
+
       const rows = await prisma.$queryRawUnsafe<Array<{ c: bigint }>>(
         `SELECT COUNT(*)::bigint AS c
            FROM canonical_orders
@@ -571,7 +591,7 @@ export class StorefrontTrackingService {
             AND placed_at >= $2 AND placed_at <= $3
             AND UPPER(normalized_status) NOT IN
                 ('CANCELLED','CANCELED','REFUNDED','FAILED','PENDING','DRAFT','VOIDED')`,
-        ids,
+        offDomainIds,
         from,
         to,
       );
@@ -590,12 +610,21 @@ export class StorefrontTrackingService {
    * keeping the funnel monotonic. `max` (not sum) avoids double-counting buyers
    * the tracker already saw. This is what lets Shopify show checkout + purchase
    * even though its checkout/confirmation pages are off-domain and untrackable.
+   *
+   * The merge only fills the off-domain blind spot ON TOP OF a real tracked-
+   * session base. When there are no storefront_sessions/events for the store
+   * (counts.visit === 0), there is nothing to attribute the synced orders to —
+   * clamping would fabricate a funnel where visit=…=purchase=order_count and
+   * report a misleading 100% conversion / 0% drop-off. In that case we leave the
+   * funnel purely session-derived (all zeros → honest empty state) and do NOT
+   * fall back to order data.
    */
   private static mergeOrderPurchases(
     counts: Record<CanonicalFunnelStage, number>,
     orderPurchases: number,
   ): void {
     if (orderPurchases <= 0) return;
+    if (counts.visit <= 0) return;
     counts.purchase = Math.max(counts.purchase, orderPurchases);
     counts.checkout = Math.max(counts.checkout, counts.purchase);
     counts.add_to_cart = Math.max(counts.add_to_cart, counts.checkout);
@@ -1060,27 +1089,26 @@ export class StorefrontTrackingService {
         from,
         to,
       ),
-      // New vs returning: a visitor active in the window is "new" if their
-      // first-ever session (in this project) falls inside the window, else
-      // "returning".
+      // New vs returning, defined by session count within the window so it stays
+      // consistent with repeat_visitor_rate (journeyInsights): a "returning"
+      // visitor is one with more than one session (i.e. they came back) and a
+      // "new" visitor has exactly one. This makes the three metrics agree —
+      // returning_visitors == repeat visitors, and repeat_visitor_rate ==
+      // returning_visitors / total_visitors — instead of the previous
+      // first-seen-before-window definition, which could report 0 returning
+      // visitors while repeat rate was 100% for the same multi-session visitor.
       prisma.$queryRawUnsafe<Array<{ new_visitors: bigint; returning_visitors: bigint }>>(
-        `WITH first_seen AS (
-           SELECT visitor_id, MIN(started_at) AS first_ever
-           FROM storefront_sessions
-           WHERE connector_instance_id = ANY($1::text[])
-           GROUP BY visitor_id
-         ),
-         in_window AS (
-           SELECT DISTINCT visitor_id
+        `WITH per_visitor AS (
+           SELECT visitor_id, COUNT(*) AS session_count
            FROM storefront_sessions
            WHERE connector_instance_id = ANY($1::text[])
              AND started_at >= $2 AND started_at <= $3
+           GROUP BY visitor_id
          )
          SELECT
-           COUNT(*) FILTER (WHERE fs.first_ever >= $2)::bigint AS new_visitors,
-           COUNT(*) FILTER (WHERE fs.first_ever <  $2)::bigint AS returning_visitors
-         FROM in_window iw
-         JOIN first_seen fs ON fs.visitor_id = iw.visitor_id`,
+           COUNT(*) FILTER (WHERE session_count = 1)::bigint AS new_visitors,
+           COUNT(*) FILTER (WHERE session_count > 1)::bigint AS returning_visitors
+         FROM per_visitor`,
         ids,
         from,
         to,
@@ -1171,6 +1199,15 @@ export class StorefrontTrackingService {
       top_referrers: [] as Array<{ referrer: string; sessions: number }>,
       top_products: [] as Array<{ product: string; sessions: number }>,
       checkout_steps: [] as Array<{ step: string; sessions: number }>,
+      product_engagement: [] as Array<{
+        product_id: string;
+        product_name: string;
+        views: number;
+        add_to_carts: number;
+        cart_rate: number;
+      }>,
+      time_to_purchase: { avg_seconds: 0, median_seconds: 0 },
+      friction_signals: [] as Array<{ step: string; abandon_count: number; pct: number }>,
     };
     if (ids.length === 0) return blank;
 
@@ -1182,7 +1219,7 @@ export class StorefrontTrackingService {
     const sessWhere = `connector_instance_id = ANY($1::text[]) AND started_at >= $2 AND started_at <= $3`;
     const evtWhere = `connector_instance_id = ANY($1::text[]) AND occurred_at >= $2 AND occurred_at <= $3`;
 
-    const [engagement, repeat, device, entry, exit, referrer, products, steps] = await Promise.all([
+    const [engagement, repeat, device, entry, exit, referrer, products, steps, productEng, ttp, friction] = await Promise.all([
       prisma.$queryRawUnsafe<Array<{ total: bigint; bounced: bigint; avg_seconds: number | null }>>(
         `SELECT
            COUNT(*)::bigint                                                          AS total,
@@ -1235,10 +1272,59 @@ export class StorefrontTrackingService {
          GROUP BY 1 ORDER BY sessions DESC LIMIT 10`,
         ids, from, to,
       ),
+      // Product engagement: views vs add-to-carts per product (cart-rate computed
+      // in JS). Grouped by product_id, with product_name carried for display.
+      prisma.$queryRawUnsafe<Array<{ product_id: string | null; product_name: string | null; views: bigint; add_to_carts: bigint }>>(
+        `SELECT
+           COALESCE(NULLIF(properties->>'product_id',''), NULLIF(properties->>'product_name','')) AS product_id,
+           MAX(NULLIF(properties->>'product_name',''))                                            AS product_name,
+           COUNT(*) FILTER (WHERE canonical_stage = 'product_view')::bigint                       AS views,
+           COUNT(*) FILTER (WHERE canonical_stage = 'add_to_cart')::bigint                        AS add_to_carts
+         FROM storefront_events
+         WHERE ${evtWhere}
+           AND canonical_stage IN ('product_view', 'add_to_cart')
+           AND COALESCE(NULLIF(properties->>'product_id',''), NULLIF(properties->>'product_name','')) IS NOT NULL
+         GROUP BY 1
+         ORDER BY views DESC, add_to_carts DESC
+         LIMIT 20`,
+        ids, from, to,
+      ),
+      // Time to purchase: seconds from session start to the first purchase event,
+      // over sessions that actually converted. avg + median (NULL when none).
+      prisma.$queryRawUnsafe<Array<{ avg_seconds: number | null; median_seconds: number | null }>>(
+        `SELECT
+           AVG(secs)::float8                                          AS avg_seconds,
+           PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY secs)::float8  AS median_seconds
+         FROM (
+           SELECT EXTRACT(EPOCH FROM (MIN(e.occurred_at) - s.started_at)) AS secs
+           FROM storefront_sessions s
+           JOIN storefront_events e
+             ON e.connector_instance_id = s.connector_instance_id
+            AND e.session_id = s.session_id
+            AND e.canonical_stage = 'purchase'
+           WHERE s.connector_instance_id = ANY($1::text[])
+             AND s.started_at >= $2 AND s.started_at <= $3
+             AND s.purchase_completed = true
+           GROUP BY s.session_id, s.started_at
+         ) t
+         WHERE secs >= 0`,
+        ids, from, to,
+      ),
+      // Friction signals: checkout abandonment by step (pct computed in JS).
+      prisma.$queryRawUnsafe<Array<{ step: string | null; abandon_count: bigint }>>(
+        `SELECT COALESCE(NULLIF(properties->>'step',''), '(unspecified)') AS step,
+                COUNT(*)::bigint AS abandon_count
+         FROM storefront_events
+         WHERE ${evtWhere} AND event_type = 'checkout_abandon'
+         GROUP BY 1 ORDER BY abandon_count DESC LIMIT 10`,
+        ids, from, to,
+      ),
     ]);
 
     const eng = engagement[0];
     const total = Number(eng?.total ?? 0);
+    const ttpRow = ttp[0];
+    const totalAbandons = friction.reduce((sum, f) => sum + Number(f.abandon_count), 0);
 
     return {
       bounce_rate: pct(Number(eng?.bounced ?? 0), total),
@@ -1250,6 +1336,26 @@ export class StorefrontTrackingService {
       top_referrers: referrer.map((r) => ({ referrer: r.referrer as string, sessions: Number(r.sessions) })),
       top_products: products.map((p) => ({ product: p.product as string, sessions: Number(p.sessions) })),
       checkout_steps: steps.map((s) => ({ step: s.step as string, sessions: Number(s.sessions) })),
+      product_engagement: productEng.map((p) => {
+        const views = Number(p.views);
+        const carts = Number(p.add_to_carts);
+        return {
+          product_id: (p.product_id as string) ?? '',
+          product_name: (p.product_name as string) || (p.product_id as string) || '(unknown)',
+          views,
+          add_to_carts: carts,
+          cart_rate: views > 0 ? Number(((carts / views) * 100).toFixed(1)) : 0,
+        };
+      }),
+      time_to_purchase: {
+        avg_seconds: Math.round(Number(ttpRow?.avg_seconds ?? 0)),
+        median_seconds: Math.round(Number(ttpRow?.median_seconds ?? 0)),
+      },
+      friction_signals: friction.map((f) => ({
+        step: f.step as string,
+        abandon_count: Number(f.abandon_count),
+        pct: totalAbandons > 0 ? Number(((Number(f.abandon_count) / totalAbandons) * 100).toFixed(1)) : 0,
+      })),
     };
   }
 }

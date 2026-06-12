@@ -166,18 +166,20 @@ function classifyAdobeCommerce(s: NormalizedSignals): CanonicalFunnelStage | nul
   ) {
     return 'purchase';
   }
-  // add_to_cart — checked before checkout because /checkout/cart/add lives under
+  // add_to_cart — checked before checkout because Magento's cart page
+  // (/checkout/cart) and the add action (/checkout/cart/add) both live under
   // /checkout/ and would otherwise be swallowed by the checkout rule below.
+  // The cart page is an add-to-cart intent signal, not the checkout step.
   if (
     s.eventType === 'add_to_cart' ||
     s.ev === 'add_to_cart' ||
-    s.url.includes('/checkout/cart/add')
+    s.url.includes('/checkout/cart')
   ) {
     return 'add_to_cart';
   }
-  // checkout — anything under /checkout/ that is not success or the cart/add action
+  // checkout — anything under /checkout/ that is not success or the cart page.
   if (
-    (s.url.includes('/checkout/') && !s.url.includes('/success') && !s.url.includes('/cart/add')) ||
+    (s.url.includes('/checkout/') && !s.url.includes('/success') && !s.url.includes('/checkout/cart')) ||
     s.url.includes('/checkout/onepage') ||
     s.eventType === 'checkout' ||
     s.eventType === 'checkout_step' ||

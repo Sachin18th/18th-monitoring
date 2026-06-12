@@ -21,10 +21,87 @@ import {
   AlertCircle,
   CheckCircle2,
   Truck,
+  PieChart as PieChartIcon,
+  BarChart3,
 } from "lucide-react";
+import {
+  ComposedChart,
+  BarChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
 
 import { OrderDetailDrawerContent } from "../../../../components/orders/OrderDetailDrawerContent";
 import { RevenueStrip, computeWindowRange, type TimeWindow } from "../../../../components/orders/RevenueStrip";
+
+// Accent palette — mid-tone, saturated hues legible on BOTH light and dark themes.
+const ACCENT = {
+  indigo: "#6366f1",
+  sky: "#0ea5e9",
+  emerald: "#10b981",
+  violet: "#8b5cf6",
+  amber: "#f59e0b",
+  rose: "#f43f5e",
+  slate: "#94a3b8",
+};
+
+// Status → color, so the donut and any badges read consistently.
+const STATUS_COLOR: Record<string, string> = {
+  paid: ACCENT.emerald,
+  delivered: "#22c55e",
+  shipped: ACCENT.sky,
+  placed: ACCENT.indigo,
+  processing: ACCENT.amber,
+  pending: ACCENT.amber,
+  cancelled: ACCENT.rose,
+  canceled: ACCENT.rose,
+  failed: ACCENT.rose,
+  returned: ACCENT.violet,
+  refunded: ACCENT.violet,
+  unknown: ACCENT.slate,
+};
+const colorForStatus = (status: string) =>
+  STATUS_COLOR[String(status || "").toLowerCase()] || ACCENT.slate;
+
+const HEALTH_COLOR: Record<string, string> = {
+  healthy: ACCENT.emerald,
+  delayed: ACCENT.amber,
+  failed: ACCENT.rose,
+};
+
+// Shared recharts tooltip styling, theme-aware via CSS vars.
+const CHART_TOOLTIP_STYLE: React.CSSProperties = {
+  background: "var(--bg-card)",
+  border: "1px solid var(--border-card)",
+  borderRadius: "8px",
+  fontSize: "12px",
+  color: "var(--text-primary)",
+};
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+// Compact currency for chart axes/tooltips, e.g. "$19.9K".
+const formatCompactCurrency = (amount: number, currency = "USD") => {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(amount);
+  } catch {
+    return `${currency} ${Math.round(amount).toLocaleString()}`;
+  }
+};
 
 const pageStyle: React.CSSProperties = {
   paddingTop: "24px",
@@ -346,6 +423,94 @@ export default function OrdersPage() {
     });
   }, [orders, timeWindow, customFrom, customTo]);
 
+  // Chart-ready aggregates for the current time window: a volume/revenue trend,
+  // status distribution, and fulfillment-health split. Recomputed only when the
+  // windowed order set changes.
+  const orderAnalytics = useMemo(() => {
+    const statusCounts: Record<string, number> = {};
+    const healthCounts: Record<string, number> = {};
+    const currencyCounts: Record<string, number> = {};
+    let minTs = Infinity;
+    let maxTs = -Infinity;
+
+    for (const order of windowedOrders) {
+      const ts = Number(new Date(order.placedAt || order.createdAt || 0));
+      if (Number.isFinite(ts) && ts > 0) {
+        minTs = Math.min(minTs, ts);
+        maxTs = Math.max(maxTs, ts);
+      }
+      const status = String(order.status || "unknown").toLowerCase();
+      statusCounts[status] = (statusCounts[status] || 0) + 1;
+      const health = String(order.health || "unknown").toLowerCase();
+      healthCounts[health] = (healthCounts[health] || 0) + 1;
+      const currency = String(order.currency || "USD").toUpperCase();
+      currencyCounts[currency] = (currencyCounts[currency] || 0) + 1;
+    }
+
+    // Bucket the trend by day for short windows, by month for long ones, so the
+    // x-axis never collapses into an unreadable smear.
+    const span =
+      Number.isFinite(minTs) && Number.isFinite(maxTs) ? maxTs - minTs : 0;
+    const monthly = span > 62 * 24 * 60 * 60 * 1000;
+    const trendMap = new Map<
+      string,
+      { key: string; label: string; orders: number; revenue: number }
+    >();
+    for (const order of windowedOrders) {
+      const date = new Date(order.placedAt || order.createdAt || 0);
+      if (Number.isNaN(date.getTime())) continue;
+      const key = monthly
+        ? `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`
+        : `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+      let bucket = trendMap.get(key);
+      if (!bucket) {
+        bucket = {
+          key,
+          label: date.toLocaleDateString(
+            "en-US",
+            monthly
+              ? { month: "short", year: "numeric" }
+              : { month: "short", day: "numeric" },
+          ),
+          orders: 0,
+          revenue: 0,
+        };
+        trendMap.set(key, bucket);
+      }
+      bucket.orders += 1;
+      bucket.revenue += Number(order.amount ?? order.totalAmount ?? 0) || 0;
+    }
+
+    const trend = Array.from(trendMap.values())
+      .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .map(({ label, orders, revenue }) => ({
+        label,
+        orders,
+        revenue: Math.round(revenue),
+      }));
+
+    const dominantCurrency =
+      Object.entries(currencyCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ||
+      "USD";
+
+    const statusData = Object.entries(statusCounts)
+      .map(([name, count]) => ({ name, count, color: colorForStatus(name) }))
+      .sort((a, b) => b.count - a.count);
+
+    const total = windowedOrders.length;
+    const healthOrder = ["healthy", "delayed", "failed"];
+    const healthData = healthOrder
+      .map((name) => ({
+        name,
+        count: healthCounts[name] || 0,
+        color: HEALTH_COLOR[name],
+        percent: total === 0 ? 0 : Math.round(((healthCounts[name] || 0) / total) * 100),
+      }))
+      .filter((row) => row.count > 0);
+
+    return { trend, statusData, healthData, dominantCurrency, total };
+  }, [windowedOrders]);
+
   const filteredOrders = useMemo(() => {
     return windowedOrders.filter((o) => {
       const id = String(o.id || "").toLowerCase();
@@ -521,6 +686,17 @@ export default function OrdersPage() {
 
   return (
     <>
+      {/* Interaction polish: hover lift on metric cards. Theme-neutral shadow. */}
+      <style>{`
+        .ord-metric-card {
+          transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+        }
+        .ord-metric-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 28px rgba(99, 102, 241, 0.16);
+          border-color: rgba(99, 102, 241, 0.4);
+        }
+      `}</style>
       <div
         style={{
           ...pageStyle,
@@ -675,6 +851,7 @@ export default function OrdersPage() {
               icon: ShoppingBag,
               statusBg: "var(--success-bg)",
               statusColor: "var(--success-text)",
+              accent: ACCENT.indigo,
             },
             {
               label: "Orders This Hour",
@@ -684,6 +861,7 @@ export default function OrdersPage() {
               icon: Activity,
               statusBg: "var(--info-bg)",
               statusColor: "var(--info-text)",
+              accent: ACCENT.sky,
             },
             {
               label: "Delayed Orders",
@@ -693,6 +871,7 @@ export default function OrdersPage() {
               icon: Clock,
               statusBg: "var(--warning-bg)",
               statusColor: "var(--warning-text)",
+              accent: ACCENT.amber,
             },
             {
               label: "Critical Failures",
@@ -702,10 +881,12 @@ export default function OrdersPage() {
               icon: AlertTriangle,
               statusBg: "var(--error-bg)",
               statusColor: "var(--error-text)",
+              accent: ACCENT.rose,
             },
           ].map((metric) => (
             <div
               key={metric.label}
+              className="ord-metric-card"
               style={{
                 borderRadius: "12px",
                 border: "1px solid var(--border-card)",
@@ -740,14 +921,28 @@ export default function OrdersPage() {
                 >
                   {metric.label}
                 </span>
-                <metric.icon
+                <span
                   style={{
-                    width: "16px",
-                    height: "16px",
+                    width: "32px",
+                    height: "32px",
+                    borderRadius: "8px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    // ~14% tint of the accent reads on light and dark alike.
+                    background: `${metric.accent}24`,
                     flexShrink: 0,
-                    color: "var(--text-label)",
                   }}
-                />
+                >
+                  <metric.icon
+                    style={{
+                      width: "16px",
+                      height: "16px",
+                      flexShrink: 0,
+                      color: metric.accent,
+                    }}
+                  />
+                </span>
               </div>
               <div
                 style={{
@@ -812,6 +1007,424 @@ export default function OrdersPage() {
           onCustomTo={setCustomTo}
           lastUpdated={lastUpdated}
         />
+
+        {/* Order Volume & Revenue trend — bars = order count, line = revenue. */}
+        <div style={cardStyle}>
+          <div
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              color: "var(--text-primary)",
+              marginBottom: "4px",
+            }}
+          >
+            Order Volume & Revenue
+          </div>
+          <span
+            style={{
+              padding: "3px 10px",
+              borderRadius: "999px",
+              fontSize: "10px",
+              border: "1px solid var(--border-input)",
+              color: "var(--text-muted)",
+              display: "inline-block",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {orderAnalytics.total.toLocaleString()} orders · selected window
+          </span>
+
+          <div style={{ width: "100%", height: 300, marginTop: "20px" }}>
+            {orderAnalytics.trend.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={orderAnalytics.trend}
+                  margin={{ top: 10, right: 16, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="var(--border-card)"
+                    vertical={false}
+                  />
+                  <XAxis
+                    dataKey="label"
+                    stroke="var(--text-muted)"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    stroke="var(--text-muted)"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    stroke="var(--text-muted)"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    width={70}
+                    tickFormatter={(value) =>
+                      formatCompactCurrency(
+                        Number(value),
+                        orderAnalytics.dominantCurrency,
+                      )
+                    }
+                  />
+                  <Tooltip
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                    formatter={(value: any, name: any) =>
+                      name === "Revenue"
+                        ? formatCompactCurrency(
+                            Number(value),
+                            orderAnalytics.dominantCurrency,
+                          )
+                        : Number(value).toLocaleString()
+                    }
+                  />
+                  <Legend iconType="circle" />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="orders"
+                    name="Orders"
+                    fill={ACCENT.indigo}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={48}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Revenue"
+                    stroke={ACCENT.emerald}
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div
+                style={{
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {loading
+                  ? "Loading order trend…"
+                  : "No orders in the selected window to chart."}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Status distribution (donut) + fulfillment health (bars). */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "24px",
+            overflow: "visible",
+          }}
+        >
+          <div style={cardStyle}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                fontSize: "13px",
+                fontWeight: 500,
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                color: "var(--text-primary)",
+                marginBottom: "16px",
+              }}
+            >
+              <PieChartIcon
+                style={{ width: "15px", height: "15px", color: ACCENT.indigo }}
+              />
+              Order Status Distribution
+            </div>
+
+            {orderAnalytics.statusData.length > 0 ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "20px",
+                  flexWrap: "wrap",
+                }}
+              >
+                <div
+                  style={{
+                    position: "relative",
+                    width: "150px",
+                    height: "150px",
+                    flexShrink: 0,
+                  }}
+                >
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={orderAnalytics.statusData}
+                        dataKey="count"
+                        nameKey="name"
+                        innerRadius={48}
+                        outerRadius={70}
+                        paddingAngle={2}
+                        stroke="none"
+                      >
+                        {orderAnalytics.statusData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        contentStyle={CHART_TOOLTIP_STYLE}
+                        formatter={(value: any, _name: any, entry: any) => [
+                          `${Number(value).toLocaleString()} orders`,
+                          String(entry?.payload?.name || "").toUpperCase(),
+                        ]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      pointerEvents: "none",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "22px",
+                        fontWeight: 600,
+                        color: "var(--text-primary)",
+                        lineHeight: 1,
+                      }}
+                    >
+                      {orderAnalytics.total.toLocaleString()}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        color: "var(--text-muted)",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.08em",
+                        marginTop: "2px",
+                      }}
+                    >
+                      Orders
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "10px",
+                    minWidth: "140px",
+                  }}
+                >
+                  {orderAnalytics.statusData.map((entry) => (
+                    <div
+                      key={entry.name}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        alignItems: "center",
+                      }}
+                    >
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "8px",
+                          fontSize: "13px",
+                          color: "var(--text-primary)",
+                          textTransform: "capitalize",
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            background: entry.color,
+                            flexShrink: 0,
+                          }}
+                        />
+                        {entry.name}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "12px",
+                          color: "var(--text-secondary)",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {entry.count.toLocaleString()} ·{" "}
+                        {orderAnalytics.total === 0
+                          ? 0
+                          : Math.round(
+                              (entry.count / orderAnalytics.total) * 100,
+                            )}
+                        %
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                  padding: "24px 0",
+                }}
+              >
+                {loading
+                  ? "Loading status mix…"
+                  : "No orders in the selected window."}
+              </div>
+            )}
+          </div>
+
+          <div style={cardStyle}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                fontSize: "13px",
+                fontWeight: 500,
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                color: "var(--text-primary)",
+                marginBottom: "16px",
+              }}
+            >
+              <BarChart3
+                style={{ width: "15px", height: "15px", color: ACCENT.emerald }}
+              />
+              Fulfillment Health
+            </div>
+
+            {orderAnalytics.healthData.length > 0 ? (
+              <>
+                <div style={{ width: "100%", height: 150 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={orderAnalytics.healthData}
+                      layout="vertical"
+                      margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
+                      barCategoryGap={16}
+                    >
+                      <CartesianGrid
+                        horizontal={false}
+                        stroke="var(--border-card)"
+                        strokeDasharray="3 3"
+                      />
+                      <XAxis type="number" hide allowDecimals={false} />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        width={84}
+                        tickLine={false}
+                        axisLine={false}
+                        stroke="var(--text-muted)"
+                        fontSize={12}
+                        tickFormatter={(value) =>
+                          String(value).charAt(0).toUpperCase() +
+                          String(value).slice(1)
+                        }
+                      />
+                      <Tooltip
+                        cursor={{ fill: "var(--bg-input)" }}
+                        contentStyle={CHART_TOOLTIP_STYLE}
+                        formatter={(value: any, _name: any, entry: any) => [
+                          `${Number(value).toLocaleString()} · ${entry?.payload?.percent ?? 0}%`,
+                          String(entry?.payload?.name || "").toUpperCase(),
+                        ]}
+                      />
+                      <Bar dataKey="count" radius={[0, 6, 6, 0]} maxBarSize={26}>
+                        {orderAnalytics.healthData.map((entry) => (
+                          <Cell key={entry.name} fill={entry.color} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "10px 16px",
+                    marginTop: "12px",
+                  }}
+                >
+                  {orderAnalytics.healthData.map((entry) => (
+                    <span
+                      key={entry.name}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        fontSize: "12px",
+                        color: "var(--text-secondary)",
+                        textTransform: "capitalize",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "8px",
+                          height: "8px",
+                          borderRadius: "2px",
+                          background: entry.color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      {entry.name}
+                      <span style={{ color: "var(--text-muted)" }}>
+                        {entry.count.toLocaleString()} · {entry.percent}%
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div
+                style={{
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                  padding: "24px 0",
+                }}
+              >
+                {loading
+                  ? "Loading fulfillment health…"
+                  : "No orders in the selected window."}
+              </div>
+            )}
+          </div>
+        </div>
 
         <div style={cardStyle}>
           <div

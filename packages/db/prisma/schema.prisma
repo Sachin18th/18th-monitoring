@@ -94,6 +94,7 @@ model Project {
   paymentGatewayConfigs         PaymentGatewayConfig[]
   paymentGatewayStatusSnapshots PaymentGatewayStatusSnapshot[]
   userPagePermissions           UserPagePermission[]
+  storefrontErrors              StorefrontError[]
 
   @@index([tenantId], map: "idx_project_tenant")
   @@map("projects")
@@ -397,6 +398,7 @@ model ConnectorInstance {
   kpiValues          KpiValue[]
   storefrontSessions StorefrontSession[]
   storefrontEvents   StorefrontEvent[]
+  storefrontErrors   StorefrontError[]
 
   @@index([siteId], map: "idx_connector_site")
   @@index([tenantId], map: "idx_connector_tenant")
@@ -1077,4 +1079,42 @@ model StorefrontEvent {
   @@index([connectorInstanceId, eventType, occurredAt], map: "idx_storefront_event_type_occurred")
   @@index([connectorInstanceId, canonicalStage, occurredAt], map: "idx_storefront_events_canonical_stage")
   @@map("storefront_events")
+}
+
+// Storefront RUM errors & issues captured by the public tracker script
+// (js_error, promise_rejection, network_error, resource_error, checkout_error,
+// console_error). Scoped by project_id; the connector is best-effort (nullable,
+// SET NULL on delete) since a storefront page only carries connector_instance_id.
+// `metadata` holds the per-type flags (platform pattern hits, payment/cart/
+// checkout severity, slow/failed booleans, js line/column) that have no column.
+model StorefrontError {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  projectId           String   @map("project_id") @db.VarChar(255)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  errorType           String   @map("error_type") @db.VarChar(50)
+  severity            String   @db.VarChar(20)
+  message             String   @db.Text
+  sourceUrl           String?  @map("source_url") @db.Text
+  stackTrace          String?  @map("stack_trace") @db.Text
+  requestUrl          String?  @map("request_url") @db.Text
+  statusCode          Int?     @map("status_code")
+  httpMethod          String?  @map("http_method") @db.VarChar(10)
+  durationMs          Int?     @map("duration_ms")
+  resourceTag         String?  @map("resource_tag") @db.VarChar(20)
+  pageType            String?  @map("page_type") @db.VarChar(30)
+  pageUrl             String?  @map("page_url") @db.Text
+  userAgent           String?  @map("user_agent") @db.Text
+  sessionId           String?  @map("session_id") @db.VarChar(100)
+  metadata            Json     @default("{}")
+  occurredAt          DateTime @map("occurred_at") @db.Timestamptz()
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
+
+  @@index([projectId, occurredAt(sort: Desc)], map: "idx_storefront_error_project_occurred")
+  @@index([connectorInstanceId, occurredAt(sort: Desc)], map: "idx_storefront_error_connector_occurred")
+  @@index([projectId, errorType, occurredAt], map: "idx_storefront_error_type")
+  @@index([projectId, pageType, occurredAt], map: "idx_storefront_error_page")
+  @@map("storefront_errors")
 }

@@ -5,6 +5,16 @@ import { Activity, AlertTriangle, Building2, CheckCircle2, ShoppingBag } from 'l
 
 export type TimeWindow = 'all' | 'today' | 'week' | 'month' | 'custom';
 
+// Accent palette — mid-tone, saturated hues legible on BOTH light and dark themes.
+const ACCENT = {
+  indigo: '#6366f1',
+  sky: '#0ea5e9',
+  emerald: '#10b981',
+  violet: '#8b5cf6',
+  amber: '#f59e0b',
+  rose: '#f43f5e',
+};
+
 export interface WindowRange {
   start: number; // epoch ms (inclusive)
   end: number; // epoch ms (inclusive)
@@ -128,13 +138,33 @@ export const RevenueStrip: React.FC<RevenueStripProps> = ({ orders, timeWindow, 
   const subStyle: React.CSSProperties = { fontSize: '11px', color: 'var(--text-label)' };
   const tabBtn = (active: boolean): React.CSSProperties => ({ padding: '6px 12px', background: active ? 'var(--bg-input)' : 'transparent', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: active ? 700 : 500, color: 'var(--text-primary)' });
 
+  // Tile header: label on the left, the icon in a tinted accent badge on the right.
+  const tileHeader = (label: string, Icon: React.ElementType, accent: string) => (
+    <span style={labelStyle}>
+      {label}
+      <span style={{ width: '26px', height: '26px', borderRadius: '7px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: `${accent}24`, flexShrink: 0 }}>
+        <Icon size={14} style={{ color: accent }} />
+      </span>
+    </span>
+  );
+
   return (
     <div style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+      {/* Interaction polish: hover lift on revenue tiles. */}
+      <style>{`
+        .rev-tile { transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease; }
+        .rev-tile:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(99, 102, 241, 0.14); }
+      `}</style>
       {/* Header: title + window selector + freshness */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-        <div>
-          <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>Revenue Analytics</p>
-          <h2 style={{ margin: '4px 0 0', fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>Revenue for the selected window</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ width: '36px', height: '36px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: `${ACCENT.emerald}24`, flexShrink: 0 }}>
+            <Activity size={18} style={{ color: ACCENT.emerald }} />
+          </span>
+          <div>
+            <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>Revenue Analytics</p>
+            <h2 style={{ margin: '4px 0 0', fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>Revenue for the selected window</h2>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           {timeWindow === 'custom' ? (
@@ -155,27 +185,27 @@ export const RevenueStrip: React.FC<RevenueStripProps> = ({ orders, timeWindow, 
       {/* Metric tiles */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px' }}>
         {/* AOV */}
-        <div style={card}>
-          <span style={labelStyle}>Avg Order Value <ShoppingBag size={14} style={{ color: 'var(--text-label)' }} /></span>
+        <div className="rev-tile" style={card}>
+          {tileHeader('Avg Order Value', ShoppingBag, ACCENT.indigo)}
           <span style={bigValue}>{money(m.aov, m.currency, 2)}</span>
           <span style={subStyle}>Excludes cancelled orders</span>
         </div>
 
         {/* Total Revenue */}
-        <div style={card}>
-          <span style={labelStyle}>Total Revenue <Activity size={14} style={{ color: 'var(--text-label)' }} /></span>
-          <span style={bigValue}>{money(m.total, m.currency)}</span>
+        <div className="rev-tile" style={card}>
+          {tileHeader('Total Revenue', Activity, ACCENT.emerald)}
+          <span style={{ ...bigValue, color: ACCENT.emerald }}>{money(m.total, m.currency)}</span>
           <span style={subStyle}>{m.count.toLocaleString()} orders in window</span>
         </div>
 
         {/* Revenue by status */}
-        <div style={card}>
-          <span style={labelStyle}>Revenue by Status <CheckCircle2 size={14} style={{ color: 'var(--text-label)' }} /></span>
+        <div className="rev-tile" style={card}>
+          {tileHeader('Revenue by Status', CheckCircle2, ACCENT.sky)}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginTop: '2px' }}>
             {[
-              { k: 'Paid', v: m.paid, c: 'var(--success-text)' },
-              { k: 'Pending', v: m.pending, c: 'var(--warning-text)' },
-              { k: 'Failed', v: m.failed, c: 'var(--error-text)' },
+              { k: 'Paid', v: m.paid, c: ACCENT.emerald },
+              { k: 'Pending', v: m.pending, c: ACCENT.amber },
+              { k: 'Failed', v: m.failed, c: ACCENT.rose },
             ].map((r) => (
               <div key={r.k} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>
@@ -189,26 +219,33 @@ export const RevenueStrip: React.FC<RevenueStripProps> = ({ orders, timeWindow, 
         </div>
 
         {/* Revenue at risk — alert-level signal */}
-        <div style={{ ...card, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.07)' }}>
-          <span style={{ ...labelStyle, color: 'var(--error-text)' }}>Revenue at Risk <AlertTriangle size={14} style={{ color: 'var(--error-text)' }} /></span>
-          <span style={{ ...bigValue, color: 'var(--error-text)' }}>{money(m.atRisk, m.currency)}</span>
+        <div className="rev-tile" style={{ ...card, border: `1px solid ${ACCENT.rose}59`, background: `${ACCENT.rose}12` }}>
+          {tileHeader('Revenue at Risk', AlertTriangle, ACCENT.rose)}
+          <span style={{ ...bigValue, color: ACCENT.rose }}>{money(m.atRisk, m.currency)}</span>
           <span style={subStyle}>Delayed + failed order value</span>
         </div>
 
         {/* Channel split */}
-        <div style={card}>
-          <span style={labelStyle}>Channel Split <Building2 size={14} style={{ color: 'var(--text-label)' }} /></span>
+        <div className="rev-tile" style={card}>
+          {tileHeader('Channel Split', Building2, ACCENT.violet)}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Offline</span>
-              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{money(m.offline, m.currency)}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '999px', background: ACCENT.violet, display: 'inline-block' }} />
+                Offline
+              </span>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{money(m.offline, m.currency)} · {m.offlinePct}%</span>
             </div>
-            <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border-card)', overflow: 'hidden' }}>
-              <div style={{ width: `${m.offlinePct}%`, height: '100%', background: 'var(--text-muted)' }} />
+            <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border-card)', overflow: 'hidden', display: 'flex' }}>
+              <div style={{ width: `${m.offlinePct}%`, height: '100%', background: ACCENT.violet }} />
+              <div style={{ flex: 1, height: '100%', background: ACCENT.sky }} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Other channels</span>
-              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{money(m.other, m.currency)}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '999px', background: ACCENT.sky, display: 'inline-block' }} />
+                Other channels
+              </span>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{money(m.other, m.currency)} · {100 - m.offlinePct}%</span>
             </div>
           </div>
         </div>

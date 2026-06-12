@@ -42,6 +42,7 @@ import { pipelineRoutes } from './routes/pipeline';
 import { kpiRoutes } from './routes/kpi';
 import { pagespeedRoutes } from './routes/pagespeed.route';
 import { trackRoutes } from './routes/track';
+import { rumRoutes } from './routes/rum';
 import { cache } from '../../../packages/cache/src';
 import { BackendMonitor } from './utils/backend-monitor';
 
@@ -95,7 +96,11 @@ export const bootstrapApi = async () => {
             'x-correlation-id',
             'Accept',
             'Origin',
-            'X-Requested-With'
+            'X-Requested-With',
+            // Lets the storefront tracker bootstrap fetch tracker.js through a
+            // free ngrok tunnel without tripping the ERR_NGROK_6024 browser
+            // interstitial (which would strip CORS headers and break loading).
+            'ngrok-skip-browser-warning'
         ]
     });
 
@@ -224,6 +229,11 @@ export const bootstrapApi = async () => {
     // Storefront session/event tracking (public ingest + analyst queries)
     await server.register(trackRoutes, {
         prefix: '/api/track'
+    });
+
+    // Public, no-auth storefront RUM error ingest + dashboard query + script.
+    await server.register(rumRoutes, {
+        prefix: '/api/rum'
     });
 
 

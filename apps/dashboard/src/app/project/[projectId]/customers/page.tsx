@@ -4,26 +4,61 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   Users,
-  Activity,
-  Layers,
-  Filter,
   Search,
   ChevronRight,
   Mail,
   Calendar,
   Shield,
-  MapPin,
   Smartphone,
   Globe,
   Clock,
   History,
   Fingerprint,
   UserCheck,
-  UserPlus,
-  AlertCircle,
-  ArrowDown,
   ShoppingBag,
 } from "lucide-react";
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  BarChart,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
+
+// Accent palette chosen to stay legible on BOTH light and dark themes — mid-tone,
+// saturated hues that never wash out on white or disappear on near-black.
+const ACCENT = {
+  indigo: "#6366f1",
+  sky: "#0ea5e9",
+  emerald: "#10b981",
+  violet: "#8b5cf6",
+  amber: "#f59e0b",
+  rose: "#f43f5e",
+};
+const SEGMENT_COLORS = [
+  ACCENT.indigo,
+  ACCENT.sky,
+  ACCENT.emerald,
+  ACCENT.violet,
+  ACCENT.amber,
+];
+
+// Shared recharts tooltip styling, theme-aware via CSS vars.
+const CHART_TOOLTIP_STYLE: React.CSSProperties = {
+  background: "var(--bg-card)",
+  border: "1px solid var(--border-card)",
+  borderRadius: "8px",
+  fontSize: "12px",
+  color: "var(--text-primary)",
+};
 import { DiagnosticDrawer } from "@kpi-platform/ui";
 import { useAuth } from "../../../../context/AuthContext";
 import { PageRestricted } from "../../../../components/PageRestricted";
@@ -77,26 +112,6 @@ const getCustomerOriginTrackingLabel = (customer: any) => {
     metadata?.connectorId ||
     "Unknown source"
   );
-};
-
-type FunnelStage = {
-  stage: string;
-  count: number;
-  percent: number;
-};
-
-type Segment = {
-  name: string;
-  size: number;
-  active: number;
-  conversion: number;
-  growth: number;
-};
-
-type Attribution = {
-  source: string;
-  conversion: number;
-  sessions: number;
 };
 
 type CustomerOrderRow = {
@@ -199,20 +214,236 @@ const customerMatchesActiveConnector = (
   return connectorCandidates.includes(normalizeLookupValue(connectorInstanceId));
 };
 
-const buildCustomerSummary = (customers: any[]) => {
-  const identified = customers.filter((customer) => !!extractCustomerEmail(customer)).length;
-  const activeUsers = customers.filter((customer) => getCustomerOrderCount(customer) > 0).length;
-  const returning = customers.filter((customer) => getCustomerOrderCount(customer) > 1).length;
+// Derive everything the customer cards show from the real customer_profiles
+// records AND the canonical orders we already fetch. "Completed Orders", buyers,
+// repeat buyers and LTV are computed by matching orders to each customer by
+// email (the profile-level totalLtv / orders_count columns are often
+// unpopulated), falling back to the stored profile values when no orders match.
+const buildCustomerInsights = (customers: any[], orders: any[] = []) => {
+  const total = customers.length;
+  const now = Date.now();
+  const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+
+  // Monthly trend buckets: { newCustomers, revenue } keyed by YYYY-MM.
+  const trendMap = new Map<
+    string,
+    { key: string; label: string; newCustomers: number; revenue: number }
+  >();
+  const trendBucket = (value?: string) => {
+    if (!value) return undefined;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return undefined;
+    const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}`;
+    let bucket = trendMap.get(key);
+    if (!bucket) {
+      bucket = {
+        key,
+        label: parsed.toLocaleDateString("en-US", {
+          month: "short",
+          year: "numeric",
+        }),
+        newCustomers: 0,
+        revenue: 0,
+      };
+      trendMap.set(key, bucket);
+    }
+    return bucket;
+  };
+
+  // Index orders by every email they carry → { completed order count, spend }.
+  const orderStatsByEmail = new Map<
+    string,
+    { count: number; total: number }
+  >();
+  const orderCurrencyCounts: Record<string, number> = {};
+  for (const order of orders) {
+    const amount = Number(
+      order?.totalAmount ??
+        order?.metadata?.totalAmount ??
+        order?.metadata?.amount ??
+        0,
+    );
+    const orderCurrency = String(
+      order?.currency || order?.metadata?.currency || "",
+    )
+      .trim()
+      .toUpperCase();
+    if (orderCurrency)
+      orderCurrencyCounts[orderCurrency] =
+        (orderCurrencyCounts[orderCurrency] || 0) + 1;
+
+    const revenueBucket = trendBucket(
+      order?.placedAt || order?.createdAt || order?.metadata?.placedAt,
+    );
+    if (revenueBucket && Number.isFinite(amount))
+      revenueBucket.revenue += amount;
+
+    const emails = Array.from(new Set(extractOrderEmailCandidates(order)));
+    for (const email of emails) {
+      const stats = orderStatsByEmail.get(email) || { count: 0, total: 0 };
+      stats.count += 1;
+      stats.total += Number.isFinite(amount) ? amount : 0;
+      orderStatsByEmail.set(email, stats);
+    }
+  }
+
+  let identified = 0;
+  let buyers = 0;
+  let repeatBuyers = 0;
+  let totalLtv = 0;
+  let totalOrders = 0;
+  let newLast30 = 0;
+  const lifecycleCounts: Record<string, number> = {};
+  const currencyCounts: Record<string, number> = {};
+
+  // Engagement recency buckets derived from lastSeenAt — a session-free stand-in
+  // for the old "Top Traffic Attribution" block (the customer API carries no
+  // session data). Thresholds are measured from now.
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+  const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
+  const engagementCounts = { active: 0, warm: 0, atRisk: 0, dormant: 0 };
+
+  for (const customer of customers) {
+    const email = extractCustomerEmail(customer);
+    if (email) identified += 1;
+
+    // Completed orders for this customer = email-matched orders, falling back
+    // to the stored profile count. Buyers / repeat buyers follow from this.
+    const matched = email ? orderStatsByEmail.get(email) : undefined;
+    const completedOrders = Math.max(
+      matched?.count || 0,
+      getCustomerOrderCount(customer),
+    );
+    totalOrders += completedOrders;
+    if (completedOrders > 0) buyers += 1;
+    if (completedOrders > 1) repeatBuyers += 1;
+
+    const profileLtv = Number(customer?.totalLtv || 0);
+    const ltv =
+      (matched?.total || 0) > 0
+        ? matched!.total
+        : Number.isFinite(profileLtv)
+          ? profileLtv
+          : 0;
+    totalLtv += ltv;
+
+    const lifecycle = String(customer?.lifecycleState || "NEW_GUEST");
+    lifecycleCounts[lifecycle] = (lifecycleCounts[lifecycle] || 0) + 1;
+
+    const currency = String(customer?.metadata?.currency || "")
+      .trim()
+      .toUpperCase();
+    if (currency) currencyCounts[currency] = (currencyCounts[currency] || 0) + 1;
+
+    const firstSeen = customer?.firstSeenAt || customer?.metadata?.createdAt;
+    if (firstSeen) {
+      const seenAt = new Date(firstSeen).getTime();
+      if (Number.isFinite(seenAt) && now - seenAt <= THIRTY_DAYS) newLast30 += 1;
+      const acquisitionBucket = trendBucket(firstSeen);
+      if (acquisitionBucket) acquisitionBucket.newCustomers += 1;
+    }
+
+    const lastSeen =
+      customer?.lastSeenAt ||
+      customer?.metadata?.lastSeenAt ||
+      customer?.metadata?.updatedAt;
+    if (lastSeen) {
+      const lastSeenAt = new Date(lastSeen).getTime();
+      if (Number.isFinite(lastSeenAt)) {
+        const age = now - lastSeenAt;
+        if (age <= SEVEN_DAYS) engagementCounts.active += 1;
+        else if (age <= THIRTY_DAYS) engagementCounts.warm += 1;
+        else if (age <= NINETY_DAYS) engagementCounts.atRisk += 1;
+        else engagementCounts.dormant += 1;
+      }
+    }
+  }
+
+  // Chronological monthly trend, limited to the most recent 12 months.
+  const monthlyTrend = Array.from(trendMap.values())
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .slice(-12)
+    .map(({ label, newCustomers, revenue }) => ({
+      label,
+      newCustomers,
+      revenue: Math.round(revenue),
+    }));
+
+  // Pick the dominant currency from customer profiles, else from the orders.
+  const currencyPool = Object.keys(currencyCounts).length
+    ? currencyCounts
+    : orderCurrencyCounts;
+  const dominantCurrency =
+    Object.entries(currencyPool).sort((a, b) => b[1] - a[1])[0]?.[0] || "USD";
+
+  const lifecycle = Object.entries(lifecycleCounts)
+    .map(([name, count]) => ({
+      name,
+      count,
+      percent: total === 0 ? 0 : Math.round((count / total) * 100),
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const share = (value: number) =>
+    total === 0 ? 0 : Math.round((value / total) * 100);
+
+  // Recency-based engagement, ordered healthiest → coldest.
+  const engagement = [
+    {
+      name: "Active",
+      hint: "Seen ≤ 7 days",
+      count: engagementCounts.active,
+      color: "#22c55e",
+    },
+    {
+      name: "Warm",
+      hint: "8–30 days",
+      count: engagementCounts.warm,
+      color: "#60a5fa",
+    },
+    {
+      name: "At risk",
+      hint: "31–90 days",
+      count: engagementCounts.atRisk,
+      color: "#f59e0b",
+    },
+    {
+      name: "Dormant",
+      hint: "> 90 days",
+      count: engagementCounts.dormant,
+      color: "#ef4444",
+    },
+  ].map((bucket) => ({ ...bucket, percent: share(bucket.count) }));
+
+  // Real behavioral segments derived from the customer profiles we have.
+  const segments = [
+    { name: "Identified", size: identified, share: share(identified) },
+    {
+      name: "Anonymous",
+      size: total - identified,
+      share: share(total - identified),
+    },
+    { name: "Buyers", size: buyers, share: share(buyers) },
+    { name: "Repeat buyers", size: repeatBuyers, share: share(repeatBuyers) },
+    { name: "New (30d)", size: newLast30, share: share(newLast30) },
+  ];
 
   return {
-    totalUsers: customers.length,
-    activeUsers,
-    identifiedRatio: customers.length === 0 ? 0 : Math.round((identified / customers.length) * 100),
-    newVsReturning: customers.length === 0 ? 0 : Math.round((returning / customers.length) * 100),
-    sessions: customers.reduce(
-      (sum, customer) => sum + Number(customer?.metadata?.sessionCount || customer?.metadata?.sessions || 0),
-      0,
-    ),
+    total,
+    identified,
+    identifiedRatio: total === 0 ? 0 : Math.round((identified / total) * 100),
+    buyers,
+    repeatBuyers,
+    repeatRate: buyers === 0 ? 0 : Math.round((repeatBuyers / buyers) * 100),
+    totalOrders,
+    totalLtv,
+    avgLtv: total === 0 ? 0 : totalLtv / total,
+    newLast30,
+    dominantCurrency,
+    lifecycle,
+    segments,
+    monthlyTrend,
+    engagement,
   };
 };
 
@@ -404,6 +635,20 @@ const formatCurrency = (amount: number, currency = "USD") => {
     }).format(amount);
   } catch {
     return `${currency} ${amount.toFixed(2)}`;
+  }
+};
+
+// Compact currency for chart axes/tooltips, e.g. "$19.9K".
+const formatCompactCurrency = (amount: number, currency = "USD") => {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(amount);
+  } catch {
+    return `${currency} ${Math.round(amount).toLocaleString()}`;
   }
 };
 
@@ -665,14 +910,34 @@ const getCustomerOrderCount = (customer: any): number => {
   return 0;
 };
 
+const buildCustomerName = (customer: any): string => {
+  const metadata = customer?.metadata || {};
+  const rawCustomer = metadata?.rawCustomer || {};
+
+  const firstName =
+    metadata?.firstName || rawCustomer?.first_name || rawCustomer?.firstname;
+  const lastName =
+    metadata?.lastName || rawCustomer?.last_name || rawCustomer?.lastname;
+
+  const fullName = [firstName, lastName]
+    .filter((part) => typeof part === "string" && part.trim().length > 0)
+    .map((part) => part.trim())
+    .join(" ");
+
+  if (fullName) return fullName;
+
+  return (
+    metadata?.name ||
+    metadata?.customerName ||
+    (customer?.externalIds?.shopify
+      ? `Customer ${String(customer.id).slice(0, 8)}`
+      : "Unknown")
+  );
+};
+
 const normalizeCustomerRecord = (customer: any): IdentityRow => ({
   id: customer.id,
-  name:
-    customer.metadata?.name ||
-    customer.metadata?.customerName ||
-    (customer.externalIds?.shopify
-      ? `Customer ${customer.id.slice(0, 8)}`
-      : "Unknown"),
+  name: buildCustomerName(customer),
   email: extractCustomerEmail(customer) || customer.emailHash || "N/A",
   state: customer.lifecycleState || "NEW_GUEST",
   sessions: Number(
@@ -716,16 +981,11 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterLifecycle, setFilterLifecycle] = useState("");
   const [allCustomers, setAllCustomers] = useState<any[]>([]); // Store all customers
   const [customers, setCustomers] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>({
-    totalUsers: 0,
-    activeUsers: 0,
-    identifiedRatio: 0,
-    newVsReturning: 0,
-    sessions: 0,
-  });
   const [intelligence, setIntelligence] = useState<any>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -758,11 +1018,11 @@ export default function CustomersPage() {
       const canViewOrders = allowedPageKeys.includes('orders');
       const canViewCustomers = allowedPageKeys.includes('customers') || allowedPageKeys.includes('observability/journeys');
 
-      // Fetch summary, intelligence, customer list, and project orders in parallel
-      const [summ, intel, listRes, ordersRes] = await Promise.all([
-        canViewCustomers
-          ? apiFetch(`/api/v1/dashboard/customers/summary?siteId=${projectId}`)
-          : Promise.resolve(null),
+      // Fetch intelligence, customer list, and project orders in parallel.
+      // (The /customers/summary endpoint is intentionally not called: its
+      // headline numbers are derived/hardcoded server-side and we compute the
+      // real ones from the customer list below.)
+      const [intel, listRes, ordersRes] = await Promise.all([
         canViewCustomers
           ? apiFetch(`/api/v1/dashboard/customers/intelligence?siteId=${projectId}`)
           : Promise.resolve(null),
@@ -792,7 +1052,6 @@ export default function CustomersPage() {
         }),
       );
 
-      setSummary(buildCustomerSummary(scopedCustomers));
       setIntelligence(intel);
 
       console.log("[FETCH] Data received from API:", {
@@ -859,8 +1118,9 @@ export default function CustomersPage() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    // No background polling: the periodic refetch reset the table to page 1 and
+    // re-rendered the identity log every interval, which read as an auto-reload.
+    // Data refreshes on mount and on project/connector change (effect below).
   }, [fetchData]);
 
   useEffect(() => {
@@ -871,13 +1131,6 @@ export default function CustomersPage() {
     setAllCustomers([]);
     setCustomers([]);
     setOrders([]);
-    setSummary({
-      totalUsers: 0,
-      activeUsers: 0,
-      identifiedRatio: 0,
-      newVsReturning: 0,
-      sessions: 0,
-    });
     setIntelligence(null);
     fetchData(true);
   }, [connectorSelectionTick, projectId, token, fetchData]);
@@ -886,61 +1139,113 @@ export default function CustomersPage() {
     setCurrentPage(1);
   }, []);
 
-  // Calculate paginated customers based on allCustomers and currentPage
+  // Filter customers by the search query (name, email, lifecycle state, id)
+  // and by the selected lifecycle state.
+  const filteredCustomers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const lifecycle = filterLifecycle.trim().toLowerCase();
+    if (!query && !lifecycle) return allCustomers;
+    return allCustomers.filter((customer) => {
+      const record = normalizeCustomerRecord(customer);
+      if (
+        lifecycle &&
+        String(customer?.lifecycleState || record.state || "").toLowerCase() !==
+          lifecycle
+      ) {
+        return false;
+      }
+      if (!query) return true;
+      const haystack = [
+        record.name,
+        record.email,
+        record.state,
+        record.id,
+        customer?.lifecycleState,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [allCustomers, searchQuery, filterLifecycle]);
+
+  // Distinct lifecycle states present in the data (for the filter dropdown).
+  const lifecycleOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          allCustomers
+            .map((customer) => String(customer?.lifecycleState || "").trim())
+            .filter(Boolean),
+        ),
+      ).sort(),
+    [allCustomers],
+  );
+
+  // Reset to the first page whenever the search query or filter changes.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, filterLifecycle]);
+
+  // Calculate paginated customers based on filteredCustomers and currentPage
   useMemo(() => {
     const startIndex = (currentPage - 1) * CUSTOMERS_PER_PAGE;
     const endIndex = startIndex + CUSTOMERS_PER_PAGE;
-    setCustomers(allCustomers.slice(startIndex, endIndex));
-  }, [allCustomers, currentPage, CUSTOMERS_PER_PAGE]);
+    setCustomers(filteredCustomers.slice(startIndex, endIndex));
+  }, [filteredCustomers, currentPage, CUSTOMERS_PER_PAGE]);
 
   // Calculate total pages
   const totalPages = Math.max(
     1,
-    Math.ceil(allCustomers.length / CUSTOMERS_PER_PAGE),
+    Math.ceil(filteredCustomers.length / CUSTOMERS_PER_PAGE),
+  );
+
+  const customerInsights = useMemo(
+    () => buildCustomerInsights(allCustomers || [], orders || []),
+    [allCustomers, orders],
   );
 
   const metricCards = useMemo(
     () => [
       {
-        label: "Audience Reach",
-        value: loading
-          ? "..."
-          : Number(summary.totalUsers || 0).toLocaleString(),
-        badge: "12.4% vs last 30d",
+        label: "Total Customers",
+        value: loading ? "..." : customerInsights.total.toLocaleString(),
+        badge: `${customerInsights.newLast30.toLocaleString()} new in last 30 days`,
         icon: Users,
+        accent: ACCENT.indigo,
       },
       {
-        label: "Identity Maturity",
-        value: loading ? "..." : `${summary.identifiedRatio || 0}%`,
-        badge:
-          (summary.identifiedRatio || 0) > 50
-            ? "Identity graph healthy"
-            : "Opportunity to enrich",
+        label: "Identified Customers",
+        value: loading ? "..." : `${customerInsights.identifiedRatio}%`,
+        badge: `${customerInsights.identified.toLocaleString()} of ${customerInsights.total.toLocaleString()} have an email`,
         icon: Fingerprint,
+        accent: ACCENT.sky,
       },
       {
-        label: "Live Engagement",
+        label: "Total Lifetime Value",
         value: loading
           ? "..."
-          : Number(summary.activeUsers || 0).toLocaleString(),
-        badge: "Realtime active profile count",
-        icon: UserCheck,
+          : formatCurrency(
+              customerInsights.totalLtv,
+              customerInsights.dominantCurrency,
+            ),
+        badge: `Avg ${formatCurrency(customerInsights.avgLtv, customerInsights.dominantCurrency)} per customer`,
+        icon: Shield,
+        accent: ACCENT.emerald,
       },
       {
-        label: "Acquisition Mix",
-        value: loading ? "..." : `${summary.newVsReturning || 0}%`,
-        badge: "New visitor share",
-        icon: UserPlus,
+        label: "Repeat Buyers",
+        value: loading ? "..." : customerInsights.repeatBuyers.toLocaleString(),
+        badge: `${customerInsights.repeatRate}% of ${customerInsights.buyers.toLocaleString()} buyers`,
+        icon: UserCheck,
+        accent: ACCENT.violet,
       },
     ],
-    [loading, summary],
+    [loading, customerInsights],
   );
 
-  const funnelStages: FunnelStage[] = intelligence?.funnel || [];
-  const segments: Segment[] = intelligence?.segments || [];
   const identities: IdentityRow[] =
     (customers || []).map(normalizeCustomerRecord) || [];
-  const topAttribution: Attribution[] = intelligence?.topAttribution || [];
   // const selectedCustomerOrders = useMemo(
   //   () => {
   //     if (!selectedCustomer) return [];
@@ -1117,6 +1422,13 @@ export default function CustomersPage() {
   const hasMixedSelectedOrderCurrencies =
     selectedCustomerOrderCurrencies.length > 1;
 
+  // Lifetime value: prefer the actual sum of this customer's matched orders;
+  // fall back to the stored profile LTV when no orders are matched.
+  const selectedCustomerLifetimeValue =
+    selectedCustomerTotalSpend > 0
+      ? selectedCustomerTotalSpend
+      : Number((selectedCustomer as any)?.totalLtv || 0);
+
   const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('customers');
 
   // ========== ROOT-LEVEL DIAGNOSTIC LOGS ==========
@@ -1139,27 +1451,6 @@ export default function CustomersPage() {
   console.log("[DIAGNOSTIC] drawer should render?", isDrawerOpen && selectedCustomer);
   // ================================================
 
-  const insights = [
-    {
-      title: "Funnel leakage detected",
-      description: "14% drop in cart-to-checkout in mobile Safari users.",
-      icon: Activity,
-      color: "#f59e0b",
-    },
-    {
-      title: "Segment growth spike",
-      description: "High-value VIP segment grew by 24% following v3.0 release.",
-      icon: Layers,
-      color: "#22c55e",
-    },
-    {
-      title: "Anomalous guest pattern",
-      description: "Increased bot-like traffic detected from the DE region.",
-      icon: MapPin,
-      color: "#60a5fa",
-    },
-  ];
-
   const panelStyle: React.CSSProperties = {
     borderRadius: "12px",
     border: "1px solid var(--border-card)",
@@ -1174,10 +1465,21 @@ export default function CustomersPage() {
 
   return (
     <>
+      {/* Interaction polish: hover lift on metric cards. Theme-neutral shadow. */}
+      <style>{`
+        .ci-metric-card {
+          transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+        }
+        .ci-metric-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 10px 28px rgba(99, 102, 241, 0.16);
+          border-color: rgba(99, 102, 241, 0.4);
+        }
+      `}</style>
       <div
         style={{
           padding: "24px 28px",
-          maxWidth: "1280px",
+          width: "90%",
           margin: "0 auto",
           display: "flex",
           flexDirection: "column",
@@ -1276,7 +1578,9 @@ export default function CustomersPage() {
             return (
               <div
                 key={card.label}
+                className="ci-metric-card"
                 style={{
+                  position: "relative",
                   borderRadius: "12px",
                   border: "1px solid var(--border-card)",
                   background: "var(--bg-card)",
@@ -1307,14 +1611,28 @@ export default function CustomersPage() {
                   >
                     {card.label}
                   </span>
-                  <Icon
+                  <span
                     style={{
-                      width: "16px",
-                      height: "16px",
+                      width: "32px",
+                      height: "32px",
+                      borderRadius: "8px",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      // ~14% tint of the accent works on light and dark alike.
+                      background: `${card.accent}24`,
                       flexShrink: 0,
-                      color: "var(--text-label)",
                     }}
-                  />
+                  >
+                    <Icon
+                      style={{
+                        width: "16px",
+                        height: "16px",
+                        flexShrink: 0,
+                        color: card.accent,
+                      }}
+                    />
+                  </span>
                 </div>
 
                 <div
@@ -1330,7 +1648,7 @@ export default function CustomersPage() {
                 </div>
 
                 <div style={{ marginTop: "12px" }}>
-                  <span style={{ fontSize: "12px", color: "#22c55e" }}>
+                  <span style={{ fontSize: "12px", color: card.accent }}>
                     {card.badge}
                   </span>
                 </div>
@@ -1339,183 +1657,138 @@ export default function CustomersPage() {
           })}
         </div>
 
+        <div style={panelStyle}>
+          <div
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              color: "var(--text-primary)",
+              marginBottom: "4px",
+            }}
+          >
+            Customer Acquisition & Revenue
+          </div>
+          <span
+            style={{
+              padding: "3px 10px",
+              borderRadius: "999px",
+              fontSize: "10px",
+              border: "1px solid var(--border-input)",
+              color: "var(--text-muted)",
+              display: "inline-block",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Monthly · new customers vs revenue
+          </span>
+
+          <div style={{ width: "100%", height: 300, marginTop: "20px" }}>
+            {!loading && customerInsights.monthlyTrend.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={customerInsights.monthlyTrend}
+                  margin={{ top: 10, right: 16, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="var(--border-card)"
+                    vertical={false}
+                  />
+                  <XAxis
+                    dataKey="label"
+                    stroke="var(--text-muted)"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    stroke="var(--text-muted)"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    stroke="var(--text-muted)"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    width={70}
+                    tickFormatter={(value) =>
+                      formatCompactCurrency(
+                        Number(value),
+                        customerInsights.dominantCurrency,
+                      )
+                    }
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--bg-card)",
+                      border: "1px solid var(--border-card)",
+                      borderRadius: "8px",
+                      fontSize: "12px",
+                    }}
+                    formatter={(value: any, name: any) =>
+                      name === "Revenue"
+                        ? formatCurrency(
+                            Number(value),
+                            customerInsights.dominantCurrency,
+                          )
+                        : Number(value).toLocaleString()
+                    }
+                  />
+                  <Legend iconType="circle" />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="newCustomers"
+                    name="New customers"
+                    fill="#60a5fa"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={48}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="revenue"
+                    name="Revenue"
+                    stroke="#22c55e"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            ) : (
+              <div
+                style={{
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {loading
+                  ? "Loading customer trend..."
+                  : "No customer activity to chart yet."}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            gridTemplateColumns: "1fr 1fr",
             gap: "20px",
             overflow: "visible",
           }}
         >
-          <div style={panelStyle}>
-            <div
-              style={{
-                fontSize: "13px",
-                fontWeight: 500,
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
-                color: "var(--text-primary)",
-                marginBottom: "4px",
-              }}
-            >
-              Conversion Journey Intelligence
-            </div>
-            <span
-              style={{
-                padding: "3px 10px",
-                borderRadius: "999px",
-                fontSize: "10px",
-                border: "1px solid var(--border-input)",
-                color: "var(--text-muted)",
-                marginBottom: "20px",
-                display: "inline-block",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Site-Wide Funnel
-            </span>
-
-            <div style={{ overflow: "visible" }}>
-              {(loading ? [] : funnelStages).map((stage, idx) => {
-                const previousPercent =
-                  idx > 0 ? funnelStages[idx - 1].percent : stage.percent;
-                const dropoff = Math.max(previousPercent - stage.percent, 0);
-
-                return (
-                  <div
-                    key={`${stage.stage}-${idx}`}
-                    style={{
-                      marginBottom:
-                        idx === funnelStages.length - 1 ? "0" : "20px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        marginBottom: "4px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: "13px",
-                          color: "var(--text-primary)",
-                          fontWeight: 500,
-                        }}
-                      >
-                        {stage.stage}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "13px",
-                          color: "var(--text-primary)",
-                          fontWeight: 500,
-                        }}
-                      >
-                        {stage.percent}%
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        marginBottom: "6px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          color: "var(--text-label)",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {stage.count.toLocaleString()} Users
-                      </span>
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          color: "var(--text-label)",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        Conversion
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        height: "10px",
-                        borderRadius: "999px",
-                        background: "var(--bg-input)",
-                        overflow: "visible",
-                        position: "relative",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${Math.max(6, stage.percent)}%`,
-                          height: "100%",
-                          borderRadius: "999px",
-                          background:
-                            "linear-gradient(90deg, #60a5fa 0%, #22c55e 100%)",
-                        }}
-                      />
-                    </div>
-                    {idx > 0 && (
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "6px",
-                          marginTop: "8px",
-                          color: "var(--text-label)",
-                        }}
-                      >
-                        <ArrowDown
-                          style={{
-                            width: "16px",
-                            height: "16px",
-                            flexShrink: 0,
-                          }}
-                        />
-                        <span
-                          style={{
-                            fontSize: "10px",
-                            letterSpacing: "0.06em",
-                            textTransform: "uppercase",
-                          }}
-                        >
-                          {dropoff}% leakage from previous stage
-                        </span>
-                        {dropoff > 10 && (
-                          <AlertCircle
-                            style={{
-                              width: "16px",
-                              height: "16px",
-                              flexShrink: 0,
-                              color: "#f59e0b",
-                            }}
-                          />
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {loading && (
-                <div
-                  style={{
-                    fontSize: "13px",
-                    color: "var(--text-muted)",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  Loading funnel intelligence...
-                </div>
-              )}
-            </div>
-          </div>
-
           <div style={panelStyle}>
             <div
               style={{
@@ -1530,81 +1803,100 @@ export default function CustomersPage() {
               Behavioral Segmentation
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 80px 60px 70px",
-                gap: "8px",
-                padding: "0 0 10px",
-                borderBottom: "1px solid var(--border-card)",
-                marginBottom: "12px",
-              }}
-            >
-              {["Segment", "Users", "CR", "Growth"].map((label) => (
-                <span
-                  key={label}
-                  style={{
-                    fontSize: "10px",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.08em",
-                    color: "var(--text-label)",
-                  }}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
+            {!loading && customerInsights.segments.length > 0 ? (
+              <>
+                <div style={{ width: "100%", height: 230 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={customerInsights.segments}
+                      layout="vertical"
+                      margin={{ top: 4, right: 16, left: 8, bottom: 4 }}
+                      barCategoryGap={14}
+                    >
+                      <CartesianGrid
+                        horizontal={false}
+                        stroke="var(--border-card)"
+                        strokeDasharray="3 3"
+                      />
+                      <XAxis type="number" hide allowDecimals={false} />
+                      <YAxis
+                        type="category"
+                        dataKey="name"
+                        width={96}
+                        tickLine={false}
+                        axisLine={false}
+                        stroke="var(--text-muted)"
+                        fontSize={12}
+                      />
+                      <Tooltip
+                        cursor={{ fill: "var(--bg-input)" }}
+                        contentStyle={CHART_TOOLTIP_STYLE}
+                        formatter={(value: any, _name: any, entry: any) => [
+                          `${Number(value).toLocaleString()} users · ${entry?.payload?.share ?? 0}%`,
+                          entry?.payload?.name ?? "Segment",
+                        ]}
+                      />
+                      <Bar dataKey="size" radius={[0, 6, 6, 0]} maxBarSize={26}>
+                        {customerInsights.segments.map((segment, idx) => (
+                          <Cell
+                            key={`${segment.name}-${idx}`}
+                            fill={SEGMENT_COLORS[idx % SEGMENT_COLORS.length]}
+                          />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
 
-            {(loading ? [] : segments).map((segment, idx) => (
-              <div
-                key={`${segment.name}-${idx}`}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 80px 60px 70px",
-                  gap: "8px",
-                  padding: "12px 0",
-                  borderBottom:
-                    idx === segments.length - 1
-                      ? "none"
-                      : "1px solid var(--border-card)",
-                  alignItems: "center",
-                }}
-              >
-                <span
-                  style={{ fontSize: "13px", color: "var(--text-primary)" }}
-                >
-                  {segment.name}
-                </span>
-                <span
-                  style={{ fontSize: "13px", color: "var(--text-secondary)" }}
-                >
-                  {segment.size.toLocaleString()}
-                </span>
-                <span
-                  style={{ fontSize: "13px", color: "var(--text-secondary)" }}
-                >
-                  {segment.conversion}%
-                </span>
-                <span
+                <div
                   style={{
-                    fontSize: "13px",
-                    color: segment.growth >= 0 ? "#22c55e" : "#f87171",
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "10px 16px",
+                    marginTop: "12px",
                   }}
                 >
-                  {segment.growth >= 0 ? "+" : "-"}
-                  {Math.abs(segment.growth)}%
-                </span>
-              </div>
-            ))}
-            {loading && (
+                  {customerInsights.segments.map((segment, idx) => (
+                    <span
+                      key={`${segment.name}-legend-${idx}`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        fontSize: "12px",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "8px",
+                          height: "8px",
+                          borderRadius: "2px",
+                          background:
+                            SEGMENT_COLORS[idx % SEGMENT_COLORS.length],
+                          flexShrink: 0,
+                        }}
+                      />
+                      {segment.name}
+                      <span style={{ color: "var(--text-muted)" }}>
+                        {segment.size.toLocaleString()} · {segment.share}%
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </>
+            ) : (
               <div
                 style={{
                   fontSize: "13px",
                   color: "var(--text-muted)",
                   lineHeight: 1.6,
+                  padding: "24px 0",
                 }}
               >
-                Loading segment intelligence...
+                {loading
+                  ? "Loading segments..."
+                  : "No customer segments to chart yet."}
               </div>
             )}
           </div>
@@ -1620,62 +1912,83 @@ export default function CustomersPage() {
                 marginBottom: "6px",
               }}
             >
-              Behavioral Insights
+              Customer Lifecycle
             </div>
+            <span
+              style={{
+                padding: "3px 10px",
+                borderRadius: "999px",
+                fontSize: "10px",
+                border: "1px solid var(--border-input)",
+                color: "var(--text-muted)",
+                display: "inline-block",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {customerInsights.total.toLocaleString()} profiles ·{" "}
+              {customerInsights.buyers.toLocaleString()} buyers
+            </span>
 
-            {insights.map((insight, idx) => {
-              const Icon = insight.icon;
-
-              return (
-                <div
-                  key={insight.title}
-                  style={{
-                    padding: "14px 0",
-                    borderBottom:
-                      idx === insights.length - 1
-                        ? "none"
-                        : "1px solid var(--border-card)",
-                    display: "flex",
-                    gap: "12px",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <Icon
+            <div
+              style={{
+                marginTop: "16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "14px",
+              }}
+            >
+              {(loading ? [] : customerInsights.lifecycle).map((row, idx) => (
+                <div key={`${row.name}-${idx}`}>
+                  <div
                     style={{
-                      width: "16px",
-                      height: "16px",
-                      flexShrink: 0,
-                      marginTop: "2px",
-                      color: insight.color,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      marginBottom: "6px",
                     }}
-                  />
-                  <div>
-                    <p
+                  >
+                    <span
                       style={{
                         fontSize: "13px",
-                        fontWeight: 500,
                         color: "var(--text-primary)",
-                        margin: "0 0 5px",
+                        fontWeight: 500,
                       }}
                     >
-                      {insight.title}
-                    </p>
-                    <p
+                      {row.name}
+                    </span>
+                    <span
                       style={{
-                        fontSize: "11px",
-                        color: "var(--text-muted)",
-                        lineHeight: 1.6,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.04em",
-                        margin: 0,
+                        fontSize: "12px",
+                        color: "var(--text-secondary)",
                       }}
                     >
-                      {insight.description}
-                    </p>
+                      {row.count.toLocaleString()} · {row.percent}%
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      height: "8px",
+                      borderRadius: "999px",
+                      background: "var(--bg-input)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${Math.max(4, row.percent)}%`,
+                        height: "100%",
+                        borderRadius: "999px",
+                        background:
+                          "linear-gradient(90deg, #60a5fa 0%, #22c55e 100%)",
+                      }}
+                    />
                   </div>
                 </div>
-              );
-            })}
+              ))}
+              {!loading && customerInsights.lifecycle.length === 0 && (
+                <span style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+                  No customer profiles yet.
+                </span>
+              )}
+            </div>
 
             <div style={{ marginTop: "20px" }}>
               <div
@@ -1686,55 +1999,171 @@ export default function CustomersPage() {
                   color: "var(--text-label)",
                 }}
               >
-                Top Traffic Attribution
+                Engagement by Recency
               </div>
 
-              <div
-                style={{
-                  marginTop: "8px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "10px",
-                }}
-              >
-                {(loading ? [] : topAttribution).map((attr) => (
+              {loading ? (
+                <span
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--text-muted)",
+                    display: "block",
+                    marginTop: "8px",
+                  }}
+                >
+                  Loading engagement data...
+                </span>
+              ) : customerInsights.engagement.every(
+                  (bucket) => bucket.count === 0,
+                ) ? (
+                <span
+                  style={{
+                    fontSize: "13px",
+                    color: "var(--text-muted)",
+                    display: "block",
+                    marginTop: "8px",
+                  }}
+                >
+                  No recent activity recorded yet.
+                </span>
+              ) : (
+                <div
+                  style={{
+                    marginTop: "8px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "20px",
+                  }}
+                >
+                  {/* Donut: each slice = a recency bucket; center = total profiles. */}
                   <div
-                    key={attr.source}
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: "12px",
-                      alignItems: "center",
+                      position: "relative",
+                      width: "132px",
+                      height: "132px",
+                      flexShrink: 0,
                     }}
                   >
-                    <span
-                      style={{ fontSize: "13px", color: "var(--text-primary)" }}
-                    >
-                      {attr.source}
-                      <span style={{ color: "var(--text-muted)" }}>
-                        {" "}
-                        · {attr.sessions.toLocaleString()} sessions
-                      </span>
-                    </span>
-                    <span
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={customerInsights.engagement.filter(
+                            (bucket) => bucket.count > 0,
+                          )}
+                          dataKey="count"
+                          nameKey="name"
+                          innerRadius={44}
+                          outerRadius={64}
+                          paddingAngle={2}
+                          stroke="none"
+                        >
+                          {customerInsights.engagement
+                            .filter((bucket) => bucket.count > 0)
+                            .map((bucket) => (
+                              <Cell key={bucket.name} fill={bucket.color} />
+                            ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={CHART_TOOLTIP_STYLE}
+                          formatter={(value: any, _name: any, entry: any) => [
+                            `${Number(value).toLocaleString()} · ${entry?.payload?.percent ?? 0}%`,
+                            entry?.payload?.name ?? "",
+                          ]}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div
                       style={{
-                        fontSize: "12px",
-                        color: "#60a5fa",
-                        whiteSpace: "nowrap",
+                        position: "absolute",
+                        inset: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        pointerEvents: "none",
                       }}
                     >
-                      {attr.conversion}% CR
-                    </span>
+                      <span
+                        style={{
+                          fontSize: "20px",
+                          fontWeight: 600,
+                          color: "var(--text-primary)",
+                          lineHeight: 1,
+                        }}
+                      >
+                        {customerInsights.total.toLocaleString()}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "10px",
+                          color: "var(--text-muted)",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.08em",
+                          marginTop: "2px",
+                        }}
+                      >
+                        Profiles
+                      </span>
+                    </div>
                   </div>
-                ))}
-                {loading && (
-                  <span
-                    style={{ fontSize: "13px", color: "var(--text-muted)" }}
+
+                  <div
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                      minWidth: 0,
+                    }}
                   >
-                    Loading attribution data...
-                  </span>
-                )}
-              </div>
+                    {customerInsights.engagement.map((bucket) => (
+                      <div
+                        key={bucket.name}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: "12px",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "13px",
+                            color: "var(--text-primary)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: "8px",
+                              height: "8px",
+                              borderRadius: "50%",
+                              background: bucket.color,
+                              flexShrink: 0,
+                            }}
+                          />
+                          {bucket.name}
+                          <span style={{ color: "var(--text-muted)" }}>
+                            {" "}
+                            · {bucket.hint}
+                          </span>
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "12px",
+                            color: "var(--text-secondary)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {bucket.count.toLocaleString()} · {bucket.percent}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1742,80 +2171,112 @@ export default function CustomersPage() {
         <div style={{ overflow: "visible" }}>
           <div
             style={{
-              display: "flex",
-              justifyContent: "space-between",
+              fontSize: "12px",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              color: "var(--text-muted)",
+              marginBottom: "12px",
+            }}
+          >
+            Recent Identity Log
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr auto auto auto",
+              gap: "12px",
               alignItems: "center",
               marginBottom: "16px",
             }}
           >
-            <div
+            <div style={{ position: "relative" }}>
+              <Search
+                style={{
+                  position: "absolute",
+                  left: "12px",
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  width: "16px",
+                  height: "16px",
+                  color: "#64748b",
+                }}
+              />
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by name, email, lifecycle, or ID..."
+                style={{
+                  width: "100%",
+                  height: "40px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--border-card)",
+                  background: "var(--bg-input)",
+                  color: "var(--text-primary)",
+                  padding: "0 12px 0 36px",
+                  fontSize: "14px",
+                }}
+              />
+            </div>
+            <select
+              value={filterLifecycle}
+              onChange={(e) => setFilterLifecycle(e.target.value)}
               style={{
-                fontSize: "12px",
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                color: "var(--text-muted)",
+                height: "40px",
+                borderRadius: "8px",
+                border: "1px solid var(--border-card)",
+                background: "var(--bg-input)",
+                color: "var(--text-primary)",
+                padding: "0 12px",
+                fontSize: "14px",
               }}
             >
-              Recent Identity Log
-            </div>
-
-            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  border: "1px solid var(--border-card)",
-                  background: "var(--bg-card)",
-                  borderRadius: "10px",
-                  padding: "8px 12px",
-                  minWidth: "240px",
-                }}
-              >
-                <Search
-                  style={{
-                    width: "16px",
-                    height: "16px",
-                    color: "var(--text-label)",
-                    flexShrink: 0,
-                  }}
-                />
-                <input
-                  type="text"
-                  placeholder="Search identities..."
-                  style={{
-                    flex: 1,
-                    background: "transparent",
-                    border: "none",
-                    outline: "none",
-                    color: "var(--text-primary)",
-                    fontSize: "12px",
-                  }}
-                />
-              </div>
-              <button
-                type="button"
-                aria-label="Filter identities"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "36px",
-                  height: "36px",
-                  borderRadius: "10px",
-                  border: "1px solid var(--border-card)",
-                  background: "var(--bg-card)",
-                  cursor: "pointer",
-                }}
-              >
-                <Filter
-                  style={{
-                    width: "16px",
-                    height: "16px",
-                    color: "var(--text-muted)",
-                  }}
-                />
-              </button>
+              <option value="">All Lifecycles</option>
+              {lifecycleOptions.map((state) => (
+                <option key={state} value={state}>
+                  {state}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => {
+                setFilterLifecycle("");
+                setSearchQuery("");
+              }}
+              style={{
+                height: "40px",
+                borderRadius: "8px",
+                border: "1px solid var(--border-card)",
+                background: "#dee3ee",
+                color: "var(--text-primary)",
+                padding: "0 14px",
+                fontSize: "12px",
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+                cursor: "pointer",
+              }}
+            >
+              Clear
+            </button>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+                height: "40px",
+                borderRadius: "8px",
+                border: "1px solid var(--border-card)",
+                background: "var(--bg-input)",
+                color: "var(--text-muted)",
+                padding: "0 12px",
+                fontSize: "12px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <Users style={{ width: "16px", height: "16px", flexShrink: 0 }} />
+              Page {currentPage} of {totalPages} · {filteredCustomers.length}{" "}
+              matching
             </div>
           </div>
 
@@ -1847,9 +2308,9 @@ export default function CustomersPage() {
               >
                 <span style={{ flex: 2 }}>Customer Identity</span>
                 <span style={{ flex: 1 }}>Lifecycle State</span>
-                <span style={{ width: "80px", textAlign: "right" }}>
+                {/* <span style={{ width: "80px", textAlign: "right" }}>
                   Sessions
-                </span>
+                </span> */}
                 <span style={{ width: "120px", textAlign: "right" }}>
                   Last Active
                 </span>
@@ -1957,7 +2418,7 @@ export default function CustomersPage() {
                   </span>
                 </div>
 
-                <div
+                {/* <div
                   style={{
                     width: "80px",
                     textAlign: "right",
@@ -1966,7 +2427,7 @@ export default function CustomersPage() {
                   }}
                 >
                   {customer.sessions}
-                </div>
+                </div> */}
                 <div
                   style={{
                     width: "120px",
@@ -1975,7 +2436,7 @@ export default function CustomersPage() {
                     color: "var(--text-secondary)",
                   }}
                 >
-                  {customer.lastActive}
+                  {formatDateTimeLabel(customer.lastActive)}
                 </div>
                 <ChevronRight
                   style={{
@@ -1996,6 +2457,19 @@ export default function CustomersPage() {
                 }}
               >
                 Loading identity log...
+              </div>
+            )}
+            {!loading && identities.length === 0 && (
+              <div
+                style={{
+                  padding: "18px 20px",
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {searchQuery.trim()
+                  ? `No identities match "${searchQuery.trim()}". Adjust your search to broaden results.`
+                  : "No customer identities found."}
               </div>
             )}
           </div>
@@ -2161,7 +2635,14 @@ export default function CustomersPage() {
                     flexWrap: "wrap",
                   }}
                 >
-                  {[selectedCustomer.state, "ID Verified", "2FA Active"].map(
+                  {[
+                    selectedCustomer.state,
+                    extractCustomerEmail(
+                      (selectedCustomer as any)?._raw ?? selectedCustomer,
+                    )
+                      ? "Identified"
+                      : "Anonymous",
+                  ].map(
                     (label, idx) => (
                       <span
                         key={`${label}-${idx}`}
@@ -2274,13 +2755,16 @@ export default function CustomersPage() {
                 {
                   icon: Fingerprint,
                   label: "Completed Orders",
-                  value: selectedCustomerOrderCount.toLocaleString(),
+                  value: Math.max(
+                    selectedCustomerOrderCount,
+                    selectedCustomerOrders.length,
+                  ).toLocaleString(),
                 },
                 {
                   icon: Shield,
-                  label: "Lifetime Value ",
+                  label: "Lifetime Value",
                   value: formatCurrency(
-                    Number(selectedCustomer?.totalLtv || 0),
+                    selectedCustomerLifetimeValue,
                     selectedCustomerTotalSpendCurrency,
                   ),
                 },
@@ -2362,11 +2846,13 @@ export default function CustomersPage() {
                     All Orders
                   </div>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                  {selectedCustomerTotalSpend > 0
-                    ? `Total Spend ${formatCurrency(selectedCustomerTotalSpend, selectedCustomerTotalSpendCurrency)}${hasMixedSelectedOrderCurrencies ? " (mixed currencies)" : ""}`
-                    : "No spend data available"}
-                </div>
+                {hasMixedSelectedOrderCurrencies && (
+                  <div
+                    style={{ fontSize: "12px", color: "var(--text-muted)" }}
+                  >
+                    Mixed currencies
+                  </div>
+                )}
               </div>
 
               <div

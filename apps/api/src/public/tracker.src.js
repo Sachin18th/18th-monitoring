@@ -47,6 +47,24 @@
     var INGEST = ds.ingestUrl || qp.ingest || qp.ingest_url || cfg.ingestUrl || deriveIngest();
     if (!CONNECTOR || !INGEST) return; // not configured — do nothing
 
+    // RUM error/issue ingest. Errors go to /api/rum/errors (NOT /api/track),
+    // carrying connectorId in the query string; the server derives the project
+    // from the connector. Resolution order mirrors INGEST: explicit rum-ingest
+    // attribute → query string → config → same-origin /api/rum/errors derived
+    // from the tracker's own origin (works whether INGEST is /api/track or full).
+    function deriveRum() {
+      try {
+        var base = ds.rumIngestUrl || qp.rum || qp.rum_url || cfg.rumIngestUrl;
+        if (!base) {
+          var origin = new URL((INGEST.indexOf('http') === 0 ? INGEST : srcUrl), location.href).origin;
+          base = origin + '/api/rum/errors';
+        }
+        return base + (base.indexOf('?') < 0 ? '?' : '&') + 'connectorId=' + encodeURIComponent(CONNECTOR);
+      } catch (e) { return ''; }
+    }
+    var RUM_INGEST = deriveRum();   // full errors endpoint incl. ?connectorId=
+    var RUM_PATH = '/api/rum/';     // substring used to skip our own RUM calls
+
     // ── Constants ──────────────────────────────────────────────────────────
     var VID_KEY = '__plat_vid';   // localStorage  — persists across sessions
     var SID_KEY = '__plat_sid';   // sessionStorage — rotating session id
@@ -452,6 +470,8 @@
         } else if (type === 'checkout') {
           inCheckout = true;
           lastCheckoutStep = checkoutStep();
+          // Watch for surfaced checkout error messages on this (or SPA-navigated) page.
+          startCheckoutObserver();
           // Flush now: Shopify checkout steps live on /checkouts/ and the shopper
           // may advance/redirect before the periodic flush.
           emitNow('checkout_step', { step: lastCheckoutStep });
@@ -668,13 +688,29 @@
         if (window.fetch && !window.fetch.__plat) {
           var of = window.fetch;
           var pf = function (input, init) {
+            var url = '';
+            var method = 'GET';
             try {
-              var url = typeof input === 'string' ? input : (input && input.url) || '';
-              var method = (init && init.method) || (input && input.method) || 'GET';
+              url = typeof input === 'string' ? input : (input && input.url) || '';
+              method = (init && init.method) || (input && input.method) || 'GET';
               var b = init && init.body;
               noteCartRequest(url, method, typeof b === 'string' ? b : null);
             } catch (e) {}
-            return of.apply(this, arguments);
+            var start = nowMs();
+            var p;
+            try { p = of.apply(this, arguments); } catch (e) { try { noteNetwork(url, method, 0, nowMs() - start, true); } catch (e2) {} throw e; }
+            try {
+              if (p && p.then) {
+                return p.then(function (resp) {
+                  try { noteNetwork(url, method, resp && resp.status, nowMs() - start, false); } catch (e) {}
+                  return resp;
+                }, function (err) {
+                  try { noteNetwork(url, method, 0, nowMs() - start, true); } catch (e) {}
+                  throw err;
+                });
+              }
+            } catch (e) {}
+            return p;
           };
           pf.__plat = true;
           window.fetch = pf;
@@ -691,11 +727,299 @@
           };
           XHR.prototype.send = function (body) {
             try { noteCartRequest(this.__platU, this.__platM, typeof body === 'string' ? body : null); } catch (e) {}
+            try {
+              var self = this;
+              var start = nowMs();
+              self.addEventListener('readystatechange', function () {
+                try {
+                  if (self.readyState === 4) {
+                    noteNetwork(self.__platU, self.__platM, self.status, nowMs() - start, self.status === 0);
+                  }
+                } catch (e) {}
+              });
+            } catch (e) {}
             return os.apply(this, arguments);
           };
           XHR.prototype.__plat = true;
         }
       } catch (e) {}
+    }
+
+    // ── Error & issue capture (RUM) ──────────────────────────────────────────
+    // Storefront errors are a SEPARATE concern from the purchase-journey events
+    // above: they post to RUM_INGEST (/api/rum/errors), with the
+    // `{ errors: [...] }` shape that endpoint expects — never to /api/track. Each
+    // event carries connector_instance_id, platform, page_url, session_id and a
+    // timestamp. Every handler is wrapped in try/catch and must never throw: the
+    // tracker stays silent even if error capture itself fails.
+    var STACK_MAX = 4000;     // truncate stack traces to a sane length
+    var MSG_MAX = 1000;       // error message cap
+    var SLOW_MS = 3000;       // a network call slower than this is flagged
+
+    function truncate(s, n) {
+      try { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) : s; }
+      catch (e) { return ''; }
+    }
+
+    // Per-platform source patterns that mark an error as platform-specific.
+    var PLATFORM_ERR_RE = {
+      shopify: /(theme\.js|\/sections\/|\/assets\/|shopify[_-]?pay|shop[_-]?pay|shopify\.js|shopify_common)/i,
+      bigcommerce: /(theme\.js|cornerstone|stencil-utils|stencil)/i,
+      adobe_commerce: /(require\.?js|requirejs|knockout(\.js)?|\/Magento_)/i
+    };
+    function platformPattern(src) {
+      try {
+        var re = PLATFORM_ERR_RE[platform()];
+        return !!(re && src && re.test(String(src)));
+      } catch (e) { return false; }
+    }
+
+    // RUM transport: its own queue + endpoint (separate from the /api/track one).
+    var rumQueue = [];
+    var rumTimer = null;
+    function rumSend(batch, useBeacon) {
+      if (!RUM_INGEST || !batch.length) return;
+      var data = JSON.stringify({ errors: batch });
+      if (useBeacon) {
+        try { if (navigator.sendBeacon && navigator.sendBeacon(RUM_INGEST, new Blob([data], { type: 'application/json' }))) return; } catch (e) {}
+      }
+      if (window.fetch) {
+        try {
+          // Goes through our patched fetch, but noteNetwork skips RUM_PATH, so no loop.
+          window.fetch(RUM_INGEST, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: data, keepalive: true, credentials: 'omit', mode: 'cors' }).then(function () {}, function () {});
+          return;
+        } catch (e) {}
+      }
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', RUM_INGEST, true);
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.send(data);
+      } catch (e) {}
+    }
+    function rumFlush(useBeacon) {
+      try {
+        if (rumTimer) { clearTimeout(rumTimer); rumTimer = null; }
+        if (!rumQueue.length) return;
+        var batch = rumQueue.splice(0, rumQueue.length);
+        rumSend(batch, !!useBeacon);
+      } catch (e) {}
+    }
+    function rumSchedule() {
+      try {
+        if (rumQueue.length >= MAX_BATCH) return rumFlush(false);
+        if (!rumTimer) rumTimer = setTimeout(function () { try { rumFlush(false); } catch (e) {} }, FLUSH_MS);
+      } catch (e) {}
+    }
+    function rumEmit(type, extra) {
+      try {
+        if (!RUM_INGEST) return;
+        var ev = {
+          error_type: type,
+          connector_instance_id: CONNECTOR,
+          platform: platform(),
+          page_url: scrubUrl(location.href),
+          session_id: sessionId(),
+          occurred_at: new Date().toISOString()
+        };
+        if (extra) {
+          for (var k in extra) {
+            if (Object.prototype.hasOwnProperty.call(extra, k) && extra[k] != null) ev[k] = extra[k];
+          }
+        }
+        rumQueue.push(ev);
+        rumSchedule();
+      } catch (e) {}
+    }
+
+    // 1 — JavaScript errors: window.onerror (unhandled exceptions, chained so we
+    // don't clobber a host handler) + unhandledrejection (Promise rejections).
+    function captureJsError(message, source, lineno, colno, error) {
+      try {
+        var stack = (error && error.stack) || '';
+        var meta = { platform: platform(), line_no: lineno != null ? lineno : null, col_no: colno != null ? colno : null };
+        if (platformPattern(source) || platformPattern(stack)) meta.platform_pattern = true;
+        rumEmit('js_error', {
+          message: truncate(message || 'Script error', MSG_MAX),
+          source_url: source ? scrubUrl(source) : null,
+          stack_trace: truncate(stack, STACK_MAX),
+          metadata: meta
+        });
+      } catch (e) {}
+    }
+
+    // 2 — Resource load failures: capture-phase 'error' listener, filtered to
+    // resource elements only so JS errors (handled by window.onerror) don't
+    // double-fire. No HTTP status is available from the browser → "load_error".
+    function captureResourceError(ev) {
+      try {
+        var t = ev && ev.target;
+        if (!t || t === window) return;
+        var isImg = !!(window.HTMLImageElement && t instanceof HTMLImageElement);
+        var isScript = !!(window.HTMLScriptElement && t instanceof HTMLScriptElement);
+        var isLink = !!(window.HTMLLinkElement && t instanceof HTMLLinkElement);
+        var isVideo = !!(window.HTMLVideoElement && t instanceof HTMLVideoElement);
+        if (!(isImg || isScript || isLink || isVideo)) return;
+        var url = t.src || t.href || '';
+        var tag = (t.tagName || '').toUpperCase();
+        var low = String(url).toLowerCase();
+        var meta = { platform: platform(), status: 'load_error' };
+        if (/(stripe\.js|razorpay\.js|paypal\.js|adyen\.js|checkout\.js)/.test(low) || low.indexOf('payment') > -1) meta.critical_payment = true;
+        if (low.indexOf('cart') > -1) meta.critical_cart = true;
+        if (low.indexOf('checkout') > -1) meta.critical_checkout = true;
+        rumEmit('resource_error', {
+          message: tag + ' failed to load: ' + truncate(scrubUrl(url), 500),
+          request_url: url ? scrubUrl(url) : null,
+          source_url: url ? scrubUrl(url) : null,
+          resource_tag: tag,
+          metadata: meta
+        });
+      } catch (e) {}
+    }
+
+    // 3 — Network/API failures: called from the patched fetch + XHR above. Only
+    // same-host calls, never our own /api/track or /api/rum ingest (loop guard).
+    function isOwnIngest(u) {
+      try {
+        u = String(u || '');
+        if (INGEST && u.indexOf(INGEST) === 0) return true;
+        if (u.indexOf(RUM_PATH) > -1) return true;
+        return false;
+      } catch (e) { return true; }
+    }
+    function sameHost(u) {
+      try { return new URL(u, location.href).hostname === location.hostname; }
+      catch (e) { return false; }
+    }
+    function noteNetwork(url, method, status, duration, errored) {
+      try {
+        if (!url || isOwnIngest(url) || !sameHost(url)) return;
+        status = (typeof status === 'number') ? status : 0;
+        var slow = duration > SLOW_MS;
+        var failed = !!errored || status >= 400 || status === 0;
+        if (!failed && !slow) return;
+        var m = String(method || 'GET').toUpperCase();
+        rumEmit('network_error', {
+          message: truncate((errored || status === 0 ? 'Request failed: ' : 'HTTP ' + status + ' ') + m + ' ' + scrubUrl(url), MSG_MAX),
+          request_url: scrubUrl(url),
+          status_code: status || null,
+          http_method: m,
+          duration_ms: Math.round(duration),
+          metadata: { platform: platform(), slow: !!slow, failed: !!failed }
+        });
+      } catch (e) {}
+    }
+
+    // 4 — Checkout-specific DOM errors: only on the checkout page. Watch added
+    // nodes for error containers and capture their (deduped) text, ≤300 chars.
+    var CHECKOUT_ERR_SEL =
+      '[data-error],.error-message,.alert-error,.notice--error,' +
+      '[class*="error"],[class*="Error"],[role="alert"],' +
+      '.field__message--error,' +                       // shopify
+      '.alertBox--error,.form-field--error,' +          // bigcommerce
+      '.message-error,.field-error,.mage-error';        // adobe commerce
+    var checkoutObserver = null;
+    var seenCheckoutErr = {};
+    function checkoutErrText(node) {
+      try {
+        if (!node || node.nodeType !== 1) return '';
+        if (node.matches && node.matches(CHECKOUT_ERR_SEL)) {
+          var t = (node.innerText || node.textContent || '').trim();
+          if (t) return t;
+        }
+        if (node.querySelector) {
+          var inner = node.querySelector(CHECKOUT_ERR_SEL);
+          if (inner) {
+            var t2 = (inner.innerText || inner.textContent || '').trim();
+            if (t2) return t2;
+          }
+        }
+      } catch (e) {}
+      return '';
+    }
+    function startCheckoutObserver() {
+      try {
+        if (checkoutObserver || !window.MutationObserver || !document.body) return;
+        if (pageType() !== 'checkout') return;
+        checkoutObserver = new MutationObserver(function (mutations) {
+          try {
+            for (var i = 0; i < mutations.length; i++) {
+              var added = mutations[i].addedNodes;
+              if (!added) continue;
+              for (var j = 0; j < added.length; j++) {
+                var txt = checkoutErrText(added[j]);
+                if (!txt) continue;
+                txt = txt.slice(0, 300);
+                if (seenCheckoutErr[txt]) continue; // dedupe identical text
+                seenCheckoutErr[txt] = 1;
+                rumEmit('checkout_error', { message: txt, metadata: { platform: platform() } });
+              }
+            }
+          } catch (e) {}
+        });
+        checkoutObserver.observe(document.body, { childList: true, subtree: true });
+      } catch (e) {}
+    }
+
+    // 5 — Console errors (filtered): wrap console.error, preserve the original,
+    // join args, cap to 500 chars, skip our own ingest URLs and __plat noise.
+    function patchConsole() {
+      try {
+        if (!window.console || typeof console.error !== 'function' || console.error.__plat) return;
+        var orig = console.error;
+        var patched = function () {
+          try {
+            var parts = [];
+            for (var i = 0; i < arguments.length; i++) {
+              var a = arguments[i];
+              try {
+                if (a instanceof Error) parts.push(a.message + (a.stack ? ' ' + a.stack : ''));
+                else if (a && typeof a === 'object') parts.push(JSON.stringify(a));
+                else parts.push(String(a));
+              } catch (e) { parts.push(String(a)); }
+            }
+            var msg = parts.join(' ').slice(0, 500);
+            if (msg &&
+                msg.indexOf(RUM_PATH) === -1 &&
+                (!INGEST || msg.indexOf(INGEST) === -1) &&
+                msg.indexOf('__plat') === -1) {
+              rumEmit('console_error', { message: msg, metadata: { platform: platform() } });
+            }
+          } catch (e) {}
+          return orig.apply(this, arguments);
+        };
+        patched.__plat = true;
+        console.error = patched;
+      } catch (e) {}
+    }
+
+    function wireErrorCapture() {
+      try {
+        var prevOnError = window.onerror;
+        window.onerror = function (message, source, lineno, colno, error) {
+          captureJsError(message, source, lineno, colno, error);
+          if (typeof prevOnError === 'function') { try { return prevOnError.apply(this, arguments); } catch (e) {} }
+          return false;
+        };
+      } catch (e) {}
+      try {
+        window.addEventListener('unhandledrejection', function (ev) {
+          try {
+            var r = ev && ev.reason;
+            var stack = (r && r.stack) || '';
+            var meta = { platform: platform() };
+            if (platformPattern(stack)) meta.platform_pattern = true;
+            rumEmit('promise_rejection', {
+              message: truncate((r && r.message) || String(r) || 'Unhandled promise rejection', MSG_MAX),
+              stack_trace: truncate(stack, STACK_MAX),
+              metadata: meta
+            });
+          } catch (e) {}
+        });
+      } catch (e) {}
+      try { window.addEventListener('error', captureResourceError, true); } catch (e) {}
+      patchConsole();
+      startCheckoutObserver();
     }
 
     // Abandonment + final flush on unload.
@@ -705,6 +1029,7 @@
           enqueue(envelope('checkout_abandon', { step: lastCheckoutStep }));
         }
         flush(true);
+        rumFlush(true);
       } catch (e) {}
     }
 
@@ -725,6 +1050,7 @@
 
     // ── Wire up ──────────────────────────────────────────────────────────
     patchNetwork(); // observe add-to-cart XHR/fetch (theme-independent)
+    wireErrorCapture(); // js/promise/resource/network/checkout/console capture
     patchHistory('pushState');
     patchHistory('replaceState');
     try {
@@ -736,7 +1062,7 @@
       window.addEventListener('pagehide', onUnload);
       window.addEventListener('beforeunload', onUnload);
       document.addEventListener('visibilitychange', function () {
-        try { if (document.visibilityState === 'hidden') flush(true); } catch (e) {}
+        try { if (document.visibilityState === 'hidden') { flush(true); rumFlush(true); } } catch (e) {}
       });
     } catch (e) {}
 

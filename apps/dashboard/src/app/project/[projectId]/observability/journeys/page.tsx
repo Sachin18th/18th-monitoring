@@ -5,17 +5,25 @@ import { useParams } from 'next/navigation';
 import {
   Map,
   ZapOff,
-  MousePointerClick,
   AlertCircle,
-  ShoppingBag,
   TrendingUp,
+  TrendingDown,
   Filter,
   History,
   RefreshCw,
   ArrowDown,
+  ArrowRight,
   AlertTriangle,
-  ChevronDown
+  ChevronDown,
+  CheckCircle,
+  Users,
+  Zap,
+  Clock,
+  Lightbulb,
+  Package,
+  RotateCcw
 } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuth } from '@/context/AuthContext';
 import { PageRestricted } from '@/components/PageRestricted';
 
@@ -36,9 +44,103 @@ const cardStyle: React.CSSProperties = {
   borderRadius: '12px',
   border: '1px solid var(--border-card)',
   background: 'var(--bg-card)',
-  padding: '24px',
-  overflow: 'visible'
+  padding: '20px',
+  overflow: 'visible',
+  boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.03)'
 };
+
+// ── Semantic color tokens — color is used to encode meaning, never decoration.
+//   green = positive/healthy · amber = warning · red = loss/friction · blue/indigo = neutral.
+const C = {
+  green: '#22c55e',
+  greenText: '#16a34a',
+  greenBg: 'rgba(34,197,94,0.10)',
+  greenBorder: 'rgba(34,197,94,0.28)',
+  amber: '#f59e0b',
+  amberBg: 'rgba(245,158,11,0.10)',
+  amberBorder: 'rgba(245,158,11,0.30)',
+  red: '#ef4444',
+  redSoft: '#f87171',
+  redBg: 'rgba(239,68,68,0.10)',
+  redBorder: 'rgba(239,68,68,0.28)',
+  blue: '#3b82f6',
+  blueBg: 'rgba(59,130,246,0.10)',
+  blueBorder: 'rgba(59,130,246,0.28)',
+  teal: '#14b8a6',
+  indigo: '#6366f1',
+};
+
+// Shared section header typography (sentence case, not all-caps).
+const sectionTitleStyle: React.CSSProperties = { fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 };
+const sectionSubStyle: React.CSSProperties = { fontSize: '12px', color: 'var(--text-muted)', margin: '2px 0 0' };
+
+// Threshold → color helpers (single source of truth for metric health coloring).
+const completionColor = (pct: number) => (pct > 20 ? C.green : pct >= 10 ? C.amber : C.red);
+const dropBadgeColor = (pct: number) => (pct > 50 ? C.red : pct >= 20 ? C.amber : C.green);
+const stageLossColor = (pct: number) => (pct > 20 ? C.red : pct >= 10 ? C.amber : 'var(--text-muted)');
+const bounceAccent = (pct: number) => (pct > 60 ? C.red : pct >= 40 ? C.amber : C.green);
+const durationAccent = (secs: number) => (secs > 60 ? C.green : secs >= 15 ? C.amber : 'var(--border-card)');
+const repeatAccent = (pct: number) => (pct > 30 ? C.green : pct >= 10 ? C.amber : 'var(--border-card)');
+const cartRateBadge = (pct: number) => (pct > 20 ? C.green : pct >= 5 ? C.amber : 'var(--text-muted)');
+const truncate = (s: string, n = 40) => (s && s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+// Donut chart palette for categorical breakdowns (devices, etc.).
+const DONUT_PALETTE = ['#6366f1', '#22c55e', '#f59e0b', '#3b82f6', '#ec4899', '#14b8a6', '#a855f7'];
+
+// Reusable donut with an optional centered label. Theme-aware via CSS vars.
+function Donut({
+  data,
+  height = 180,
+  centerLabel,
+  centerSub
+}: {
+  data: Array<{ name: string; value: number; color: string }>;
+  height?: number;
+  centerLabel?: string;
+  centerSub?: string;
+}) {
+  return (
+    <div style={{ position: 'relative', width: '100%', height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="name"
+            innerRadius="64%"
+            outerRadius="92%"
+            paddingAngle={data.length > 1 ? 3 : 0}
+            stroke="none"
+          >
+            {data.map((d, i) => (
+              <Cell key={i} fill={d.color} />
+            ))}
+          </Pie>
+          <Tooltip
+            contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px', fontSize: '12px', color: 'var(--text-primary)' }}
+            itemStyle={{ color: 'var(--text-primary)' }}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+      {centerLabel && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none'
+          }}
+        >
+          <span style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1 }}>{centerLabel}</span>
+          {centerSub && <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '3px' }}>{centerSub}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 type GatewayType = 'razorpay' | 'stripe' | 'payu';
 
@@ -125,6 +227,7 @@ export default function JourneyIntelligencePage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [range, setRange] = useState<'7d' | '30d' | '90d'>('30d');
   const [funnelSteps, setFunnelSteps] = useState<any[]>([]);
   const [intelligence, setIntelligence] = useState<any>(null);
   const [paymentGateways, setPaymentGateways] = useState<any[]>([]);
@@ -177,7 +280,7 @@ export default function JourneyIntelligencePage() {
 
       if (!nextAllowedPageKeys.includes('observability/journeys')) return;
 
-      const res = await apiFetch(`/api/v1/dashboard/customers/intelligence?siteId=${projectId}`);
+      const res = await apiFetch(`/api/v1/dashboard/customers/intelligence?siteId=${projectId}&range=${range}`);
       const funnel = Array.isArray(res?.funnel) ? res.funnel : [];
       const gateways = Array.isArray(res?.paymentGateways) ? res.paymentGateways : [];
       setFunnelSteps(
@@ -196,7 +299,7 @@ export default function JourneyIntelligencePage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token]);
+  }, [apiFetch, projectId, token, range]);
 
   const openGatewayConfig = useCallback(() => {
     setGatewayConfigError(null);
@@ -307,7 +410,7 @@ export default function JourneyIntelligencePage() {
       return;
     }
 
-    const loadKey = `${projectId}:${token}`;
+    const loadKey = `${projectId}:${token}:${range}`;
 
     if (initialLoadKeyRef.current === loadKey) {
       return;
@@ -315,7 +418,7 @@ export default function JourneyIntelligencePage() {
 
     initialLoadKeyRef.current = loadKey;
     loadData();
-  }, [loadData, projectId, token]);
+  }, [loadData, projectId, token, range]);
 
   useEffect(() => {
     if (expandedGatewayId !== undefined) {
@@ -329,7 +432,7 @@ export default function JourneyIntelligencePage() {
 
   const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('observability/journeys');
 
-  const firstStep = funnelSteps[0]?.count || 1;
+  const firstStep = funnelSteps[0]?.count || 0;
   const lastStep = funnelSteps[funnelSteps.length - 1]?.count || 0;
   const completion = firstStep > 0 ? ((lastStep / firstStep) * 100).toFixed(2) : '0.00';
   const frictionSignals = funnelSteps.filter((s) => s.dropRate > 50).length;
@@ -348,7 +451,6 @@ export default function JourneyIntelligencePage() {
     return { label: `${prev?.label} → ${step?.label}`, lost, pctLost };
   });
   const biggestDrop = [...dropAttribution].sort((a, b) => b.pctLost - a.pctLost)[0];
-  const dropColors = ['#f43f5e', '#a855f7', '#f59e0b', '#38bdf8'];
 
   // Content & acquisition insights (from storefront_sessions + storefront_events).
   const shortPath = (u: string) => {
@@ -398,34 +500,44 @@ export default function JourneyIntelligencePage() {
     };
   }, [paymentGateways]);
 
+  const completionNum = parseFloat(completion);
+  const dropCount = firstStep - lastStep;
   const metricCards = useMemo(
     () => [
       {
         label: 'Completion Rate',
         value: `${completion}%`,
         badge: 'End-to-end conversion',
-        icon: ShoppingBag
+        icon: CheckCircle,
+        valueColor: completionColor(completionNum),
+        iconColor: completionColor(completionNum)
       },
       {
-        label: 'Total Visitors',
+        label: 'Total Sessions',
         value: firstStep.toLocaleString(),
         badge: 'Entered first stage',
-        icon: TrendingUp
+        icon: Users,
+        valueColor: 'var(--text-primary)',
+        iconColor: C.blue
       },
       {
         label: 'Journey Drop-offs',
-        value: (firstStep - lastStep).toLocaleString(),
+        value: dropCount.toLocaleString(),
         badge: 'Exited before completion',
-        icon: ZapOff
+        icon: TrendingDown,
+        valueColor: dropCount > 0 ? C.red : 'var(--text-primary)',
+        iconColor: dropCount > 0 ? C.red : 'var(--text-label)'
       },
       {
         label: 'Friction Signals',
         value: `${frictionSignals} stages`,
         badge: 'High-loss stage count',
-        icon: MousePointerClick
+        icon: Zap,
+        valueColor: frictionSignals > 0 ? C.amber : 'var(--text-primary)',
+        iconColor: frictionSignals > 0 ? C.amber : 'var(--text-label)'
       }
     ],
-    [completion, firstStep, frictionSignals, lastStep]
+    [completion, completionNum, dropCount, firstStep, frictionSignals]
   );
 
   if (isPageRestricted) {
@@ -466,7 +578,7 @@ export default function JourneyIntelligencePage() {
   return (
     <>
       <div style={pageStyle}>
-        <div style={{ marginBottom: '8px', overflow: 'visible' }}>
+        <div style={{ marginBottom: '4px', paddingBottom: '18px', borderBottom: '1px solid var(--border-card)', overflow: 'visible' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
             <div
               style={{
@@ -517,6 +629,25 @@ export default function JourneyIntelligencePage() {
             </div>
 
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select
+                value={range}
+                onChange={(event) => setRange(event.target.value as '7d' | '30d' | '90d')}
+                aria-label="Date range"
+                style={{
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="90d">Last 90 days</option>
+              </select>
               <button
                 onClick={loadData}
                 style={{
@@ -620,7 +751,7 @@ export default function JourneyIntelligencePage() {
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: '20px',
+            gap: '16px',
             overflow: 'visible'
           }}
         >
@@ -633,44 +764,90 @@ export default function JourneyIntelligencePage() {
                   borderRadius: '12px',
                   border: '1px solid var(--border-card)',
                   background: 'var(--bg-card)',
-                  padding: '24px',
+                  padding: '20px',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
-                  minHeight: '140px',
+                  minHeight: '128px',
                   overflow: 'visible'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                  <span
-                    style={{
-                      fontSize: '10px',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.1em',
-                      color: 'var(--text-label)',
-                      fontWeight: 500
-                    }}
-                  >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}>
                     {metric.label}
                   </span>
-                  <Icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '30px',
+                      height: '30px',
+                      borderRadius: '8px',
+                      background: `color-mix(in srgb, ${metric.iconColor} 14%, transparent)`,
+                      flexShrink: 0
+                    }}
+                  >
+                    <Icon style={{ width: '16px', height: '16px', color: metric.iconColor }} />
+                  </span>
                 </div>
-                <div style={{ fontSize: '38px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '8px 0' }}>{metric.value}</div>
-                <div style={{ marginTop: '12px' }}>
-                  <span style={{ fontSize: '12px', color: '#22c55e' }}>{metric.badge}</span>
+                <div style={{ fontSize: '28px', fontWeight: 600, color: metric.valueColor, lineHeight: 1.05 }}>{metric.value}</div>
+                <div style={{ marginTop: '10px' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{metric.badge}</span>
                 </div>
               </div>
             );
           })}
         </div>
 
+        {paymentGateways.length === 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+              padding: '0 16px',
+              height: '48px',
+              borderRadius: '10px',
+              border: `1px solid ${C.amberBorder}`,
+              background: C.amberBg,
+              overflow: 'hidden'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+              <AlertTriangle style={{ width: '16px', height: '16px', color: C.amber, flexShrink: 0 }} />
+              <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                No payment gateway configured
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={openGatewayConfig}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                flexShrink: 0,
+                background: 'transparent',
+                border: 'none',
+                padding: 0,
+                fontSize: '12px',
+                fontWeight: 600,
+                color: C.amber,
+                cursor: 'pointer'
+              }}
+            >
+              Configure
+              <ArrowRight style={{ width: '14px', height: '14px' }} />
+            </button>
+          </div>
+        ) : (
         <div style={cardStyle}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
             <div>
-              <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
-                Payment Gateway Status
-              </div>
-              <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              <h3 style={sectionTitleStyle}>Payment Gateway Status</h3>
+              <p style={{ ...sectionSubStyle, lineHeight: 1.6, maxWidth: '640px' }}>
                 Gateway checks are synced on refresh. Right now the status is stored at project scope, so there is no user-level attribution for who configured the gateway yet.
               </p>
             </div>
@@ -850,12 +1027,13 @@ export default function JourneyIntelligencePage() {
           )}
 
           <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--border-card)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
               Sync summary
             </span>
             <span style={{ fontSize: '12px', fontWeight: 600, color: gatewayHealth.tone }}>{gatewayHealth.label}</span>
           </div>
         </div>
+        )}
 
         <div
           style={{
@@ -872,204 +1050,150 @@ export default function JourneyIntelligencePage() {
               </div>
             ) : (
               <div style={cardStyle}>
-                <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                  Purchase Journey Funnel
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '18px' }}>
+                  <div>
+                    <h3 style={sectionTitleStyle}>Purchase Journey Funnel</h3>
+                    <p style={sectionSubStyle}>Session retention across each stage of the journey.</p>
+                  </div>
+                  <span
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      fontSize: '11px',
+                      border: '1px solid var(--border-input)',
+                      color: 'var(--text-muted)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0
+                    }}
+                  >
+                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: C.green }} />
+                    Live · Project scope
+                  </span>
                 </div>
-                <span
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: '999px',
-                    fontSize: '10px',
-                    border: '1px solid var(--border-input)',
-                    color: 'var(--text-muted)',
-                    marginBottom: '20px',
-                    display: 'inline-block',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  Live Analysis (Project Scope)
-                </span>
 
                 <div style={{ overflow: 'visible' }}>
                   {funnelSteps.map((step, idx) => {
                     const widthPct = firstStep > 0 ? Math.min(100, Math.max(0, (step.count / firstStep) * 100)) : 0;
-                    const technicalPct = step.count > 0 ? Math.min(100, Math.max(0, (step.technicalDropCount / step.count) * 100)) : 0;
+                    const barColor = idx === 0 ? C.green : dropBadgeColor(step.dropRate);
+                    const lossColor = stageLossColor(step.dropRate);
 
                     return (
-                      <div key={step.label} style={{ marginBottom: idx === funnelSteps.length - 1 ? '0' : '20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <div
+                        key={step.label}
+                        style={{
+                          paddingBottom: idx === funnelSteps.length - 1 ? 0 : '16px',
+                          marginBottom: idx === funnelSteps.length - 1 ? 0 : '16px',
+                          borderBottom: idx === funnelSteps.length - 1 ? 'none' : '1px solid var(--border-card)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
                           <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{step.label}</span>
-                          <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{step.count.toLocaleString()}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                          <span style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase' }}>Users</span>
-                          <span style={{ fontSize: '11px', color: 'var(--text-label)', textTransform: 'uppercase' }}>
-                            {idx > 0 ? `${step.dropRate}% drop-off` : 'Entry stage'}
-                          </span>
+                          <span style={{ fontSize: '18px', color: 'var(--text-primary)', fontWeight: 600, lineHeight: 1 }}>{step.count.toLocaleString()}</span>
                         </div>
                         <div
                           style={{
                             height: '10px',
                             borderRadius: '999px',
                             background: 'var(--bg-input)',
-                            overflow: 'hidden',
-                            position: 'relative'
+                            overflow: 'hidden'
                           }}
                         >
                           <div
                             style={{
-                              width: `${Math.max(6, widthPct)}%`,
+                              width: `${Math.max(4, widthPct)}%`,
                               height: '100%',
                               borderRadius: '999px',
-                              background: 'linear-gradient(90deg, #60a5fa 0%, #22c55e 100%)'
+                              background: barColor,
+                              transition: 'width 0.3s ease'
                             }}
                           />
-                          {step.technicalDropCount > 0 && (
-                            <div
-                              style={{
-                                position: 'absolute',
-                                right: 0,
-                                top: 0,
-                                width: `${technicalPct}%`,
-                                height: '100%',
-                                borderRadius: '999px',
-                                background: 'rgba(248,113,113,0.55)'
-                              }}
-                            />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px' }}>
+                          {idx === 0 ? (
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Entry stage</span>
+                          ) : (
+                            <>
+                              <ArrowDown style={{ width: '14px', height: '14px', flexShrink: 0, color: lossColor }} />
+                              <span style={{ fontSize: '12px', color: lossColor, fontWeight: step.dropRate > 20 ? 600 : 400 }}>
+                                {step.dropRate}% lost from previous stage
+                              </span>
+                              {step.dropRate > 50 && <AlertTriangle style={{ width: '14px', height: '14px', flexShrink: 0, color: C.red }} />}
+                            </>
                           )}
                         </div>
-                        {idx > 0 && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', color: 'var(--text-label)' }}>
-                            <ArrowDown style={{ width: '16px', height: '16px', flexShrink: 0 }} />
-                            <span style={{ fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                              {step.dropRate}% lost from previous stage
-                            </span>
-                            {step.dropRate > 50 && <AlertTriangle style={{ width: '16px', height: '16px', flexShrink: 0, color: '#f59e0b' }} />}
-                          </div>
-                        )}
                       </div>
                     );
                   })}
                 </div>
 
-                <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border-card)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                  <div
-                    style={{
-                      borderRadius: '12px',
-                      border: '1px solid rgba(34,197,94,0.15)',
-                      background: 'rgba(34,197,94,0.06)',
-                      padding: '16px',
-                      overflow: 'visible'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                      <TrendingUp style={{ width: '16px', height: '16px', color: '#22c55e' }} />
-                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>
-                        Conversion Rate
-                      </span>
+                <div style={{ marginTop: '18px', paddingTop: '18px', borderTop: '1px solid var(--border-card)', display: 'grid', gridTemplateColumns: 'minmax(120px, 0.85fr) 1fr 1fr', gap: '16px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: '100%', maxWidth: '148px' }}>
+                      <Donut
+                        height={132}
+                        data={[
+                          { name: 'Converted', value: lastStep, color: C.green },
+                          { name: 'Did not convert', value: Math.max(0, firstStep - lastStep), color: 'rgba(148,163,184,0.22)' }
+                        ]}
+                        centerLabel={`${completion}%`}
+                        centerSub="converted"
+                      />
                     </div>
-                    <div style={{ fontSize: '18px', fontWeight: 500, color: '#22c55e' }}>{completion}%</div>
                   </div>
                   <div
                     style={{
-                      borderRadius: '12px',
-                      border: '1px solid rgba(248,113,113,0.15)',
-                      background: 'rgba(248,113,113,0.06)',
-                      padding: '16px',
-                      overflow: 'visible'
+                      borderRadius: '10px',
+                      border: `1px solid ${C.greenBorder}`,
+                      background: C.greenBg,
+                      padding: '14px'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                      <AlertTriangle style={{ width: '16px', height: '16px', color: '#f87171' }} />
-                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>
-                        Bounce Rate
-                      </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <TrendingUp style={{ width: '15px', height: '15px', color: C.green }} />
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Conversion Rate</span>
                     </div>
-                    <div style={{ fontSize: '18px', fontWeight: 500, color: '#f87171' }}>{(si.bounce_rate ?? 0).toFixed(1)}%</div>
+                    <div style={{ fontSize: '24px', fontWeight: 600, color: C.green, lineHeight: 1 }}>{completion}%</div>
+                  </div>
+                  <div
+                    style={{
+                      borderRadius: '10px',
+                      border: `1px solid ${C.redBorder}`,
+                      background: C.redBg,
+                      padding: '14px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <ZapOff style={{ width: '15px', height: '15px', color: bounceAccent(si.bounce_rate ?? 0) }} />
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Bounce Rate</span>
+                    </div>
+                    <div style={{ fontSize: '24px', fontWeight: 600, color: bounceAccent(si.bounce_rate ?? 0), lineHeight: 1 }}>{(si.bounce_rate ?? 0).toFixed(1)}%</div>
                   </div>
                 </div>
               </div>
             )}
 
-            {intelligence?.sessionIntelligence && (
-              <div style={cardStyle}>
-                <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
-                  Session Intelligence
-                </div>
-                <p style={{ margin: '0 0 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Behavioral metrics derived from storefront sessions.
-                </p>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-                  {[
-                    { label: 'Avg Pages / Session', value: (intelligence.sessionIntelligence.avg_pages_per_session ?? 0).toFixed(1) },
-                    { label: 'Sessions / Visitor', value: (intelligence.sessionIntelligence.sessions_per_visitor ?? 0).toFixed(1) },
-                    { label: 'Cart Abandonment', value: `${(intelligence.sessionIntelligence.cart_abandonment_rate ?? 0).toFixed(1)}%`, tone: '#f87171' },
-                    { label: 'Checkout Abandonment', value: `${(intelligence.sessionIntelligence.checkout_abandonment_rate ?? 0).toFixed(1)}%`, tone: '#f59e0b' },
-                    { label: 'New Visitors', value: String(intelligence.sessionIntelligence.new_visitors ?? 0), tone: '#22c55e' },
-                    { label: 'Returning Visitors', value: String(intelligence.sessionIntelligence.returning_visitors ?? 0) }
-                  ].map((kpi) => (
-                    <div
-                      key={kpi.label}
-                      style={{
-                        borderRadius: '12px',
-                        border: '1px solid var(--border-card)',
-                        background: 'var(--bg-input)',
-                        padding: '14px'
-                      }}
-                    >
-                      <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-label)', marginBottom: '6px' }}>
-                        {kpi.label}
-                      </div>
-                      <div style={{ fontSize: '18px', fontWeight: 600, color: (kpi as any).tone || 'var(--text-primary)' }}>
-                        {kpi.value}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {Array.isArray(intelligence.sessionIntelligence.platform_breakdown) &&
-                  intelligence.sessionIntelligence.platform_breakdown.length > 0 && (
-                    <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid var(--border-card)' }}>
-                      <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-label)', marginBottom: '10px' }}>
-                        Sessions by Platform
-                      </div>
-                      {(() => {
-                        const rows = intelligence.sessionIntelligence.platform_breakdown as Array<{ platform: string; sessions: number }>;
-                        const max = Math.max(1, ...rows.map((r) => r.sessions));
-                        return rows.map((r) => (
-                          <div key={r.platform} style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--text-primary)' }}>
-                              <span style={{ textTransform: 'capitalize' }}>{r.platform.replace('_', ' ')}</span>
-                              <span style={{ color: 'var(--text-secondary)' }}>{r.sessions.toLocaleString()}</span>
-                            </div>
-                            <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
-                              <div style={{ height: '100%', width: `${(r.sessions / max) * 100}%`, background: '#6366f1', borderRadius: '999px' }} />
-                            </div>
-                          </div>
-                        ));
-                      })()}
-                    </div>
-                  )}
-              </div>
-            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible' }}>
             <div style={cardStyle}>
-              <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
-                Stage Drop-off Attribution
-              </div>
-              <p style={{ margin: '0 0 16px', fontSize: '11px', color: 'var(--text-muted)' }}>
+              <h3 style={sectionTitleStyle}>Stage Drop-off Attribution</h3>
+              <p style={{ ...sectionSubStyle, marginBottom: '14px' }}>
                 Where sessions are lost between funnel stages.
               </p>
               {dropAttribution.length === 0 ? (
                 <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No funnel data yet.</p>
               ) : (
-                dropAttribution.map((attr, idx, arr) => (
+                dropAttribution.map((attr, idx, arr) => {
+                  const badge = dropBadgeColor(attr.pctLost);
+                  const [from, to] = attr.label.split(' → ');
+                  return (
                   <div
                     key={attr.label}
                     style={{
-                      padding: '14px 0',
+                      padding: '12px 0',
                       borderBottom: idx === arr.length - 1 ? 'none' : '1px solid var(--border-card)',
                       display: 'flex',
                       flexDirection: 'column',
@@ -1077,38 +1201,55 @@ export default function JourneyIntelligencePage() {
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{attr.label}</span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        {attr.pctLost}% · {attr.lost.toLocaleString()} lost
+                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{from}</span>
+                        <ArrowRight style={{ width: '13px', height: '13px', flexShrink: 0, color: 'var(--text-label)' }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{to}</span>
+                      </span>
+                      <span
+                        style={{
+                          flexShrink: 0,
+                          padding: '2px 8px',
+                          borderRadius: '999px',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          color: badge,
+                          background: `color-mix(in srgb, ${badge} 14%, transparent)`
+                        }}
+                      >
+                        {attr.pctLost}%
                       </span>
                     </div>
-                    <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px' }}>
-                      <div style={{ height: '100%', width: `${attr.pctLost}%`, background: dropColors[idx % dropColors.length], borderRadius: '999px' }} />
+                    <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${Math.max(2, attr.pctLost)}%`, background: badge, borderRadius: '999px' }} />
                     </div>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{attr.lost.toLocaleString()} lost</span>
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
 
             <div
               style={{
                 ...cardStyle,
-                background: 'rgba(79,70,229,0.08)',
-                border: '1px solid rgba(129,140,248,0.3)'
+                background: C.blueBg,
+                border: `1px solid ${C.blueBorder}`,
+                flexGrow: 1,
+                display: 'flex',
+                alignItems: 'center'
               }}
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <AlertCircle style={{ width: '16px', height: '16px', color: '#818cf8', flexShrink: 0, marginTop: '2px' }} />
+                <Lightbulb style={{ width: '18px', height: '18px', color: C.blue, flexShrink: 0, marginTop: '1px' }} />
                 <div>
-                  <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 5px' }}>Intelligence Insight</p>
+                  <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 6px' }}>Intelligence Insight</p>
                   <p
                     style={{
-                      fontSize: '11px',
-                      color: 'var(--text-muted)',
+                      fontSize: '13px',
+                      color: 'var(--text-secondary)',
                       lineHeight: 1.6,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      margin: '0 0 8px'
+                      margin: 0
                     }}
                   >
                     {biggestDrop && biggestDrop.pctLost > 0
@@ -1125,11 +1266,100 @@ export default function JourneyIntelligencePage() {
           </div>
         </div>
 
+        {intelligence?.sessionIntelligence && (
+          <div style={cardStyle}>
+            <h3 style={sectionTitleStyle}>Session Intelligence</h3>
+            <p style={{ ...sectionSubStyle, marginBottom: '16px' }}>
+              Behavioral metrics derived from storefront sessions.
+            </p>
+            {(() => {
+              const cartAb = intelligence.sessionIntelligence.cart_abandonment_rate ?? 0;
+              const checkoutAb = intelligence.sessionIntelligence.checkout_abandonment_rate ?? 0;
+              const newV = Number(intelligence.sessionIntelligence.new_visitors ?? 0);
+              const retV = Number(intelligence.sessionIntelligence.returning_visitors ?? 0);
+              const cards = [
+                { label: 'Avg Pages / Session', value: (intelligence.sessionIntelligence.avg_pages_per_session ?? 0).toFixed(1), tone: 'var(--text-primary)' },
+                { label: 'Sessions / Visitor', value: (intelligence.sessionIntelligence.sessions_per_visitor ?? 0).toFixed(1), tone: 'var(--text-primary)' },
+                { label: 'Cart Abandonment', value: `${cartAb.toFixed(1)}%`, tone: cartAb > 50 ? C.red : cartAb > 0 ? C.amber : 'var(--text-primary)' },
+                { label: 'Checkout Abandonment', value: `${checkoutAb.toFixed(1)}%`, tone: checkoutAb > 20 ? C.red : checkoutAb > 0 ? C.amber : 'var(--text-primary)' },
+                { label: 'New Visitors', value: String(newV), tone: 'var(--text-primary)' },
+                { label: 'Returning Visitors', value: String(retV), tone: 'var(--text-primary)' }
+              ];
+              const totalV = newV + retV;
+              return (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '12px' }}>
+                    {cards.map((kpi) => (
+                      <div
+                        key={kpi.label}
+                        style={{
+                          borderRadius: '10px',
+                          background: 'color-mix(in srgb, var(--bg-input) 60%, transparent)',
+                          border: '1px solid var(--border-card)',
+                          padding: '12px'
+                        }}
+                      >
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                          {kpi.label}
+                        </div>
+                        <div style={{ fontSize: '20px', fontWeight: 600, color: kpi.tone }}>
+                          {kpi.value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {totalV > 0 && (
+                    <div style={{ marginTop: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: C.blue }} /> New ({newV})
+                        </span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          Returning ({retV}) <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: C.teal }} />
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', height: '8px', width: '100%', borderRadius: '999px', overflow: 'hidden', background: 'var(--bg-input)' }}>
+                        <div style={{ width: `${(newV / totalV) * 100}%`, background: C.blue }} />
+                        <div style={{ width: `${(retV / totalV) * 100}%`, background: C.teal }} />
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {Array.isArray(intelligence.sessionIntelligence.platform_breakdown) &&
+              intelligence.sessionIntelligence.platform_breakdown.length > 0 && (
+                <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid var(--border-card)' }}>
+                  <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px' }}>
+                    Sessions by Platform
+                  </h4>
+                  {(() => {
+                    const rows = intelligence.sessionIntelligence.platform_breakdown as Array<{ platform: string; sessions: number }>;
+                    const max = Math.max(1, ...rows.map((r) => r.sessions));
+                    return rows.map((r) => (
+                      <div key={r.platform} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-primary)', textTransform: 'capitalize', width: '110px', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.platform.replace('_', ' ')}
+                        </span>
+                        <div style={{ flex: 1, height: '10px', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${(r.sessions / max) * 100}%`, background: C.indigo, borderRadius: '999px' }} />
+                        </div>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)', width: '48px', textAlign: 'right', flexShrink: 0 }}>{r.sessions.toLocaleString()}</span>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              )}
+          </div>
+        )}
+
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-            gap: '20px',
+            gap: '16px',
             overflow: 'visible'
           }}
         >
@@ -1138,77 +1368,252 @@ export default function JourneyIntelligencePage() {
               label: 'Bounce Rate',
               value: `${(si.bounce_rate ?? 0).toFixed(1)}%`,
               note: 'Single-page sessions',
+              benchmark: 'Industry avg: ~45%',
               icon: ZapOff,
-              iconColor: '#f87171',
-              iconBg: 'rgba(244,63,94,0.12)'
+              accent: bounceAccent(si.bounce_rate ?? 0)
             },
             {
               label: 'Avg Session Duration',
               value: fmtDuration(si.avg_session_duration_seconds ?? 0),
               note: 'Time from first to last activity',
-              icon: MousePointerClick,
-              iconColor: '#c084fc',
-              iconBg: 'rgba(168,85,247,0.12)'
+              benchmark: 'Healthy: > 60s',
+              icon: Clock,
+              accent: durationAccent(si.avg_session_duration_seconds ?? 0)
             },
             {
               label: 'Repeat Visitor Rate',
               value: `${(si.repeat_visitor_rate ?? 0).toFixed(1)}%`,
               note: 'Visitors with more than one session',
-              icon: TrendingUp,
-              iconColor: '#fbbf24',
-              iconBg: 'rgba(245,158,11,0.12)'
+              benchmark: 'Good: > 30%',
+              icon: RotateCcw,
+              accent: repeatAccent(si.repeat_visitor_rate ?? 0)
             }
           ].map((item) => {
             const Icon = item.icon;
             return (
-              <div key={item.label} style={cardStyle}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
-                  <div style={{ padding: '8px', borderRadius: '8px', background: item.iconBg }}>
-                    <Icon style={{ width: '16px', height: '16px', color: item.iconColor }} />
-                  </div>
-                  <h4 style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>
+              <div key={item.label} style={{ ...cardStyle, padding: '16px 18px', borderLeft: `4px solid ${item.accent}` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                  <Icon style={{ width: '15px', height: '15px', color: item.accent, flexShrink: 0 }} />
+                  <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
                     {item.label}
                   </h4>
                 </div>
-                <div style={{ fontSize: '36px', lineHeight: 1, fontWeight: 500, color: 'var(--text-primary)', marginBottom: '8px' }}>{item.value}</div>
-                <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: 0 }}>{item.note}</p>
+                <div style={{ fontSize: '24px', lineHeight: 1, fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>{item.value}</div>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 2px' }}>{item.note}</p>
+                <p style={{ fontSize: '11px', color: 'var(--text-label)', margin: 0 }}>{item.benchmark}</p>
               </div>
             );
           })}
         </div>
 
-        {insightPanels.length > 0 && (
-          <div style={cardStyle}>
-            <div style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', marginBottom: '6px' }}>
-              Content &amp; Acquisition
-            </div>
-            <p style={{ margin: '0 0 18px', fontSize: '12px', color: 'var(--text-muted)' }}>
-              Top products, entry &amp; exit points, traffic sources and devices from storefront sessions.
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '24px' }}>
-              {insightPanels.map((panel) => {
-                const max = Math.max(1, ...panel.rows.map((r: any) => Number(r.value) || 0));
-                return (
-                  <div key={panel.title}>
-                    <div style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-label)', marginBottom: '12px' }}>
-                      {panel.title}
+        {insightPanels.length > 0 && (() => {
+          const contentPanels = insightPanels.filter((p) => p.title !== 'Checkout Steps' && p.title !== 'Devices');
+          const checkoutPanel = insightPanels.find((p) => p.title === 'Checkout Steps');
+          const devices = (si.device_breakdown || []) as Array<{ device: string; sessions: number }>;
+          const renderRows = (panel: { rows: any[] }) => {
+            const max = Math.max(1, ...panel.rows.map((r: any) => Number(r.value) || 0));
+            return panel.rows.slice(0, 8).map((row: any, i: number) => (
+              <div key={`${row.label}-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', color: 'var(--text-primary)' }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textTransform: 'capitalize' }} title={String(row.label)}>
+                    {truncate(String(row.label).replace(/_/g, ' '))}
+                  </span>
+                  <span style={{ color: 'var(--text-secondary)', flexShrink: 0, fontWeight: 500 }}>{Number(row.value).toLocaleString()}</span>
+                </div>
+                <div style={{ height: '6px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(Number(row.value) / max) * 100}%`, background: C.indigo, borderRadius: '999px' }} />
+                </div>
+              </div>
+            ));
+          };
+          // Masonry: cards flow and pack by height (no forced empty grid cells or
+          // stretched siblings), eliminating the blank gaps from uneven content.
+          const cardWrap: React.CSSProperties = { ...cardStyle, breakInside: 'avoid', marginBottom: '16px', display: 'block', width: '100%' };
+          return (
+            <div style={{ columns: '340px 2', columnGap: '16px' }}>
+              {contentPanels.map((panel) => (
+                <div key={panel.title} style={cardWrap}>
+                  <h3 style={{ ...sectionTitleStyle, marginBottom: '14px' }}>{panel.title}</h3>
+                  {renderRows(panel)}
+                </div>
+              ))}
+              {devices.length > 0 && (
+                <div style={cardWrap}>
+                  <h3 style={{ ...sectionTitleStyle, marginBottom: '4px' }}>Devices</h3>
+                  <p style={{ ...sectionSubStyle, marginBottom: '8px' }}>Sessions by device type.</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ width: '140px', flexShrink: 0 }}>
+                      <Donut
+                        height={140}
+                        data={devices.map((d, i) => ({ name: d.device, value: d.sessions, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }))}
+                      />
                     </div>
-                    {panel.rows.slice(0, 6).map((row: any, i: number) => (
-                      <div key={`${row.label}-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: '5px', marginBottom: '10px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', color: 'var(--text-primary)' }}>
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textTransform: 'capitalize' }} title={String(row.label)}>
-                            {String(row.label).replace(/_/g, ' ')}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', minWidth: 0 }}>
+                      {devices.map((d, i) => (
+                        <div key={d.device} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '13px' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                            <span style={{ width: '9px', height: '9px', borderRadius: '3px', background: DONUT_PALETTE[i % DONUT_PALETTE.length], flexShrink: 0 }} />
+                            <span style={{ color: 'var(--text-primary)', textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.device}</span>
                           </span>
-                          <span style={{ color: 'var(--text-secondary)', flexShrink: 0 }}>{Number(row.value).toLocaleString()}</span>
+                          <span style={{ color: 'var(--text-secondary)', fontWeight: 600, flexShrink: 0 }}>{d.sessions.toLocaleString()}</span>
                         </div>
-                        <div style={{ height: '6px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${(Number(row.value) / max) * 100}%`, background: '#6366f1', borderRadius: '999px' }} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {checkoutPanel && (
+                <div style={cardWrap}>
+                  <h3 style={{ ...sectionTitleStyle, marginBottom: '4px' }}>Checkout Steps</h3>
+                  <p style={{ ...sectionSubStyle, marginBottom: '14px' }}>Sessions reaching each checkout step.</p>
+                  {renderRows(checkoutPanel)}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {intelligence?.sessionIntelligence && (
+          <div style={cardStyle}>
+            <h3 style={sectionTitleStyle}>Product Engagement</h3>
+            <p style={{ ...sectionSubStyle, marginBottom: '16px' }}>
+              Views, add-to-carts and cart rate per product from storefront events.
+            </p>
+            {(si.product_engagement || []).length === 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '32px 0', textAlign: 'center' }}>
+                <Package style={{ width: '28px', height: '28px', color: 'var(--text-label)' }} />
+                <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>No product data collected yet</span>
+              </div>
+            ) : (() => {
+              const products = si.product_engagement as Array<{ product_id: string; product_name: string; views: number; add_to_carts: number; cart_rate: number }>;
+              const maxViews = Math.max(1, ...products.map((p) => p.views));
+              const thStyle: React.CSSProperties = { padding: '10px 16px', fontWeight: 500, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', background: 'color-mix(in srgb, var(--bg-input) 40%, transparent)' };
+              return (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left' }}>
+                      <th style={{ ...thStyle, borderRadius: '8px 0 0 8px' }}>Product</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Views</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Carts</th>
+                      <th style={{ ...thStyle, textAlign: 'right', borderRadius: '0 8px 8px 0' }}>Cart Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {products.slice(0, 20).map((p) => {
+                      const badge = cartRateBadge(p.cart_rate);
+                      return (
+                        <tr
+                          key={p.product_id || p.product_name}
+                          style={{ borderBottom: '1px solid var(--border-card)', transition: 'background 0.15s ease' }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = 'color-mix(in srgb, var(--bg-input) 35%, transparent)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <td style={{ padding: '12px 16px', color: 'var(--text-primary)', maxWidth: '340px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.product_name}>
+                            {p.product_name}
+                          </td>
+                          <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                              <div style={{ width: '56px', height: '6px', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden', flexShrink: 0 }}>
+                                <div style={{ height: '100%', width: `${(p.views / maxViews) * 100}%`, background: C.blue, borderRadius: '999px' }} />
+                              </div>
+                              <span style={{ color: 'var(--text-secondary)', minWidth: '28px' }}>{p.views.toLocaleString()}</span>
+                            </div>
+                          </td>
+                          <td style={{ padding: '12px 16px', color: 'var(--text-secondary)', textAlign: 'right' }}>{p.add_to_carts.toLocaleString()}</td>
+                          <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                padding: '2px 8px',
+                                borderRadius: '999px',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                color: badge,
+                                background: `color-mix(in srgb, ${badge} 14%, transparent)`
+                              }}
+                            >
+                              {p.cart_rate.toFixed(1)}%
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {intelligence?.sessionIntelligence && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '20px', overflow: 'visible' }}>
+            <div style={cardStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                <Clock style={{ width: '15px', height: '15px', color: C.blue, flexShrink: 0 }} />
+                <h3 style={sectionTitleStyle}>Time to Purchase</h3>
+              </div>
+              <p style={{ ...sectionSubStyle, marginBottom: '16px' }}>
+                From session start to purchase, across converting sessions.
+              </p>
+              {((si.time_to_purchase?.avg_seconds ?? 0) === 0 && (si.time_to_purchase?.median_seconds ?? 0) === 0) ? (
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No completed purchases in this window yet.</p>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div style={{ borderRadius: '10px', border: '1px solid var(--border-card)', background: 'color-mix(in srgb, var(--bg-input) 60%, transparent)', padding: '14px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Average</div>
+                      <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>{fmtDuration(si.time_to_purchase?.avg_seconds ?? 0)}</div>
+                    </div>
+                    <div style={{ borderRadius: '10px', border: '1px solid var(--border-card)', background: 'color-mix(in srgb, var(--bg-input) 60%, transparent)', padding: '14px' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Median</div>
+                      <div style={{ fontSize: '24px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>{fmtDuration(si.time_to_purchase?.median_seconds ?? 0)}</div>
+                    </div>
+                  </div>
+                  <p style={{ margin: '12px 0 0', fontSize: '11px', color: 'var(--text-label)' }}>Across sessions that completed purchase</p>
+                </>
+              )}
+            </div>
+
+            <div style={cardStyle}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                <AlertTriangle style={{ width: '15px', height: '15px', color: C.amber, flexShrink: 0 }} />
+                <h3 style={sectionTitleStyle}>Friction Signals by Checkout Step</h3>
+              </div>
+              <p style={{ ...sectionSubStyle, marginBottom: '16px' }}>
+                Where checkout abandonment is concentrated.
+              </p>
+              {(si.friction_signals || []).length === 0 ? (
+                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No checkout abandonment recorded in this window.</p>
+              ) : (
+                [...(si.friction_signals as Array<{ step: string; abandon_count: number; pct: number }>)]
+                  .sort((a, b) => {
+                    const au = /unspecified/i.test(a.step) ? 1 : 0;
+                    const bu = /unspecified/i.test(b.step) ? 1 : 0;
+                    return au - bu;
+                  })
+                  .map((f) => {
+                    const unspecified = /unspecified/i.test(f.step);
+                    const tone = unspecified ? 'var(--text-label)' : f.pct > 50 ? C.red : C.amber;
+                    return (
+                      <div key={f.step} style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px', opacity: unspecified ? 0.7 : 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px' }}>
+                          <span style={{ color: unspecified ? 'var(--text-muted)' : 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textTransform: 'capitalize' }} title={String(f.step)}>
+                            {String(f.step).replace(/_/g, ' ')}
+                          </span>
+                          <span style={{ flexShrink: 0 }}>
+                            <span style={{ color: tone, fontWeight: 600 }}>{f.pct.toFixed(1)}%</span>
+                            <span style={{ color: 'var(--text-muted)' }}> · {f.abandon_count.toLocaleString()}</span>
+                          </span>
+                        </div>
+                        <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${Math.max(2, f.pct)}%`, background: tone, borderRadius: '999px' }} />
                         </div>
                       </div>
-                    ))}
-                  </div>
-                );
-              })}
+                    );
+                  })
+              )}
             </div>
           </div>
         )}
@@ -1216,6 +1621,7 @@ export default function JourneyIntelligencePage() {
         {intelligence?.generatedAt && (
           <div style={{ fontSize: '11px', color: 'var(--text-label)' }}>
             Last intelligence refresh: {new Date(intelligence.generatedAt).toLocaleString()}
+            {intelligence?.range ? ` · Range: ${intelligence.range}` : ''}
           </div>
         )}
       </div>
