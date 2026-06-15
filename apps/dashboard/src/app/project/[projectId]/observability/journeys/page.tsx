@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   ChevronDown,
   CheckCircle,
+  Check,
   Users,
   Zap,
   Clock,
@@ -47,6 +48,15 @@ const cardStyle: React.CSSProperties = {
   padding: '20px',
   overflow: 'visible',
   boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.03)'
+};
+
+// Secondary surface — quieter than a primary card so only major sections carry
+// a strong border + shadow. Reduces the "many boxes" clutter.
+const subCardStyle: React.CSSProperties = {
+  borderRadius: '10px',
+  border: '1px solid transparent',
+  background: 'color-mix(in srgb, var(--bg-input) 45%, transparent)',
+  padding: '14px'
 };
 
 // ── Semantic color tokens — color is used to encode meaning, never decoration.
@@ -502,6 +512,20 @@ export default function JourneyIntelligencePage() {
 
   const completionNum = parseFloat(completion);
   const dropCount = firstStep - lastStep;
+  const hasTraffic = firstStep > 0;
+
+  // ── Journey Health Score — a single 0-100 executive metric blending end-to-end
+  //   conversion, engagement (inverse bounce) and loyalty (repeat visitors).
+  const healthScore = hasTraffic
+    ? Math.max(0, Math.min(100, Math.round(
+        0.45 * Math.min(100, completionNum * 4) +          // 25% conversion → full marks
+        0.35 * Math.max(0, 100 - (si.bounce_rate ?? 0)) +  // lower bounce → healthier
+        0.20 * Math.min(100, (si.repeat_visitor_rate ?? 0) * 2.5) // 40% repeat → full marks
+      )))
+    : null;
+  const healthTone = healthScore == null ? 'var(--text-label)' : healthScore >= 80 ? C.green : healthScore >= 60 ? C.amber : C.red;
+  const healthLabel = healthScore == null ? 'Awaiting data' : healthScore >= 80 ? 'Excellent' : healthScore >= 60 ? 'Fair' : 'Needs attention';
+
   const metricCards = useMemo(
     () => [
       {
@@ -509,6 +533,7 @@ export default function JourneyIntelligencePage() {
         value: `${completion}%`,
         badge: 'End-to-end conversion',
         icon: CheckCircle,
+        accent: C.green,
         valueColor: completionColor(completionNum),
         iconColor: completionColor(completionNum)
       },
@@ -517,6 +542,7 @@ export default function JourneyIntelligencePage() {
         value: firstStep.toLocaleString(),
         badge: 'Entered first stage',
         icon: Users,
+        accent: C.blue,
         valueColor: 'var(--text-primary)',
         iconColor: C.blue
       },
@@ -525,16 +551,18 @@ export default function JourneyIntelligencePage() {
         value: dropCount.toLocaleString(),
         badge: 'Exited before completion',
         icon: TrendingDown,
-        valueColor: dropCount > 0 ? C.red : 'var(--text-primary)',
-        iconColor: dropCount > 0 ? C.red : 'var(--text-label)'
+        accent: C.amber,
+        valueColor: dropCount > 0 ? C.amber : 'var(--text-primary)',
+        iconColor: dropCount > 0 ? C.amber : 'var(--text-label)'
       },
       {
         label: 'Friction Signals',
         value: `${frictionSignals} stages`,
         badge: 'High-loss stage count',
         icon: Zap,
-        valueColor: frictionSignals > 0 ? C.amber : 'var(--text-primary)',
-        iconColor: frictionSignals > 0 ? C.amber : 'var(--text-label)'
+        accent: C.red,
+        valueColor: frictionSignals > 0 ? C.red : 'var(--text-primary)',
+        iconColor: frictionSignals > 0 ? C.red : 'var(--text-label)'
       }
     ],
     [completion, completionNum, dropCount, firstStep, frictionSignals]
@@ -628,7 +656,32 @@ export default function JourneyIntelligencePage() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '12px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '14px',
+                  padding: '10px 16px',
+                  borderRadius: '12px',
+                  border: `1px solid ${healthTone}33`,
+                  background: `color-mix(in srgb, ${healthTone} 8%, var(--bg-card))`
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)' }}>
+                    Journey Health
+                  </span>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: healthTone }}>{healthLabel}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px' }}>
+                  <span style={{ fontSize: '32px', fontWeight: 700, color: healthTone, lineHeight: 1 }}>
+                    {healthScore == null ? '—' : healthScore}
+                  </span>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-label)' }}>/ 100</span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <select
                 value={range}
                 onChange={(event) => setRange(event.target.value as '7d' | '30d' | '90d')}
@@ -704,6 +757,7 @@ export default function JourneyIntelligencePage() {
                 <Filter style={{ width: '16px', height: '16px', flexShrink: 0 }} />
                 Configuration
               </button>
+              </div>
             </div>
           </div>
         </div>
@@ -761,18 +815,21 @@ export default function JourneyIntelligencePage() {
               <div
                 key={metric.label}
                 style={{
+                  position: 'relative',
                   borderRadius: '12px',
                   border: '1px solid var(--border-card)',
+                  borderTop: `3px solid ${metric.accent}`,
                   background: 'var(--bg-card)',
-                  padding: '20px',
+                  padding: '18px 20px',
                   display: 'flex',
                   flexDirection: 'column',
                   justifyContent: 'space-between',
-                  minHeight: '128px',
-                  overflow: 'visible'
+                  minHeight: '132px',
+                  overflow: 'visible',
+                  boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                   <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}>
                     {metric.label}
                   </span>
@@ -784,14 +841,16 @@ export default function JourneyIntelligencePage() {
                       width: '30px',
                       height: '30px',
                       borderRadius: '8px',
-                      background: `color-mix(in srgb, ${metric.iconColor} 14%, transparent)`,
+                      background: `color-mix(in srgb, ${metric.accent} 14%, transparent)`,
                       flexShrink: 0
                     }}
                   >
                     <Icon style={{ width: '16px', height: '16px', color: metric.iconColor }} />
                   </span>
                 </div>
-                <div style={{ fontSize: '28px', fontWeight: 600, color: metric.valueColor, lineHeight: 1.05 }}>{metric.value}</div>
+                {/* Large, color-coded headline figure. Trend deltas (↑/↓) render here
+                    once historical comparison data is available. */}
+                <div style={{ fontSize: '38px', fontWeight: 700, color: metric.valueColor, lineHeight: 1 }}>{metric.value}</div>
                 <div style={{ marginTop: '10px' }}>
                   <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{metric.badge}</span>
                 </div>
@@ -806,20 +865,38 @@ export default function JourneyIntelligencePage() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '12px',
-              padding: '0 16px',
-              height: '48px',
-              borderRadius: '10px',
+              gap: '20px',
+              padding: '20px 22px',
+              borderRadius: '12px',
               border: `1px solid ${C.amberBorder}`,
               background: C.amberBg,
-              overflow: 'hidden'
+              flexWrap: 'wrap'
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-              <AlertTriangle style={{ width: '16px', height: '16px', color: C.amber, flexShrink: 0 }} />
-              <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                No payment gateway configured
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', minWidth: 0 }}>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '10px',
+                  background: `color-mix(in srgb, ${C.amber} 16%, transparent)`,
+                  flexShrink: 0
+                }}
+              >
+                <AlertTriangle style={{ width: '20px', height: '20px', color: C.amber }} />
               </span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '4px' }}>
+                  Payment Gateway Missing
+                </div>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, maxWidth: '560px' }}>
+                  Journey analytics is incomplete because payment events are not being received. Connect a gateway to
+                  unlock checkout health, friction attribution and conversion accuracy.
+                </p>
+              </div>
             </div>
             <button
               type="button"
@@ -827,19 +904,20 @@ export default function JourneyIntelligencePage() {
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '6px',
+                gap: '8px',
                 flexShrink: 0,
-                background: 'transparent',
+                background: C.amber,
                 border: 'none',
-                padding: 0,
-                fontSize: '12px',
+                borderRadius: '10px',
+                padding: '11px 18px',
+                fontSize: '13px',
                 fontWeight: 600,
-                color: C.amber,
+                color: '#1f1300',
                 cursor: 'pointer'
               }}
             >
-              Configure
-              <ArrowRight style={{ width: '14px', height: '14px' }} />
+              Configure Gateway
+              <ArrowRight style={{ width: '15px', height: '15px' }} />
             </button>
           </div>
         ) : (
@@ -1035,236 +1113,253 @@ export default function JourneyIntelligencePage() {
         </div>
         )}
 
+        {/* Intelligence Insight — surfaced immediately below the KPIs so the most
+            important takeaway is visible without scrolling. */}
         <div
           style={{
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1.7fr) minmax(320px, 1fr)',
-            gap: '20px',
-            overflow: 'visible'
+            ...cardStyle,
+            background: C.blueBg,
+            border: `1px solid ${C.blueBorder}`,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: '14px'
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible', minWidth: 0 }}>
-            {funnelSteps.length === 0 ? (
-              <div style={{ ...cardStyle, minHeight: '280px', display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px' }}>No funnel data available. Ingest customer events to begin.</p>
-              </div>
-            ) : (
-              <div style={cardStyle}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '18px' }}>
-                  <div>
-                    <h3 style={sectionTitleStyle}>Purchase Journey Funnel</h3>
-                    <p style={sectionSubStyle}>Session retention across each stage of the journey.</p>
-                  </div>
-                  <span
-                    style={{
-                      padding: '4px 10px',
-                      borderRadius: '999px',
-                      fontSize: '11px',
-                      border: '1px solid var(--border-input)',
-                      color: 'var(--text-muted)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0
-                    }}
-                  >
-                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: C.green }} />
-                    Live · Project scope
-                  </span>
-                </div>
-
-                <div style={{ overflow: 'visible' }}>
-                  {funnelSteps.map((step, idx) => {
-                    const widthPct = firstStep > 0 ? Math.min(100, Math.max(0, (step.count / firstStep) * 100)) : 0;
-                    const barColor = idx === 0 ? C.green : dropBadgeColor(step.dropRate);
-                    const lossColor = stageLossColor(step.dropRate);
-
-                    return (
-                      <div
-                        key={step.label}
-                        style={{
-                          paddingBottom: idx === funnelSteps.length - 1 ? 0 : '16px',
-                          marginBottom: idx === funnelSteps.length - 1 ? 0 : '16px',
-                          borderBottom: idx === funnelSteps.length - 1 ? 'none' : '1px solid var(--border-card)'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
-                          <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{step.label}</span>
-                          <span style={{ fontSize: '18px', color: 'var(--text-primary)', fontWeight: 600, lineHeight: 1 }}>{step.count.toLocaleString()}</span>
-                        </div>
-                        <div
-                          style={{
-                            height: '10px',
-                            borderRadius: '999px',
-                            background: 'var(--bg-input)',
-                            overflow: 'hidden'
-                          }}
-                        >
-                          <div
-                            style={{
-                              width: `${Math.max(4, widthPct)}%`,
-                              height: '100%',
-                              borderRadius: '999px',
-                              background: barColor,
-                              transition: 'width 0.3s ease'
-                            }}
-                          />
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px' }}>
-                          {idx === 0 ? (
-                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Entry stage</span>
-                          ) : (
-                            <>
-                              <ArrowDown style={{ width: '14px', height: '14px', flexShrink: 0, color: lossColor }} />
-                              <span style={{ fontSize: '12px', color: lossColor, fontWeight: step.dropRate > 20 ? 600 : 400 }}>
-                                {step.dropRate}% lost from previous stage
-                              </span>
-                              {step.dropRate > 50 && <AlertTriangle style={{ width: '14px', height: '14px', flexShrink: 0, color: C.red }} />}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div style={{ marginTop: '18px', paddingTop: '18px', borderTop: '1px solid var(--border-card)', display: 'grid', gridTemplateColumns: 'minmax(120px, 0.85fr) 1fr 1fr', gap: '16px', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '100%', maxWidth: '148px' }}>
-                      <Donut
-                        height={132}
-                        data={[
-                          { name: 'Converted', value: lastStep, color: C.green },
-                          { name: 'Did not convert', value: Math.max(0, firstStep - lastStep), color: 'rgba(148,163,184,0.22)' }
-                        ]}
-                        centerLabel={`${completion}%`}
-                        centerSub="converted"
-                      />
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      borderRadius: '10px',
-                      border: `1px solid ${C.greenBorder}`,
-                      background: C.greenBg,
-                      padding: '14px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                      <TrendingUp style={{ width: '15px', height: '15px', color: C.green }} />
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Conversion Rate</span>
-                    </div>
-                    <div style={{ fontSize: '24px', fontWeight: 600, color: C.green, lineHeight: 1 }}>{completion}%</div>
-                  </div>
-                  <div
-                    style={{
-                      borderRadius: '10px',
-                      border: `1px solid ${C.redBorder}`,
-                      background: C.redBg,
-                      padding: '14px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                      <ZapOff style={{ width: '15px', height: '15px', color: bounceAccent(si.bounce_rate ?? 0) }} />
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Bounce Rate</span>
-                    </div>
-                    <div style={{ fontSize: '24px', fontWeight: 600, color: bounceAccent(si.bounce_rate ?? 0), lineHeight: 1 }}>{(si.bounce_rate ?? 0).toFixed(1)}%</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', overflow: 'visible' }}>
-            <div style={cardStyle}>
-              <h3 style={sectionTitleStyle}>Stage Drop-off Attribution</h3>
-              <p style={{ ...sectionSubStyle, marginBottom: '14px' }}>
-                Where sessions are lost between funnel stages.
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              background: `color-mix(in srgb, ${C.blue} 16%, transparent)`,
+              flexShrink: 0
+            }}
+          >
+            <Lightbulb style={{ width: '19px', height: '19px', color: C.blue }} />
+          </span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 6px' }}>Intelligence Insight</p>
+            {hasTraffic ? (
+              <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+                {biggestDrop && biggestDrop.pctLost > 0
+                  ? `Largest drop-off is ${biggestDrop.label} — ${biggestDrop.pctLost}% of sessions (${biggestDrop.lost.toLocaleString()}) are lost here. ${
+                      (si.bounce_rate ?? 0) > 0 ? `Bounce rate is ${(si.bounce_rate).toFixed(1)}%.` : ''
+                    }`
+                  : `No major funnel drop-off detected. Overall conversion is ${completion}% across ${firstStep.toLocaleString()} visits.`}
               </p>
-              {dropAttribution.length === 0 ? (
-                <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted)' }}>No funnel data yet.</p>
-              ) : (
-                dropAttribution.map((attr, idx, arr) => {
-                  const badge = dropBadgeColor(attr.pctLost);
-                  const [from, to] = attr.label.split(' → ');
-                  return (
-                  <div
-                    key={attr.label}
-                    style={{
-                      padding: '12px 0',
-                      borderBottom: idx === arr.length - 1 ? 'none' : '1px solid var(--border-card)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '8px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{from}</span>
-                        <ArrowRight style={{ width: '13px', height: '13px', flexShrink: 0, color: 'var(--text-label)' }} />
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{to}</span>
-                      </span>
-                      <span
-                        style={{
-                          flexShrink: 0,
-                          padding: '2px 8px',
-                          borderRadius: '999px',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          color: badge,
-                          background: `color-mix(in srgb, ${badge} 14%, transparent)`
-                        }}
-                      >
-                        {attr.pctLost}%
-                      </span>
-                    </div>
-                    <div style={{ height: '8px', width: '100%', background: 'var(--bg-input)', borderRadius: '999px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${Math.max(2, attr.pctLost)}%`, background: badge, borderRadius: '999px' }} />
-                    </div>
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{attr.lost.toLocaleString()} lost</span>
-                  </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div
-              style={{
-                ...cardStyle,
-                background: C.blueBg,
-                border: `1px solid ${C.blueBorder}`,
-                flexGrow: 1,
-                display: 'flex',
-                alignItems: 'center'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                <Lightbulb style={{ width: '18px', height: '18px', color: C.blue, flexShrink: 0, marginTop: '1px' }} />
-                <div>
-                  <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 6px' }}>Intelligence Insight</p>
-                  <p
-                    style={{
-                      fontSize: '13px',
-                      color: 'var(--text-secondary)',
-                      lineHeight: 1.6,
-                      margin: 0
-                    }}
-                  >
-                    {biggestDrop && biggestDrop.pctLost > 0
-                      ? `Largest drop-off is ${biggestDrop.label} — ${biggestDrop.pctLost}% of sessions (${biggestDrop.lost.toLocaleString()}) are lost here. ${
-                          (si.bounce_rate ?? 0) > 0 ? `Bounce rate is ${(si.bounce_rate).toFixed(1)}%.` : ''
-                        }`
-                      : firstStep > 1
-                        ? `No major funnel drop-off detected. Overall conversion is ${completion}% across ${firstStep.toLocaleString()} visits.`
-                        : 'Not enough session data yet to surface an insight. Ingest more storefront traffic to begin.'}
-                  </p>
-                </div>
-              </div>
-            </div>
+            ) : (
+              <p style={{ fontSize: '14px', color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0 }}>
+                Waiting for traffic data. At least 100 sessions are required before journey insights can be surfaced.
+              </p>
+            )}
           </div>
         </div>
+
+        {/* Purchase Journey Funnel — the page's primary visualization. Stage counts
+            and the loss between each stage are merged into one full-width view, so
+            conversion loss is immediately legible (replaces the old split funnel /
+            drop-off attribution cards). */}
+        {funnelSteps.length === 0 ? (
+          <div
+            style={{
+              ...cardStyle,
+              minHeight: '300px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              textAlign: 'center',
+              gap: '14px'
+            }}
+          >
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '56px',
+                height: '56px',
+                borderRadius: '14px',
+                background: `color-mix(in srgb, ${C.indigo} 12%, transparent)`
+              }}
+            >
+              <TrendingUp style={{ width: '26px', height: '26px', color: C.indigo }} />
+            </span>
+            <div>
+              <p style={{ margin: '0 0 6px', fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>Journey Intelligence</p>
+              <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '13px', lineHeight: 1.6, maxWidth: '380px' }}>
+                Traffic data has not started flowing yet. Connect storefront tracking and configure a payment gateway to
+                begin reconstructing the purchase funnel.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openGatewayConfig}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                borderRadius: '10px',
+                border: '1px solid rgba(96,165,250,0.2)',
+                background: '#2563EB',
+                padding: '10px 18px',
+                fontSize: '13px',
+                fontWeight: 600,
+                color: '#fff',
+                cursor: 'pointer'
+              }}
+            >
+              <Filter style={{ width: '15px', height: '15px' }} />
+              Setup Tracking
+            </button>
+          </div>
+        ) : (
+          <div style={cardStyle}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '22px' }}>
+              <div>
+                <h3 style={sectionTitleStyle}>Purchase Journey Funnel</h3>
+                <p style={sectionSubStyle}>Session retention and where conversion is lost at each stage.</p>
+              </div>
+              <span
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: '999px',
+                  fontSize: '11px',
+                  border: '1px solid var(--border-input)',
+                  color: 'var(--text-muted)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0
+                }}
+              >
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: C.green }} />
+                Live · Project scope
+              </span>
+            </div>
+
+            <div style={{ overflow: 'visible' }}>
+              {funnelSteps.map((step, idx) => {
+                const widthPct = firstStep > 0 ? Math.min(100, Math.max(0, (step.count / firstStep) * 100)) : 0;
+                const barColor = idx === 0 ? C.green : dropBadgeColor(step.dropRate);
+                const isEntry = idx === 0;
+                const isLast = idx === funnelSteps.length - 1;
+                // Loss flowing from the previous stage into this one (shown inline on this row).
+                const prev = funnelSteps[idx - 1];
+                const lostIn = isEntry ? 0 : Math.max(0, (prev?.count || 0) - step.count);
+                const pctIn = !isEntry && prev?.count > 0 ? Math.round((lostIn / prev.count) * 100) : 0;
+                const lossColor = stageLossColor(pctIn);
+                const nodeIsLoss = !isEntry && pctIn > 0;
+
+                return (
+                  <div key={step.label} style={{ display: 'flex', alignItems: 'center', gap: '16px', minHeight: '64px' }}>
+                    {/* Stage node + dashed connector spine */}
+                    <div style={{ position: 'relative', width: '32px', flexShrink: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {!isEntry && <div style={{ position: 'absolute', top: 0, height: 'calc(50% - 14px)', borderLeft: '2px dashed var(--border-card)' }} />}
+                      {!isLast && <div style={{ position: 'absolute', bottom: 0, height: 'calc(50% - 14px)', borderLeft: '2px dashed var(--border-card)' }} />}
+                      <div
+                        style={{
+                          width: '28px',
+                          height: '28px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          zIndex: 1,
+                          background: isEntry ? C.green : 'var(--bg-card)',
+                          border: isEntry ? 'none' : `2px solid ${nodeIsLoss ? C.red : 'var(--border-card)'}`
+                        }}
+                      >
+                        {isEntry ? (
+                          <Check style={{ width: '15px', height: '15px', color: '#fff' }} />
+                        ) : nodeIsLoss ? (
+                          <ArrowDown style={{ width: '14px', height: '14px', color: C.red }} />
+                        ) : (
+                          <ArrowRight style={{ width: '14px', height: '14px', color: 'var(--text-label)' }} />
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ width: '120px', flexShrink: 0, minWidth: 0 }}>
+                      <div style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 600 }}>{step.label}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{widthPct.toFixed(1)}% of entry</div>
+                    </div>
+
+                    <div style={{ flex: '1.1 1 0', minWidth: 0, maxWidth: '360px' }}>
+                      <div style={{ height: '5px', borderRadius: '999px', background: 'var(--bg-input)', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            width: `${Math.max(2, widthPct)}%`,
+                            height: '100%',
+                            borderRadius: '999px',
+                            background: barColor,
+                            transition: 'width 0.4s ease'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ flex: '1.6 1 0', minWidth: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {isEntry ? (
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Entry stage</span>
+                      ) : (
+                        <>
+                          <ArrowDown style={{ width: '14px', height: '14px', flexShrink: 0, color: lossColor }} />
+                          <span style={{ fontSize: '12px', color: lossColor, fontWeight: pctIn > 20 ? 600 : 500, flexShrink: 0 }}>
+                            {pctIn}% lost
+                          </span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            · {lostIn.toLocaleString()} sessions exit before {step.label}
+                          </span>
+                          {pctIn > 50 && <AlertTriangle style={{ width: '14px', height: '14px', flexShrink: 0, color: C.red }} />}
+                        </>
+                      )}
+                    </div>
+
+                    <div style={{ width: '84px', flexShrink: 0, textAlign: 'right' }}>
+                      <div style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1 }}>{step.count.toLocaleString()}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>sessions</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border-card)', display: 'grid', gridTemplateColumns: 'minmax(120px, 0.85fr) 1fr 1fr', gap: '16px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: '100%', maxWidth: '148px' }}>
+                  <Donut
+                    height={132}
+                    data={[
+                      { name: 'Converted', value: lastStep, color: C.green },
+                      { name: 'Did not convert', value: Math.max(0, firstStep - lastStep), color: 'rgba(148,163,184,0.22)' }
+                    ]}
+                    centerLabel={`${completion}%`}
+                    centerSub="converted"
+                  />
+                </div>
+              </div>
+              <div style={{ borderRadius: '10px', border: `1px solid ${C.greenBorder}`, background: C.greenBg, padding: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <TrendingUp style={{ width: '15px', height: '15px', color: C.green }} />
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Conversion Rate</span>
+                </div>
+                <div style={{ fontSize: '24px', fontWeight: 600, color: C.green, lineHeight: 1 }}>{completion}%</div>
+              </div>
+              <div style={{ borderRadius: '10px', border: `1px solid ${C.redBorder}`, background: C.redBg, padding: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <ZapOff style={{ width: '15px', height: '15px', color: bounceAccent(si.bounce_rate ?? 0) }} />
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 500 }}>Bounce Rate</span>
+                </div>
+                <div style={{ fontSize: '24px', fontWeight: 600, color: bounceAccent(si.bounce_rate ?? 0), lineHeight: 1 }}>{(si.bounce_rate ?? 0).toFixed(1)}%</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {intelligence?.sessionIntelligence && (
           <div style={cardStyle}>
@@ -1288,21 +1383,13 @@ export default function JourneyIntelligencePage() {
               const totalV = newV + retV;
               return (
                 <>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: '10px' }}>
                     {cards.map((kpi) => (
-                      <div
-                        key={kpi.label}
-                        style={{
-                          borderRadius: '10px',
-                          background: 'color-mix(in srgb, var(--bg-input) 60%, transparent)',
-                          border: '1px solid var(--border-card)',
-                          padding: '12px'
-                        }}
-                      >
-                        <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      <div key={kpi.label} style={{ ...subCardStyle, padding: '10px 12px' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={kpi.label}>
                           {kpi.label}
                         </div>
-                        <div style={{ fontSize: '20px', fontWeight: 600, color: kpi.tone }}>
+                        <div style={{ fontSize: '18px', fontWeight: 600, color: kpi.tone }}>
                           {kpi.value}
                         </div>
                       </div>
@@ -1329,7 +1416,7 @@ export default function JourneyIntelligencePage() {
               );
             })()}
 
-            {Array.isArray(intelligence.sessionIntelligence.platform_breakdown) &&
+            {/* {Array.isArray(intelligence.sessionIntelligence.platform_breakdown) &&
               intelligence.sessionIntelligence.platform_breakdown.length > 0 && (
                 <div style={{ marginTop: '18px', paddingTop: '16px', borderTop: '1px solid var(--border-card)' }}>
                   <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 12px' }}>
@@ -1351,59 +1438,67 @@ export default function JourneyIntelligencePage() {
                     ));
                   })()}
                 </div>
-              )}
+              )} */}
           </div>
         )}
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-            gap: '16px',
-            overflow: 'visible'
-          }}
-        >
+        {/* Behavior Quality — three engagement signals plus the composite health
+            score, consolidated into a single card (was three separate cards). */}
+        <div style={cardStyle}>
+          <h3 style={sectionTitleStyle}>Behavior Quality</h3>
+          <p style={{ ...sectionSubStyle, marginBottom: '14px' }}>Engagement signals and the composite journey health score.</p>
           {[
             {
               label: 'Bounce Rate',
               value: `${(si.bounce_rate ?? 0).toFixed(1)}%`,
-              note: 'Single-page sessions',
-              benchmark: 'Industry avg: ~45%',
+              benchmark: 'Industry avg ~45%',
               icon: ZapOff,
               accent: bounceAccent(si.bounce_rate ?? 0)
             },
             {
-              label: 'Avg Session Duration',
+              label: 'Session Duration',
               value: fmtDuration(si.avg_session_duration_seconds ?? 0),
-              note: 'Time from first to last activity',
-              benchmark: 'Healthy: > 60s',
+              benchmark: 'Healthy > 60s',
               icon: Clock,
               accent: durationAccent(si.avg_session_duration_seconds ?? 0)
             },
             {
-              label: 'Repeat Visitor Rate',
+              label: 'Repeat Visitors',
               value: `${(si.repeat_visitor_rate ?? 0).toFixed(1)}%`,
-              note: 'Visitors with more than one session',
-              benchmark: 'Good: > 30%',
+              benchmark: 'Good > 30%',
               icon: RotateCcw,
               accent: repeatAccent(si.repeat_visitor_rate ?? 0)
             }
           ].map((item) => {
             const Icon = item.icon;
             return (
-              <div key={item.label} style={{ ...cardStyle, padding: '16px 18px', borderLeft: `4px solid ${item.accent}` }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+              <div
+                key={item.label}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  padding: '11px 0',
+                  borderBottom: '1px solid var(--border-card)'
+                }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                   <Icon style={{ width: '15px', height: '15px', color: item.accent, flexShrink: 0 }} />
-                  <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
-                    {item.label}
-                  </h4>
-                </div>
-                <div style={{ fontSize: '24px', lineHeight: 1, fontWeight: 600, color: 'var(--text-primary)', marginBottom: '6px' }}>{item.value}</div>
-                <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 2px' }}>{item.note}</p>
-                <p style={{ fontSize: '11px', color: 'var(--text-label)', margin: 0 }}>{item.benchmark}</p>
+                  <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500 }}>{item.label}</span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>{item.benchmark}</span>
+                </span>
+                <span style={{ fontSize: '17px', fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>{item.value}</span>
               </div>
             );
           })}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', paddingTop: '12px', marginTop: '2px' }}>
+            <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>Health Score</span>
+            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '6px' }}>
+              <span style={{ fontSize: '20px', fontWeight: 700, color: healthTone }}>{healthScore == null ? '—' : healthScore}</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-label)' }}>/ 100 · {healthLabel}</span>
+            </span>
+          </div>
         </div>
 
         {insightPanels.length > 0 && (() => {
@@ -1426,50 +1521,59 @@ export default function JourneyIntelligencePage() {
               </div>
             ));
           };
-          // Masonry: cards flow and pack by height (no forced empty grid cells or
-          // stretched siblings), eliminating the blank gaps from uneven content.
-          const cardWrap: React.CSSProperties = { ...cardStyle, breakInside: 'avoid', marginBottom: '16px', display: 'block', width: '100%' };
           return (
-            <div style={{ columns: '340px 2', columnGap: '16px' }}>
-              {contentPanels.map((panel) => (
-                <div key={panel.title} style={cardWrap}>
-                  <h3 style={{ ...sectionTitleStyle, marginBottom: '14px' }}>{panel.title}</h3>
-                  {renderRows(panel)}
-                </div>
-              ))}
-              {devices.length > 0 && (
-                <div style={cardWrap}>
-                  <h3 style={{ ...sectionTitleStyle, marginBottom: '4px' }}>Devices</h3>
-                  <p style={{ ...sectionSubStyle, marginBottom: '8px' }}>Sessions by device type.</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    <div style={{ width: '140px', flexShrink: 0 }}>
-                      <Donut
-                        height={140}
-                        data={devices.map((d, i) => ({ name: d.device, value: d.sessions, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }))}
-                      />
-                    </div>
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', minWidth: 0 }}>
-                      {devices.map((d, i) => (
-                        <div key={d.device} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '13px' }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                            <span style={{ width: '9px', height: '9px', borderRadius: '3px', background: DONUT_PALETTE[i % DONUT_PALETTE.length], flexShrink: 0 }} />
-                            <span style={{ color: 'var(--text-primary)', textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.device}</span>
-                          </span>
-                          <span style={{ color: 'var(--text-secondary)', fontWeight: 600, flexShrink: 0 }}>{d.sessions.toLocaleString()}</span>
-                        </div>
-                      ))}
-                    </div>
+            <>
+              {contentPanels.length > 0 && (
+                <div style={cardStyle}>
+                  <h3 style={sectionTitleStyle}>Content &amp; Acquisition</h3>
+                  <p style={{ ...sectionSubStyle, marginBottom: '18px' }}>Top products, entry &amp; exit points and traffic sources.</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '20px 32px' }}>
+                    {contentPanels.map((panel) => (
+                      <div key={panel.title} style={{ minWidth: 0 }}>
+                        <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 14px' }}>{panel.title}</h4>
+                        {renderRows(panel)}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
-              {checkoutPanel && (
-                <div style={cardWrap}>
-                  <h3 style={{ ...sectionTitleStyle, marginBottom: '4px' }}>Checkout Steps</h3>
-                  <p style={{ ...sectionSubStyle, marginBottom: '14px' }}>Sessions reaching each checkout step.</p>
-                  {renderRows(checkoutPanel)}
+              {(devices.length > 0 || checkoutPanel) && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px' }}>
+                  {devices.length > 0 && (
+                    <div style={cardStyle}>
+                      <h3 style={{ ...sectionTitleStyle, marginBottom: '4px' }}>Devices</h3>
+                      <p style={{ ...sectionSubStyle, marginBottom: '12px' }}>Sessions by device type.</p>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '28px', flexWrap: 'wrap' }}>
+                        <div style={{ width: '150px', flexShrink: 0 }}>
+                          <Donut
+                            height={150}
+                            data={devices.map((d, i) => ({ name: d.device, value: d.sessions, color: DONUT_PALETTE[i % DONUT_PALETTE.length] }))}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', minWidth: '120px' }}>
+                          {devices.map((d, i) => (
+                            <div key={d.device} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', fontSize: '13px' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                <span style={{ width: '9px', height: '9px', borderRadius: '3px', background: DONUT_PALETTE[i % DONUT_PALETTE.length], flexShrink: 0 }} />
+                                <span style={{ color: 'var(--text-primary)', textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.device}</span>
+                              </span>
+                              <span style={{ color: 'var(--text-secondary)', fontWeight: 600, flexShrink: 0 }}>{d.sessions.toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {checkoutPanel && (
+                    <div style={cardStyle}>
+                      <h3 style={{ ...sectionTitleStyle, marginBottom: '4px' }}>Checkout Steps</h3>
+                      <p style={{ ...sectionSubStyle, marginBottom: '14px' }}>Sessions reaching each checkout step.</p>
+                      {renderRows(checkoutPanel)}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </>
           );
         })()}
 
@@ -1480,9 +1584,9 @@ export default function JourneyIntelligencePage() {
               Views, add-to-carts and cart rate per product from storefront events.
             </p>
             {(si.product_engagement || []).length === 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '32px 0', textAlign: 'center' }}>
-                <Package style={{ width: '28px', height: '28px', color: 'var(--text-label)' }} />
-                <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>No product data collected yet</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '16px 0', textAlign: 'center' }}>
+                <Package style={{ width: '18px', height: '18px', color: 'var(--text-label)', flexShrink: 0 }} />
+                <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>No product interaction data yet.</span>
               </div>
             ) : (() => {
               const products = si.product_engagement as Array<{ product_id: string; product_name: string; views: number; add_to_carts: number; cart_rate: number }>;

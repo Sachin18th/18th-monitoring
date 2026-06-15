@@ -15,17 +15,11 @@ export const requirePageAccess = (required: ProjectPageKey | ProjectPageKey[]) =
       return;
     }
 
-    const rows = await PagePermissionsService.getPermissionRows(req.user?.id, projectId);
-    if (!Array.isArray(rows) || rows.length === 0) {
-      const redirectTo = `/project/${encodeURIComponent(projectId)}/overview`;
-      reply.header('Location', redirectTo);
-      return reply.code(403).send({
-        error: 'Forbidden',
-        message: 'No explicit page permissions defined for this user/project.',
-        redirectTo
-      });
-    }
-
+    // No explicit per-page rows means "default allow" — consistent with
+    // PagePermissionsService.getAllowedPageKeys / getPermissionMatrix, which both
+    // grant full access when no UserPagePermission rows exist for the user/project.
+    // getAllowedPageKeys returns every page key in that case, so the check below
+    // naturally passes without a special-cased early 403.
     const allowedKeys = await PagePermissionsService.getAllowedPageKeys(req.user, projectId);
     const allowedSet = new Set(allowedKeys);
     const hasAccess = requiredKeys.some((key) => allowedSet.has(key));

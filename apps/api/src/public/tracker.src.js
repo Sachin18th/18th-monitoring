@@ -8,6 +8,7 @@
  *
  * Config may alternatively be set via
  *   window.__PLAT_CONFIG__ = { connectorId, ingestUrl }.
+ * 
  *
  * Emits the purchase-journey events only — keeps storefront_events lean:
  *   page_view        (a "Visit")

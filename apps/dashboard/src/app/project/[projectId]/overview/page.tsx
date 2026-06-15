@@ -169,7 +169,10 @@ export default function ProjectOverviewPage() {
     setAllowedPageKeys(null);
     const fetchSection = async (path: string, fallback: any, options: Record<string, any> = {}) => {
       try {
-        return await apiFetch(path, options);
+        // Suppress the global /unauthorized redirect: a single restricted section
+        // (e.g. orders/performance for ops-lead/analyst) must degrade to its fallback,
+        // not bounce the entire overview page to the 403 screen.
+        return await apiFetch(path, { suppressUnauthorizedRedirect: true, ...options });
       } catch {
         return fallback;
       }
@@ -227,6 +230,15 @@ export default function ProjectOverviewPage() {
     router.push(href);
   };
 
+  // Page-key driven visibility. Admin/super-admin (no explicit rows) get every key,
+  // so all cards stay visible; ops-lead / analyst only see cards their permissions allow.
+  // While permissions are still loading (null) we optimistically show, the loading
+  // spinner covers that window.
+  const canSee = useCallback(
+    (key: string) => allowedPageKeys === null || allowedPageKeys.includes(key),
+    [allowedPageKeys]
+  );
+
   const syncMetric = metrics.find((m) => m.kpiName === 'syncSuccessRate');
   const pageLoadMetric = metrics.find((m) => m.kpiName === 'pageLoadTime');
   const liveUserMetric = metrics.find((m) => m.kpiName === 'activeUsers');
@@ -240,6 +252,7 @@ export default function ProjectOverviewPage() {
       contextLabel: 'Overall health',
       icon: health.status === 'success' ? ShieldCheck : AlertTriangle,
       tone: health.status,
+      pageKey: null,
     },
     {
       label: 'Order Velocity',
@@ -249,6 +262,7 @@ export default function ProjectOverviewPage() {
       contextLabel: 'Throughput',
       icon: Package,
       tone: 'success' as const,
+      pageKey: 'orders',
     },
     {
       label: 'API Reliability',
@@ -258,6 +272,7 @@ export default function ProjectOverviewPage() {
       contextLabel: 'Sync success',
       icon: RefreshCw,
       tone: syncMetric?.state === 'critical' ? 'critical' as const : 'success' as const,
+      pageKey: 'integrations',
     },
     {
       label: 'Latency P95',
@@ -267,6 +282,7 @@ export default function ProjectOverviewPage() {
       contextLabel: 'User response',
       icon: Activity,
       tone: Number(pageLoadMetric?.value || 0) > 2000 ? 'warning' as const : 'success' as const,
+      pageKey: 'performance',
     },
     {
       label: 'Live Sessions',
@@ -276,8 +292,9 @@ export default function ProjectOverviewPage() {
       contextLabel: 'Active users',
       icon: Users,
       tone: 'success' as const,
+      pageKey: 'customers',
     },
-  ];
+  ].filter((card) => !card.pageKey || canSee(card.pageKey));
 
   const executiveCards = [
     {
@@ -286,6 +303,7 @@ export default function ProjectOverviewPage() {
       value: 'Stable',
       description: 'All monitored endpoints are performing within target thresholds.',
       actionLabel: '',
+      pageKey: null,
     },
     {
       label: 'Revenue at Risk',
@@ -293,8 +311,9 @@ export default function ProjectOverviewPage() {
       value: stats?.failedCount ? 'At Risk' : 'Protected',
       description: `Derived from ${stats?.delayedCount || 0} delayed transactions.`,
       actionLabel: 'Resolve Exceptions',
+      pageKey: 'orders',
     },
-  ];
+  ].filter((card) => !card.pageKey || canSee(card.pageKey));
 
   const domainSnapshots = [
     {
@@ -321,7 +340,7 @@ export default function ProjectOverviewPage() {
       path: 'customers',
       description: 'Deep intelligence on reliability and customers throughput.',
     },
-  ];
+  ].filter((domain) => canSee(domain.path));
 
   if (allowedPageKeys !== null && !allowedPageKeys.includes('overview')) {
     return <PageRestricted pageKey="overview" />;
@@ -678,6 +697,7 @@ export default function ProjectOverviewPage() {
         </div>
       </section>
 
+      {canSee('performance') && (
       <section style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'visible' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', gap: '16px', flexWrap: 'wrap' }}>
           <div style={sectionHeaderInfoStyle}>
@@ -745,7 +765,9 @@ export default function ProjectOverviewPage() {
           </div>
         </div>
       </section>
+      )}
 
+      {domainSnapshots.length > 0 && (
       <section style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'visible' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
           <div
@@ -832,6 +854,7 @@ export default function ProjectOverviewPage() {
           })}
         </div>
       </section>
+      )}
     </div>
   );
 }

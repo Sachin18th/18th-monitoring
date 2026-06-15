@@ -228,7 +228,11 @@ export default function PerformancePage() {
                 apiFetch(`/api/v1/dashboard/performance/anomalies?siteId=${projectId}`),
                 apiFetch(`/api/v1/dashboard/performance/regional?siteId=${projectId}`),
                 apiFetch(`/api/v1/dashboard/performance/slowest-pages?siteId=${projectId}`),
-                apiFetch(`/api/v1/dashboard/integrations/summary?siteId=${projectId}`)
+                // Integrations health is an auxiliary panel and requires the `integrations`
+                // page key, which ops_lead/analyst don't have. Suppress the unauthorized
+                // redirect and fall back to empty so a 403 here never bounces the whole
+                // performance page for those roles.
+                apiFetch(`/api/v1/dashboard/integrations/summary?siteId=${projectId}`, { suppressUnauthorizedRedirect: true }).catch(() => [])
             ]);
 
             setSummary(summ || summary);

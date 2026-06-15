@@ -4,11 +4,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button, Input, Typography } from '@kpi-platform/ui';
-import { Plus, RefreshCw, ShieldCheck, UserPlus, UserX, Users, X } from 'lucide-react';
+import { Plus, RefreshCw, Search, ShieldCheck, UserPlus, UserX, Users, X } from 'lucide-react';
 import { PROJECT_PAGE_ACCESS_OPTIONS, PROJECT_PAGE_KEYS, normalizeRole } from '@kpi-platform/shared-types';
 import { useAuth } from '../../../../../context/AuthContext';
 import { RoleGuard } from '../../../../../components/auth/RoleGuard';
-import { MonitoringFilterBar } from '../../../../../components/ui/MonitoringFilterBar';
 import { SectionHeader } from '../../../../../components/ui/SectionHeader';
 import { SortableTable } from '../../../../../components/ui/SortableTable';
 
@@ -181,6 +180,76 @@ const errorTextStyle: React.CSSProperties = {
   overflowWrap: 'anywhere',
 };
 
+const userFilterBarStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  padding: '12px 16px',
+  background: 'var(--bg-surface)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--radius-xl)',
+  marginBottom: '20px',
+  flexWrap: 'wrap',
+};
+
+const filterNodeStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  flexShrink: 0,
+};
+
+const userFilterLabelStyle: React.CSSProperties = {
+  fontSize: '10px',
+  fontWeight: 800,
+  color: 'var(--text-muted)',
+  letterSpacing: '0.5px',
+  whiteSpace: 'nowrap',
+};
+
+const userSearchInputStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  background: 'var(--bg-muted)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: '20px',
+  padding: '7px 14px 7px 34px',
+  fontSize: '13px',
+  color: 'var(--text-primary)',
+  outline: 'none',
+};
+
+const userSelectStyle: React.CSSProperties = {
+  appearance: 'none',
+  background: 'var(--bg-muted)',
+  border: '1px solid var(--border-subtle)',
+  borderRadius: '20px',
+  padding: '6px 28px 6px 12px',
+  fontSize: '12px',
+  fontWeight: 600,
+  color: 'var(--text-primary)',
+  cursor: 'pointer',
+  outline: 'none',
+  backgroundImage: `url("data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%2394a3b8' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E")`,
+  backgroundRepeat: 'no-repeat',
+  backgroundPosition: 'right 8px center',
+};
+
+const userRefreshButtonStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  borderRadius: '20px',
+  border: '1px solid var(--border-subtle)',
+  background: 'var(--bg-muted)',
+  padding: '6px 14px',
+  fontSize: '12px',
+  fontWeight: 600,
+  color: 'var(--text-primary)',
+  cursor: 'pointer',
+  flexShrink: 0,
+};
+
 const normalizeStatus = (status: string | undefined) => String(status || '').trim().toUpperCase();
 
 const emptyFormState = {
@@ -209,6 +278,9 @@ export default function UserManagementPage() {
   const [formUser, setFormUser] = useState({ ...emptyFormState });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [selectedPageKeys, setSelectedPageKeys] = useState<string[]>(PROJECT_PAGE_KEYS.slice());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | EditableRole>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const currentRole = normalizeRole(user?.role);
   const isSuperAdmin = currentRole === 'super_admin';
   const roleOptions = isSuperAdmin ? ROLE_OPTIONS_BY_ACCESS.super_admin : ROLE_OPTIONS_BY_ACCESS.admin;
@@ -255,6 +327,25 @@ export default function UserManagementPage() {
       admins: adminUsers.length,
     };
   }, [visibleUsers]);
+
+  const filteredUsers = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+
+    return visibleUsers.filter((entry) => {
+      const matchesQuery =
+        !query ||
+        String(entry.name || '').toLowerCase().includes(query) ||
+        String(entry.email || '').toLowerCase().includes(query);
+      const matchesRole = roleFilter === 'all' || normalizeRole(entry.role) === roleFilter;
+      const matchesStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'active'
+          ? normalizeStatus(entry.status) === 'ACTIVE'
+          : normalizeStatus(entry.status) !== 'ACTIVE');
+
+      return matchesQuery && matchesRole && matchesStatus;
+    });
+  }, [visibleUsers, searchQuery, roleFilter, statusFilter]);
 
   const openCreateModal = () => {
     setModalMode('create');
@@ -529,12 +620,66 @@ export default function UserManagementPage() {
                 />
               </div>
 
-              <MonitoringFilterBar />
+              <div style={userFilterBarStyle}>
+                <div style={{ position: 'relative', flex: '1 1 240px', minWidth: '200px' }}>
+                  <Search
+                    size={15}
+                    style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }}
+                  />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search by name or email…"
+                    style={userSearchInputStyle}
+                  />
+                </div>
+
+                <div style={filterNodeStyle}>
+                  <span style={userFilterLabelStyle}>ROLE</span>
+                  <select
+                    value={roleFilter}
+                    onChange={(e) => setRoleFilter(e.target.value as 'all' | EditableRole)}
+                    style={userSelectStyle}
+                  >
+                    <option value="all">All roles</option>
+                    {roleOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={filterNodeStyle}>
+                  <span style={userFilterLabelStyle}>STATUS</span>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+                    style={userSelectStyle}
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
+                  {filteredUsers.length} of {visibleUsers.length} {visibleUsers.length === 1 ? 'user' : 'users'}
+                </span>
+
+                <button type="button" onClick={loadUsers} style={userRefreshButtonStyle} title="Refresh user list">
+                  <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : undefined }} />
+                  Refresh
+                </button>
+              </div>
 
               <SortableTable
                 loading={loading}
-                data={visibleUsers}
-                emptyMessage="No users have been added to this project yet."
+                data={filteredUsers}
+                emptyMessage={
+                  visibleUsers.length === 0
+                    ? 'No users have been added to this project yet.'
+                    : 'No users match the current filters.'
+                }
                 columns={[
                   {
                     key: 'name',
@@ -567,30 +712,36 @@ export default function UserManagementPage() {
                     key: 'createdAt',
                     label: 'Joined',
                     sortable: true,
-                    render: (_value, row) => (row.audit?.createdAt ? new Date(row.audit.createdAt).toLocaleDateString() : '--'),
+                    render: (_value, row) => {
+                      const joined = row.createdAt ?? row.audit?.createdAt;
+                      return joined ? new Date(joined).toLocaleDateString() : '--';
+                    },
                   },
                   {
                     key: 'actions',
                     label: 'Actions',
                     align: 'right',
-                    render: (_value, row) => (
+                    render: (_value, row) => {
+                      const isSuperAdminRow = String(row.role || '').trim().toUpperCase() === 'SUPER_ADMIN';
+                      return (
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
-                        <Button variant="outline" size="sm" onClick={() => handleEditAccess(row)}>
-                          Edit user access
+                        <Button variant="outline" size="sm" onClick={() => handleEditAccess(row)} disabled={isSuperAdminRow}>
+                          Edit
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => toggleStatus(row.id, row.status)}>
+                        <Button variant="outline" size="sm" onClick={() => toggleStatus(row.id, row.status)} disabled={isSuperAdminRow}>
                           {normalizeStatus(row.status) === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}
                         </Button>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleDeleteUser(row)}
-                          disabled={deletingUserId === row.id || String(row.role || '').trim().toUpperCase() === 'SUPER_ADMIN'}
+                          disabled={deletingUserId === row.id || isSuperAdminRow}
                         >
-                          {deletingUserId === row.id ? 'Deleting…' : 'Delete user'}
+                          {deletingUserId === row.id ? 'Deleting…' : 'Delete'}
                         </Button>
                       </div>
-                    ),
+                      );
+                    },
                   },
                 ]}
               />

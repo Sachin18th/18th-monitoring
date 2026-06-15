@@ -5,7 +5,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import { EventStream } from '@/components/rum/EventStream';
 import { DeviceDistribution } from '@/components/rum/DeviceDistribution';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Globe, Users, AlertCircle, RefreshCw } from 'lucide-react';
@@ -107,6 +106,53 @@ type RoutePerformanceRow = {
   url: string;
   avgLoadTime: number;
   status: 'healthy' | 'warning' | 'critical';
+};
+
+type StorefrontErrorRow = {
+  id: string;
+  error_type: string;
+  severity: 'critical' | 'warning' | 'info' | string;
+  message: string;
+  page_type?: string | null;
+  page_url?: string | null;
+  request_url?: string | null;
+  status_code?: number | null;
+  http_method?: string | null;
+  source_url?: string | null;
+  duration_ms?: number | null;
+  resource_tag?: string | null;
+  occurred_at?: string | null;
+};
+
+const severityBadge = (severity: string): { bg: string; color: string } => {
+  switch (String(severity).toLowerCase()) {
+    case 'critical':
+      return { bg: 'var(--error-bg)', color: 'var(--error-text)' };
+    case 'warning':
+      return { bg: 'var(--warning-bg)', color: 'var(--warning-text)' };
+    default:
+      return { bg: 'var(--bg-input)', color: 'var(--text-muted)' };
+  }
+};
+
+const formatErrorType = (type: string) => String(type || '').replace(/_/g, ' ');
+
+// Category buckets — mirror the backend grouping (storefront-error.service.ts).
+// "js" spans uncaught exceptions and promise rejections.
+type ErrorCategoryKey = 'all' | 'js' | 'network' | 'resource' | 'checkout' | 'console';
+
+const ERROR_CATEGORIES: { key: ErrorCategoryKey; label: string; types: string[] }[] = [
+  { key: 'all', label: 'All', types: [] },
+  { key: 'js', label: 'JS', types: ['js_error', 'promise_rejection'] },
+  { key: 'network', label: 'Network', types: ['network_error'] },
+  { key: 'resource', label: 'Resource', types: ['resource_error'] },
+  { key: 'checkout', label: 'Checkout', types: ['checkout_error'] },
+  { key: 'console', label: 'Console', types: ['console_error'] },
+];
+
+const categoryOfErrorType = (errorType: string): ErrorCategoryKey => {
+  const match = ERROR_CATEGORIES.find((category) => category.types.includes(errorType));
+  return match ? match.key : 'console';
 };
 
 type PagespeedMetricKey = 'lcp' | 'fid' | 'cls' | 'ttfb';
@@ -248,7 +294,9 @@ export default function RumDashboardPage() {
   const [pagespeedMetrics, setPagespeedMetrics] = useState<PagespeedLatestPayload | null>(null);
   const [devices, setDevices] = useState<any[]>([]);
   const [loadTimeTrend, setLoadTimeTrend] = useState<any[]>([]);
-  const [events, setEvents] = useState<any[]>([]);
+  const [storefrontErrors, setStorefrontErrors] = useState<StorefrontErrorRow[]>([]);
+  const [errorsTotal, setErrorsTotal] = useState(0);
+  const [errorCategory, setErrorCategory] = useState<ErrorCategoryKey>('all');
   const [analytics, setAnalytics] = useState<any>(null);
   const [topPages, setTopPages] = useState<RoutePerformanceRow[]>([]);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
@@ -298,7 +346,20 @@ export default function RumDashboardPage() {
       setLoadTimeTrend(scopedTrends);
       setAnalytics(userAnalytics);
       setTopPages(normalizeRoutePerformanceRows(scopedSlowestPages));
-      setEvents([]); // Real events stream would go here
+
+      // Storefront errors captured by the public RUM tracker (storefront_errors table).
+      try {
+        const errorsQuery = new URLSearchParams({ projectId: String(projectId), limit: '50' });
+        if (connectorInstanceId) errorsQuery.set('connectorId', connectorInstanceId);
+        const errorsResponse = await apiFetch(`/api/rum/errors?${errorsQuery.toString()}`);
+        const rows = Array.isArray(errorsResponse?.errors) ? (errorsResponse.errors as StorefrontErrorRow[]) : [];
+        setStorefrontErrors(rows);
+        setErrorsTotal(Number(errorsResponse?.total) || rows.length);
+      } catch (errErr) {
+        console.warn('[RUM] Failed to load storefront errors', errErr);
+        setStorefrontErrors([]);
+        setErrorsTotal(0);
+      }
       
     } catch (err: any) {
       console.error('[RUM] Load failed', err);
@@ -316,7 +377,8 @@ export default function RumDashboardPage() {
     setPagespeedMetrics(null);
     setDevices([]);
     setLoadTimeTrend([]);
-    setEvents([]);
+    setStorefrontErrors([]);
+    setErrorsTotal(0);
     setAnalytics(null);
     setTopPages([]);
   }, [connectorSelectionTick, projectId, token]);
@@ -360,6 +422,22 @@ export default function RumDashboardPage() {
       },
     ];
   }, [device, pagespeedMetrics]);
+
+  // Per-category counts for the filter pills (derived from the fetched rows so the
+  // badge counts always match what the list shows).
+  const errorCategoryCounts = useMemo(() => {
+    const counts: Record<ErrorCategoryKey, number> = { all: 0, js: 0, network: 0, resource: 0, checkout: 0, console: 0 };
+    storefrontErrors.forEach((err) => {
+      counts.all += 1;
+      counts[categoryOfErrorType(err.error_type)] += 1;
+    });
+    return counts;
+  }, [storefrontErrors]);
+
+  const filteredErrors = useMemo(() => {
+    if (errorCategory === 'all') return storefrontErrors;
+    return storefrontErrors.filter((err) => categoryOfErrorType(err.error_type) === errorCategory);
+  }, [storefrontErrors, errorCategory]);
 
   const handleRefresh = useCallback(async () => {
     if (!token || !projectId || !tenantId) return;
@@ -542,15 +620,93 @@ export default function RumDashboardPage() {
       </div>
 
       <div style={bottomSectionGridStyle}>
-        {/* Event Stream */}
-        <div style={{ ...sectionCardStyle, minHeight: '400px' }}>
+        {/* Storefront Errors */}
+        <div style={{ ...sectionCardStyle, minHeight: '400px', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500 }}>
-              REAL-TIME EVENT STREAM
+              STOREFRONT ERRORS{errorsTotal > 0 ? ` (${errorsTotal})` : ''}
             </p>
             <span style={{ fontSize: '10px', color: '#4ade80', textTransform: 'uppercase', letterSpacing: '0.08em' }}>LIVE</span>
           </div>
-          <EventStream events={events} />
+
+          {/* Category filter pills */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+            {ERROR_CATEGORIES.map((category) => {
+              const count = errorCategoryCounts[category.key];
+              if (category.key !== 'all' && count === 0) return null;
+              const active = errorCategory === category.key;
+              return (
+                <button
+                  key={category.key}
+                  type="button"
+                  onClick={() => setErrorCategory(category.key)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '4px 12px',
+                    borderRadius: '999px',
+                    fontSize: '12px',
+                    fontWeight: active ? 700 : 500,
+                    cursor: 'pointer',
+                    border: `1px solid ${active ? 'var(--border-input)' : 'var(--border-card)'}`,
+                    background: active ? 'var(--bg-input)' : 'transparent',
+                    color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {category.label}
+                  <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '520px' }}>
+            {filteredErrors.length === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px', padding: '12px' }}>
+                <AlertCircle style={{ width: '14px', height: '14px', flexShrink: 0 }} />
+                {loading
+                  ? 'Loading storefront errors…'
+                  : storefrontErrors.length === 0
+                    ? 'No storefront errors captured in the last 24 hours.'
+                    : 'No errors in this category.'}
+              </div>
+            ) : (
+              filteredErrors.map((err) => {
+                const badge = severityBadge(err.severity);
+                return (
+                  <div key={err.id} style={{ padding: '12px', borderRadius: '8px', background: 'var(--bg-input)', border: '1px solid var(--border-card)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap', flexShrink: 0, background: badge.bg, color: badge.color }}>
+                          {err.severity}
+                        </span>
+                        <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'capitalize', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {formatErrorType(err.error_type)}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '10px', color: 'var(--text-label)', flexShrink: 0 }}>
+                        {err.occurred_at ? new Date(err.occurred_at).toLocaleString() : ''}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4, overflowWrap: 'anywhere', marginBottom: (err.page_url || err.status_code) ? '6px' : 0 }}>
+                      {err.message}
+                    </div>
+
+                    {(err.page_url || err.status_code || err.page_type) && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '11px', color: 'var(--text-label)', fontFamily: 'monospace' }}>
+                        {err.page_type ? <span>{err.page_type}</span> : null}
+                        {typeof err.status_code === 'number' ? <span>{err.http_method ? `${err.http_method} ` : ''}{err.status_code}</span> : null}
+                        {err.page_url ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{err.page_url}</span> : null}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
 
         {/* Route Performance */}

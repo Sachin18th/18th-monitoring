@@ -51,6 +51,40 @@ const SEGMENT_COLORS = [
   ACCENT.amber,
 ];
 
+// Human-readable label + semantic color per lifecycle state. Each state gets a
+// distinct hue so segments are visually separable at a glance (instead of every
+// bar sharing one gradient). Unknown states fall back to a humanized label and a
+// palette color picked by position.
+const LIFECYCLE_META: Record<string, { label: string; color: string }> = {
+  NEW_GUEST: { label: "New Guest", color: ACCENT.sky },
+  GUEST: { label: "Guest", color: ACCENT.sky },
+  PROSPECT: { label: "Prospect", color: "#64748b" },
+  LEAD: { label: "Lead", color: "#64748b" },
+  ACTIVE: { label: "Active", color: ACCENT.emerald },
+  RETURNING: { label: "Returning", color: ACCENT.indigo },
+  LOYAL: { label: "Loyal", color: ACCENT.violet },
+  VIP: { label: "VIP", color: "#a855f7" },
+  AT_RISK: { label: "At Risk", color: ACCENT.amber },
+  DORMANT: { label: "Dormant", color: "#94a3b8" },
+  CHURNED: { label: "Churned", color: ACCENT.rose },
+};
+
+const humanizeLifecycle = (raw: string) =>
+  String(raw || "")
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+const getLifecycleMeta = (raw: string, index = 0) => {
+  const key = String(raw || "").trim().toUpperCase();
+  return (
+    LIFECYCLE_META[key] || {
+      label: humanizeLifecycle(raw) || "Unknown",
+      color: SEGMENT_COLORS[index % SEGMENT_COLORS.length],
+    }
+  );
+};
+
 // Shared recharts tooltip styling, theme-aware via CSS vars.
 const CHART_TOOLTIP_STYLE: React.CSSProperties = {
   background: "var(--bg-card)",
@@ -382,7 +416,11 @@ const buildCustomerInsights = (customers: any[], orders: any[] = []) => {
       count,
       percent: total === 0 ? 0 : Math.round((count / total) * 100),
     }))
-    .sort((a, b) => b.count - a.count);
+    .sort((a, b) => b.count - a.count)
+    .map((row, index) => {
+      const meta = getLifecycleMeta(row.name, index);
+      return { ...row, label: meta.label, color: meta.color };
+    });
 
   const share = (value: number) =>
     total === 0 ? 0 : Math.round((value / total) * 100);
@@ -1929,6 +1967,35 @@ export default function CustomersPage() {
               {customerInsights.buyers.toLocaleString()} buyers
             </span>
 
+            {/* Stacked overview bar — whole-distribution at a glance, one
+                color segment per lifecycle state. */}
+            {!loading && customerInsights.lifecycle.length > 0 && (
+              <div
+                style={{
+                  marginTop: "16px",
+                  display: "flex",
+                  height: "10px",
+                  width: "100%",
+                  borderRadius: "999px",
+                  overflow: "hidden",
+                  background: "var(--bg-input)",
+                }}
+              >
+                {customerInsights.lifecycle.map((row, idx) => (
+                  <div
+                    key={`seg-${row.name}-${idx}`}
+                    title={`${row.label}: ${row.count.toLocaleString()} (${row.percent}%)`}
+                    style={{
+                      width: `${row.percent}%`,
+                      height: "100%",
+                      background: row.color,
+                      transition: "width 0.3s ease",
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+
             <div
               style={{
                 marginTop: "16px",
@@ -1938,22 +2005,47 @@ export default function CustomersPage() {
               }}
             >
               {(loading ? [] : customerInsights.lifecycle).map((row, idx) => (
-                <div key={`${row.name}-${idx}`}>
+                <div
+                  key={`${row.name}-${idx}`}
+                  style={{
+                    cursor: "default",
+                    transition: "opacity 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.opacity = "0.78";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.opacity = "1";
+                  }}
+                >
                   <div
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
+                      alignItems: "center",
                       marginBottom: "6px",
                     }}
                   >
                     <span
                       style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "8px",
                         fontSize: "13px",
                         color: "var(--text-primary)",
                         fontWeight: 500,
                       }}
                     >
-                      {row.name}
+                      <span
+                        style={{
+                          width: "9px",
+                          height: "9px",
+                          borderRadius: "3px",
+                          background: row.color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      {row.label}
                     </span>
                     <span
                       style={{
@@ -1961,7 +2053,10 @@ export default function CustomersPage() {
                         color: "var(--text-secondary)",
                       }}
                     >
-                      {row.count.toLocaleString()} · {row.percent}%
+                      <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                        {row.count.toLocaleString()}
+                      </span>{" "}
+                      · {row.percent}%
                     </span>
                   </div>
                   <div
@@ -1969,6 +2064,7 @@ export default function CustomersPage() {
                       height: "8px",
                       borderRadius: "999px",
                       background: "var(--bg-input)",
+                      overflow: "hidden",
                     }}
                   >
                     <div
@@ -1976,8 +2072,8 @@ export default function CustomersPage() {
                         width: `${Math.max(4, row.percent)}%`,
                         height: "100%",
                         borderRadius: "999px",
-                        background:
-                          "linear-gradient(90deg, #60a5fa 0%, #22c55e 100%)",
+                        background: row.color,
+                        transition: "width 0.3s ease",
                       }}
                     />
                   </div>

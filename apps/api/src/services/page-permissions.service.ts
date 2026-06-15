@@ -1,7 +1,31 @@
 import { prisma } from '@kpi-platform/db';
-import { PROJECT_PAGE_ACCESS_OPTIONS, PROJECT_PAGE_KEYS, ProjectPageKey } from '@kpi-platform/shared-types';
+import {
+  PROJECT_PAGE_ACCESS_OPTIONS,
+  PROJECT_PAGE_KEYS,
+  ProjectPageKey,
+  ROLE_ACCESS,
+  normalizeRole
+} from '@kpi-platform/shared-types';
 
 const pageKeySet = new Set<ProjectPageKey>(PROJECT_PAGE_KEYS);
+
+/**
+ * Baseline page keys a role may access, sourced from the SAME ROLE_ACCESS table the
+ * dashboard sidebar and client route guard use. This keeps the backend page-access
+ * middleware consistent with the frontend: an ops_lead/analyst gets exactly their
+ * role's pages by default, instead of the backend's old per-user-only model that
+ * 403'd whenever no explicit UserPagePermission rows existed.
+ */
+const getRoleAllowedPageKeys = (role: unknown): ProjectPageKey[] => {
+  const normalized = normalizeRole(role as any);
+  if (!normalized) {
+    return [];
+  }
+
+  return ROLE_ACCESS[normalized].sidebar.filter(
+    (key): key is ProjectPageKey => pageKeySet.has(key as ProjectPageKey)
+  );
+};
 
 export type PagePermissionRow = {
   pageKey: ProjectPageKey;
@@ -45,17 +69,25 @@ export const PagePermissionsService = {
       return [];
     }
 
-    if (user.role === 'SUPER_ADMIN') {
+    if (normalizeRole(user.role) === 'super_admin') {
       return PROJECT_PAGE_KEYS;
     }
 
+    // Start from the role's baseline (matches the frontend ROLE_ACCESS), then let
+    // explicit per-user rows refine it: isAllowed:true adds an extra page, isAllowed:false
+    // revokes one. With no explicit rows the user simply gets their full role baseline.
+    const allowed = new Set<ProjectPageKey>(getRoleAllowedPageKeys(user.role));
     const rows = await PagePermissionsService.getPermissionRows(user.id, projectId);
 
-    if (rows.length === 0) {
-      return PROJECT_PAGE_KEYS;
+    for (const row of rows) {
+      if (row.isAllowed) {
+        allowed.add(row.pageKey);
+      } else {
+        allowed.delete(row.pageKey);
+      }
     }
 
-    return rows.filter((row) => row.isAllowed).map((row) => row.pageKey);
+    return Array.from(allowed);
   },
 
   async getPermissionMatrix(userId: string, projectId: string) {
