@@ -17,6 +17,7 @@ export interface KpiSummaryResponse {
  */
 export interface MetricFilterDto {
     siteId: string;
+    tenantId?: string | null;
     connectorInstanceId?: string | null;
     timeRange?: '1h' | '24h' | '7d';
     region?: string;

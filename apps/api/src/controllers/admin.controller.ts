@@ -1,14 +1,14 @@
 import { prisma } from '@kpi-platform/db';
 import { AuthService } from '../services/auth.service';
 import { PagePermissionsService } from '../services/page-permissions.service';
-import { PROJECT_PAGE_KEYS, normalizeRole as normalizeAppRole } from '@kpi-platform/shared-types';
+import { PROJECT_PAGE_KEYS, normalizeRole as normalizeAppRole, type AnyRole } from '@kpi-platform/shared-types';
 import crypto from 'crypto';
 
 const normalizeRole = (role: unknown) => String(role || '').toUpperCase();
-const normalizeRequesterRole = (role: unknown) => normalizeAppRole(role);
+const normalizeRequesterRole = (role: unknown): string => normalizeAppRole(role as AnyRole) ?? '';
 
 const toStoredRole = (role: unknown) => {
-    switch (normalizeAppRole(role)) {
+    switch (normalizeAppRole(role as AnyRole)) {
         case 'super_admin':
             return 'SUPER_ADMIN';
         case 'admin':

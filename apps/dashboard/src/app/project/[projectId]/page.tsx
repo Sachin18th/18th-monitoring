@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useAuth } from '../../../../context/AuthContext';
+import { useAuth } from '../../../context/AuthContext';
 import { getDefaultProjectPathForRole, normalizeRole } from '@kpi-platform/shared-types';
 
 export default function ProjectRedirectPage() {
