@@ -76,7 +76,14 @@ export class NotificationService {
     }
 
     const transporter = this.getTransporter();
-    const from = process.env.ALERT_FROM_EMAIL || 'alerts@kpi-monitoring.local';
+    // Most SMTP relays reject a From that isn't the authenticated mailbox/domain,
+    // so fall back through the configured sender addresses before the local stub.
+    const from =
+      process.env.ALERT_FROM_EMAIL ||
+      process.env.EMAIL_FROM ||
+      process.env.FROM_EMAIL ||
+      process.env.SMTP_USER ||
+      'alerts@kpi-monitoring.local';
     if (!transporter) {
       console.log(`[NotificationService] (no transport) would email ${to.join(', ')} | ${subject}`);
       return { sent: false, reason: 'no SMTP transport (SMTP_HOST/USER/PASS missing)' };

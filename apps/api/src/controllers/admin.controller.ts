@@ -5,9 +5,9 @@ import { PROJECT_PAGE_KEYS, normalizeRole as normalizeAppRole } from '@kpi-platf
 import crypto from 'crypto';
 
 const normalizeRole = (role: unknown) => String(role || '').toUpperCase();
-const normalizeRequesterRole = (role: unknown) => normalizeAppRole(role);
+const normalizeRequesterRole = (role: string | null | undefined) => normalizeAppRole(role);
 
-const toStoredRole = (role: unknown) => {
+const toStoredRole = (role: string | null | undefined) => {
     switch (normalizeAppRole(role)) {
         case 'super_admin':
             return 'SUPER_ADMIN';
@@ -21,7 +21,7 @@ const toStoredRole = (role: unknown) => {
     }
 };
 
-const getAllowedInviteRoles = (role: unknown) => {
+const getAllowedInviteRoles = (role: string | null | undefined) => {
     const requesterRole = normalizeRequesterRole(role);
 
     if (requesterRole === 'super_admin') {
@@ -35,7 +35,7 @@ const getAllowedInviteRoles = (role: unknown) => {
     return new Set<string>();
 };
 
-const canManageProjectAdministration = (role: unknown, assignedProjects: string[] | undefined, projectId: string) => {
+const canManageProjectAdministration = (role: string | null | undefined, assignedProjects: string[] | undefined, projectId: string) => {
     const requesterRole = normalizeRequesterRole(role);
 
     if (requesterRole === 'super_admin') {
@@ -154,7 +154,7 @@ export const invitePlatformUser = async (req: any, reply: any) => {
     const requesterRole = normalizeRequesterRole(req.user.role);
     const requestedRole = normalizeRequesterRole(req.body?.role);
     const allowedRoles = getAllowedInviteRoles(req.user.role);
-    const role = allowedRoles.has(requestedRole) ? toStoredRole(requestedRole) : null;
+    const role = allowedRoles.has(requestedRole ?? '') ? toStoredRole(requestedRole) : null;
     const roleOverride = req.body?.roleOverride ?? null;
     const pageKeys = normalizePageKeys(req.body?.pageKeys);
 
@@ -322,7 +322,7 @@ export const createPlatformUser = async (req: any, reply: any) => {
     const { email, name, password } = req.body;
     const requestedRole = normalizeRequesterRole(req.body?.role);
     const allowedRoles = getAllowedInviteRoles(req.user.role);
-    const role = allowedRoles.has(requestedRole) ? toStoredRole(requestedRole) : null;
+    const role = allowedRoles.has(requestedRole ?? '') ? toStoredRole(requestedRole) : null;
     const roleOverride = req.body?.roleOverride ?? null;
 
     if (!email || !password || !name) {
@@ -448,7 +448,7 @@ export const updatePlatformUser = async (req: any, reply: any) => {
         return reply.code(400).send({ error: 'Missing fields' });
     }
 
-    if (role && !allowedRoles.has(requestedRole)) {
+    if (role && !allowedRoles.has(requestedRole ?? '')) {
         return reply.code(400).send({ error: 'Invalid role' });
     }
 
