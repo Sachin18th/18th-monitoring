@@ -108,64 +108,70 @@ export class PageSpeedService {
 
             // Fetch for both strategies and tolerate one strategy failing.
             // This avoids 502 responses when Google API is temporarily slow for one device.
+            // Run the strategies concurrently: sequential mobile+desktop scans can take
+            // ~60s+ combined, which pushes the request past the dashboard proxy / client
+            // timeout (70s) and surfaces as a socket-hang-up / ECONNRESET 500.
             const strategies: PagespeedStrategy[] = ['mobile', 'desktop'];
             const timestamp = new Date();
 
             const strategyResults: Array<{ strategy: PagespeedStrategy; upserted: number }> = [];
             const rejected: Array<{ strategy: PagespeedStrategy; reason: unknown }> = [];
 
-            for (const strategy of strategies) {
-                try {
-                    const response = await this.fetchPageSpeedResultWithRetry(storeUrl, strategy);
-                    console.log('[PageSpeedService] syncProjectMetrics:pagespeed-response', {
+            const settled = await Promise.allSettled(strategies.map(async (strategy) => {
+                const response = await this.fetchPageSpeedResultWithRetry(storeUrl, strategy);
+                console.log('[PageSpeedService] syncProjectMetrics:pagespeed-response', {
+                    tenantId,
+                    projectId,
+                    strategy,
+                    hasResponse: Boolean(response),
+                    lighthouseCategories: response?.lighthouseResult ? Object.keys(response.lighthouseResult) : [],
+                });
+
+                const audits = response?.lighthouseResult?.audits || {};
+                const rows = METRIC_MAP.map((metric) => ({
+                    metricName: metric.key,
+                    metricValue: Number(audits?.[metric.auditName]?.numericValue),
+                })).filter((row) => Number.isFinite(row.metricValue));
+
+                console.log('[PageSpeedService] syncProjectMetrics:parsed-metrics', {
+                    tenantId,
+                    projectId,
+                    strategy,
+                    rows,
+                });
+
+                if (rows.length === 0) {
+                    console.warn('[PageSpeedService] syncProjectMetrics:no-metrics-extracted', {
                         tenantId,
                         projectId,
                         strategy,
-                        hasResponse: Boolean(response),
-                        lighthouseCategories: response?.lighthouseResult ? Object.keys(response.lighthouseResult) : [],
+                        auditsPresent: Object.keys(audits).length,
+                        auditsSample: Object.keys(audits).slice(0, 12),
                     });
-
-                    const audits = response?.lighthouseResult?.audits || {};
-                    const rows = METRIC_MAP.map((metric) => ({
-                        metricName: metric.key,
-                        metricValue: Number(audits?.[metric.auditName]?.numericValue),
-                    })).filter((row) => Number.isFinite(row.metricValue));
-
-                    console.log('[PageSpeedService] syncProjectMetrics:parsed-metrics', {
-                        tenantId,
-                        projectId,
-                        strategy,
-                        rows,
-                    });
-
-                    if (rows.length === 0) {
-                        console.warn('[PageSpeedService] syncProjectMetrics:no-metrics-extracted', {
-                            tenantId,
-                            projectId,
-                            strategy,
-                            auditsPresent: Object.keys(audits).length,
-                            auditsSample: Object.keys(audits).slice(0, 12),
-                        });
-                        strategyResults.push({ strategy, upserted: 0 });
-                        continue;
-                    }
-
-                    await Promise.all(rows.map((row) => this.upsertMetric({
-                        tenantId,
-                        siteId: projectId,
-                        metricName: row.metricName,
-                        metricValue: row.metricValue,
-                        timestamp,
-                        source: this.buildSource(strategy),
-                        device: strategy,
-                        connectorInstanceId: connectorInstanceIdParam || connector.id
-                    })));
-
-                    strategyResults.push({ strategy, upserted: rows.length });
-                } catch (error) {
-                    rejected.push({ strategy, reason: error });
+                    return { strategy, upserted: 0 };
                 }
-            }
+
+                await Promise.all(rows.map((row) => this.upsertMetric({
+                    tenantId,
+                    siteId: projectId,
+                    metricName: row.metricName,
+                    metricValue: row.metricValue,
+                    timestamp,
+                    source: this.buildSource(strategy),
+                    device: strategy,
+                    connectorInstanceId: connectorInstanceIdParam || connector.id
+                })));
+
+                return { strategy, upserted: rows.length };
+            }));
+
+            settled.forEach((outcome, index) => {
+                if (outcome.status === 'fulfilled') {
+                    strategyResults.push(outcome.value);
+                } else {
+                    rejected.push({ strategy: strategies[index], reason: outcome.reason });
+                }
+            });
 
             if (rejected.length > 0) {
                 console.warn('[PageSpeedService] syncProjectMetrics:partial-failure', {
@@ -384,8 +390,14 @@ export class PageSpeedService {
             return null;
         }
 
+        let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
             const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
+            // Bound this lookup so a slow/hanging BigCommerce API can't consume the
+            // whole sync budget and trip the dashboard proxy timeout (ECONNRESET 500).
+            const controller = new AbortController();
+            const timeoutMs = Number(process.env.BIGCOMMERCE_FETCH_TIMEOUT_MS || 10000);
+            timeout = setTimeout(() => controller.abort(), timeoutMs);
             const response = await fetchFn(`https://api.bigcommerce.com/stores/${storeHash}/v2/store`, {
                 method: 'GET',
                 headers: {
@@ -393,6 +405,7 @@ export class PageSpeedService {
                     'Content-Type': 'application/json',
                     'X-Auth-Token': accessToken,
                 },
+                signal: controller.signal,
             });
 
             if (!response.ok) {
@@ -425,6 +438,8 @@ export class PageSpeedService {
                 storeHash,
                 error,
             });
+        } finally {
+            if (timeout) clearTimeout(timeout);
         }
 
         return null;
@@ -862,31 +877,50 @@ export class PageSpeedService {
         const token = String(credentials.adminApiAccessToken || credentials.accessToken || credentials.token || '').trim();
         const apiVersion = String(cfg.apiVersion || '2024-01').trim();
 
-        if (!shopDomain || !token) {
+        if (!shopDomain) {
             return { homepage, pdp: null, plp: null, checkout: null };
         }
 
         // Public domain: prefer the shop's primary domain over the myshopify domain.
+        // The Admin API is optional here — if the token is missing/invalid (401), we
+        // fall back to Shopify's public storefront JSON endpoints, which need no auth.
         let publicDomain = shopDomain;
-        const shop = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/shop.json');
-        const primary = shop?.shop?.domain || shop?.shop?.myshopify_domain;
-        if (primary) publicDomain = this.normalizeShopDomain(primary);
+        if (token) {
+            const shop = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/shop.json');
+            const primary = shop?.shop?.domain || shop?.shop?.myshopify_domain;
+            if (primary) publicDomain = this.normalizeShopDomain(primary);
+        }
 
         const base = `https://${publicDomain}`;
 
-        // PDP: first published product handle.
+        // PDP: first published product handle. Try the Admin API first (richer
+        // filtering), then fall back to the public /products.json endpoint.
         let pdp: string | null = null;
-        const products = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/products.json?limit=1&published_status=published');
-        const productHandle = products?.products?.[0]?.handle;
+        let productHandle: string | undefined;
+        if (token) {
+            const products = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/products.json?limit=1&published_status=published');
+            productHandle = products?.products?.[0]?.handle;
+        }
+        if (!productHandle) {
+            const products = await this.shopifyPublicGet(publicDomain, '/products.json?limit=1');
+            productHandle = products?.products?.[0]?.handle;
+        }
         if (productHandle) pdp = `${base}/products/${productHandle}`;
 
-        // PLP: first collection handle (custom or smart).
+        // PLP: first collection handle (custom or smart via Admin API, else public).
         let plp: string | null = null;
-        const custom = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/custom_collections.json?limit=1');
-        let collectionHandle = custom?.custom_collections?.[0]?.handle;
+        let collectionHandle: string | undefined;
+        if (token) {
+            const custom = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/custom_collections.json?limit=1');
+            collectionHandle = custom?.custom_collections?.[0]?.handle;
+            if (!collectionHandle) {
+                const smart = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/smart_collections.json?limit=1');
+                collectionHandle = smart?.smart_collections?.[0]?.handle;
+            }
+        }
         if (!collectionHandle) {
-            const smart = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/smart_collections.json?limit=1');
-            collectionHandle = smart?.smart_collections?.[0]?.handle;
+            const collections = await this.shopifyPublicGet(publicDomain, '/collections.json?limit=1');
+            collectionHandle = collections?.collections?.[0]?.handle;
         }
         if (collectionHandle) plp = `${base}/collections/${collectionHandle}`;
 
@@ -896,6 +930,30 @@ export class PageSpeedService {
             plp,
             checkout: `${base}/checkout`,
         };
+    }
+
+    /**
+     * Fetch a public Shopify storefront JSON endpoint (e.g. /products.json,
+     * /collections.json). These require no authentication and work as long as the
+     * storefront isn't password-protected — used to discover representative PDP/PLP
+     * URLs when the Admin API token is missing or rejected (401).
+     */
+    private static async shopifyPublicGet(publicDomain: string, path: string): Promise<any | null> {
+        try {
+            const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
+            const response = await fetchFn(`https://${publicDomain}${path}`, {
+                method: 'GET',
+                headers: { Accept: 'application/json' },
+            });
+            if (!response.ok) {
+                console.warn('[PageSpeedService] shopifyPublicGet:non-ok', { path, status: response.status });
+                return null;
+            }
+            return await response.json();
+        } catch (error) {
+            console.warn('[PageSpeedService] shopifyPublicGet:failed', { path, error: error instanceof Error ? error.message : String(error) });
+            return null;
+        }
     }
 
     private static normalizeShopDomain(value: unknown): string {

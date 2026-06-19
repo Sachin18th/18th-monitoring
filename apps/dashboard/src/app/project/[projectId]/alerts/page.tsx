@@ -130,6 +130,15 @@ const toTimestampMs = (value: unknown) => {
 const compareByTimestampDesc = (left: { timestamp?: unknown }, right: { timestamp?: unknown }) =>
   toTimestampMs(right.timestamp) - toTimestampMs(left.timestamp);
 
+// Render a raw ISO/string timestamp as a compact, readable value for the table.
+const formatRowTime = (value: unknown) => {
+  const text = toText(value, '');
+  if (!text) return '—';
+  const ms = new Date(text).getTime();
+  if (!Number.isFinite(ms) || ms === 0) return text;
+  return new Date(ms).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
 const getCollection = (value: any, key?: string) => {
   if (Array.isArray(value)) return value;
   const payload = value?.data ?? value;
@@ -251,43 +260,6 @@ export default function AlertsPage() {
     };
   }, [alerts, auditLogs]);
 
-  const timelineEvents = useMemo(() => {
-    const events: any[] = [];
-
-    alerts.slice(0, 5).forEach((a) =>
-      events.push({
-        id: `t-al-${a.alertId}`,
-        type: 'alert',
-        title: `${a.kpiName} Breach`,
-        description: a.message,
-        timestamp: a.triggeredAt,
-        severity: a.severity,
-      })
-    );
-
-    auditLogs.slice(0, 3).forEach((a) =>
-      events.push({
-        id: `t-au-${a.id}`,
-        type: 'audit',
-        title: a.action,
-        description: `${a.actor} modified ${a.entity}`,
-        timestamp: a.timestamp,
-      })
-    );
-
-    activityFeed.slice(0, 2).forEach((a) =>
-      events.push({
-        id: `t-ac-${a.id}`,
-        type: 'activity',
-        title: a.type,
-        description: a.description,
-        timestamp: a.timestamp,
-      })
-    );
-
-    return events.sort(compareByTimestampDesc);
-  }, [alerts, auditLogs, activityFeed]);
-
   const handleSignalClick = (type: string, data: any) => {
     setSelectedSignal({ type, data });
     setIsDrawerOpen(true);
@@ -330,18 +302,6 @@ export default function AlertsPage() {
     }));
   }, [activeTab, alerts, auditLogs, activityFeed]);
 
-  const timelineItems = useMemo(
-    () =>
-      timelineEvents.map((item) => ({
-        id: item.id,
-        type: item.type.toUpperCase() as 'ALERT' | 'AUDIT' | 'ACTIVITY',
-        timestamp: item.timestamp || '—',
-        title: item.title,
-        description: item.description,
-      })),
-    [timelineEvents]
-  );
-
   if (allowedPageKeys !== null && !allowedPageKeys.includes('alerts')) {
     return <PageRestricted pageKey="alerts" />;
   }
@@ -356,11 +316,11 @@ export default function AlertsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
             <Siren style={{ width: '20px', height: '20px', color: 'var(--text-muted)' }} />
             <h1 style={{ fontSize: '22px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
-              Alert Center & Observability
+              Alerts
             </h1>
           </div>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0 }}>
-            Unified operational visibility layer for real-time incidents, audit trails, and system behavior.
+            Every alert across the project — order, rule-based, and system signals — plus audit trails and activity. Configure rules in the Alert Center.
           </p>
         </div>
 
@@ -370,9 +330,6 @@ export default function AlertsPage() {
           </button>
           <button type="button" style={actionButtonStyle}>
             <History style={{ width: '14px', height: '14px' }} /> Audit Log
-          </button>
-          <button type="button" style={primaryActionButtonStyle}>
-            <Settings style={{ width: '14px', height: '14px' }} /> Rule Config
           </button>
         </div>
 
@@ -434,7 +391,7 @@ export default function AlertsPage() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '24px', marginBottom: '24px', overflow: 'visible', alignItems: 'start' }}>
+        <div style={{ marginBottom: '24px', overflow: 'visible' }}>
           <div
             style={{
               borderRadius: '12px',
@@ -508,7 +465,7 @@ export default function AlertsPage() {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '90px 80px 1fr 90px 160px 24px',
+                gridTemplateColumns: '104px 128px minmax(0, 1fr) 104px 140px 24px',
                 gap: '12px',
                 padding: '10px 20px',
                 borderBottom: '1px solid var(--border-card)',
@@ -521,7 +478,7 @@ export default function AlertsPage() {
                     fontSize: '9px',
                     textTransform: 'uppercase',
                     letterSpacing: '0.08em',
-                    color: 'rgba(255,255,255,0.3)',
+                    color: 'var(--text-muted)',
                     fontWeight: 500,
                   }}
                 >
@@ -539,7 +496,7 @@ export default function AlertsPage() {
                     onClick={() => handleSignalClick(row.type, row.raw)}
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '90px 80px 1fr 90px 160px 24px',
+                      gridTemplateColumns: '104px 128px minmax(0, 1fr) 104px 140px 24px',
                       gap: '12px',
                       padding: '14px 20px',
                       borderBottom: '1px solid var(--border-card)',
@@ -565,7 +522,7 @@ export default function AlertsPage() {
                       • {row.severity}
                     </span>
 
-                    <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>{row.module || '—'}</span>
+                    <span title={row.module || '—'} style={{ fontSize: '11px', color: 'var(--text-label)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{row.module || '—'}</span>
 
                     <span
                       style={{
@@ -597,201 +554,14 @@ export default function AlertsPage() {
                       {row.lifecycle}
                     </span>
 
-                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
-                      {row.time}
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {formatRowTime(row.time)}
                     </span>
 
                     <span style={{ color: 'var(--text-label)', fontSize: '12px' }}>›</span>
                   </div>
                 );
               })}
-            </div>
-          </div>
-
-          <div
-            style={{
-              borderRadius: '12px',
-              border: '1px solid var(--border-card)',
-              background: 'var(--bg-card)',
-              padding: '20px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0',
-              overflow: 'visible',
-              minHeight: '400px',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                marginBottom: '20px',
-                gap: '8px',
-                flexWrap: 'nowrap',
-              }}
-            >
-              <span
-                style={{
-                  fontSize: '10px',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.1em',
-                  color: 'var(--text-muted)',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                UNIFIED OPERATIONAL TIMELINE
-              </span>
-              <span
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  padding: '3px 8px',
-                  borderRadius: '999px',
-                  fontSize: '9px',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  background: 'rgba(74,222,128,0.1)',
-                  color: '#4ade80',
-                  border: '1px solid rgba(74,222,128,0.2)',
-                  whiteSpace: 'nowrap',
-                  flexShrink: 0,
-                }}
-              >
-                <span
-                  style={{
-                    width: '5px',
-                    height: '5px',
-                    borderRadius: '50%',
-                    background: '#4ade80',
-                    flexShrink: 0,
-                    animation: 'pulse 2s infinite',
-                  }}
-                />
-                LIVE
-              </span>
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0',
-                overflowY: 'auto',
-                maxHeight: '520px',
-                paddingRight: '4px',
-              }}
-            >
-              {timelineItems.map((item) => (
-                <div
-                  key={item.id}
-                  style={{
-                    display: 'flex',
-                    gap: '12px',
-                    padding: '12px 0',
-                    borderBottom: '1px solid var(--border-card)',
-                    position: 'relative',
-                  }}
-                >
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: '0',
-                      top: '0',
-                      bottom: '0',
-                      width: '2px',
-                      background:
-                        item.type === 'ALERT'
-                          ? 'rgba(248,113,113,0.4)'
-                          : item.type === 'AUDIT'
-                            ? 'rgba(96,165,250,0.4)'
-                            : 'rgba(129,140,248,0.4)',
-                      borderRadius: '1px',
-                    }}
-                  />
-
-                  <div style={{ paddingLeft: '12px', flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '8px',
-                        marginBottom: '4px',
-                      }}
-                    >
-                      <span
-                        style={{
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          fontSize: '9px',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.08em',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                          flexShrink: 0,
-                          background:
-                            item.type === 'ALERT'
-                              ? 'rgba(248,113,113,0.12)'
-                              : item.type === 'AUDIT'
-                                ? 'rgba(96,165,250,0.12)'
-                                : 'rgba(129,140,248,0.12)',
-                          color:
-                            item.type === 'ALERT'
-                              ? '#f87171'
-                              : item.type === 'AUDIT'
-                                ? '#60a5fa'
-                                : '#818cf8',
-                        }}
-                      >
-                        {item.type}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: '10px',
-                          color: 'var(--text-label)',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 0,
-                          fontFamily: 'monospace',
-                        }}
-                      >
-                        {item.timestamp}
-                      </span>
-                    </div>
-
-                    <p
-                      style={{
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        color: 'rgba(255,255,255,0.85)',
-                        margin: '0 0 3px 0',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {item.title}
-                    </p>
-
-                    <p
-                      style={{
-                        fontSize: '11px',
-                        color: 'rgba(255,255,255,0.3)',
-                        margin: 0,
-                        lineHeight: 1.4,
-                        overflow: 'hidden',
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                      }}
-                    >
-                      {item.description}
-                    </p>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         </div>

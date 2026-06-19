@@ -10,6 +10,7 @@ import { KafkaStreamConsumer } from '../../../services/processor/src/consumer/ka
 import { TOPICS } from './config/topics';
 import { dashboardRoutes } from './routes/dashboard';
 import { login, getMe, getProjects } from './controllers/auth.controller';
+import { requestOtp, verifyOtp } from './controllers/otp.controller';
 import { createProject, updateProject, CreateProjectSchema } from './controllers/project.controller';
 import { listPlatformUsers, createPlatformUser, updatePlatformUser, updatePlatformUserStatus, deletePlatformUser, purgeDemoData, listPageKeys, getCurrentUserPermissions, invitePlatformUser, updateUserPagePermissions } from './controllers/admin.controller';
 import { tenantAuthHandler } from './middlewares/auth.middleware';
@@ -250,6 +251,32 @@ export const bootstrapApi = async () => {
             }
         }
     }, login);
+
+    // OTP login (passwordless). Additive — does not alter password login above.
+    server.post('/api/v1/auth/otp/request', {
+        schema: {
+            body: {
+                type: 'object',
+                required: ['email'],
+                properties: {
+                    email: { type: 'string', format: 'email' }
+                }
+            }
+        }
+    }, requestOtp);
+    server.post('/api/v1/auth/otp/verify', {
+        schema: {
+            body: {
+                type: 'object',
+                required: ['email', 'code'],
+                properties: {
+                    email: { type: 'string', format: 'email' },
+                    code: { type: 'string', minLength: 6, maxLength: 6 }
+                }
+            }
+        }
+    }, verifyOtp);
+
     server.get('/api/v1/user/me',     { preHandler: [tenantAuthHandler] }, getMe);
     server.get('/api/v1/user/permissions', { preHandler: [tenantAuthHandler] }, getCurrentUserPermissions);
     server.get('/api/user/permissions', { preHandler: [tenantAuthHandler] }, getCurrentUserPermissions);

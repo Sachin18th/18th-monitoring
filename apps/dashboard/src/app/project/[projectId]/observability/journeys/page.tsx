@@ -818,7 +818,6 @@ export default function JourneyIntelligencePage() {
                   position: 'relative',
                   borderRadius: '12px',
                   border: '1px solid var(--border-card)',
-                  borderTop: `3px solid ${metric.accent}`,
                   background: 'var(--bg-card)',
                   padding: '18px 20px',
                   display: 'flex',

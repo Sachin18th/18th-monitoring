@@ -166,6 +166,7 @@ model User {
   projectAccess   UserProjectAccess[]
   pagePermissions UserPagePermission[]
   sessions        UserSession[]
+  otpCodes        OtpCode[]
 
   @@index([tenantId], map: "idx_user_tenant")
   @@map("users")
@@ -183,6 +184,24 @@ model UserSession {
   @@index([userId], map: "idx_session_user")
   @@index([expiresAt], map: "idx_session_expires")
   @@map("user_sessions")
+}
+
+model OtpCode {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.VarChar(36)
+  email        String    @db.VarChar(255)
+  codeHash     String    @map("code_hash") @db.VarChar(255)
+  expiresAt    DateTime  @map("expires_at")
+  consumedAt   DateTime? @map("consumed_at")
+  attemptCount Int       @default(0) @map("attempt_count")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_otp_user")
+  @@index([email], map: "idx_otp_email")
+  @@index([expiresAt], map: "idx_otp_expires")
+  @@map("otp_codes")
 }
 
 model UserProjectAccess {

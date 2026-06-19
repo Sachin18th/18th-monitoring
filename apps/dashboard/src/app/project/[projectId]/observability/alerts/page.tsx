@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams } from 'next/navigation';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import {
   Bell,
-  Search,
   ShieldAlert,
   AlertTriangle,
   CheckCircle2,
@@ -16,6 +15,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PageRestricted } from '@/components/PageRestricted';
+import { AlertRuleConfigDrawer } from '@/components/observability/AlertRuleConfigDrawer';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -90,9 +90,13 @@ const metricBottomRowStyle: React.CSSProperties = {
 
 const panelGridStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: '260px 1fr',
+  gridTemplateColumns: '280px 1fr',
   gap: '24px',
   overflow: 'visible',
+  // Grow to fill the remaining viewport height so the page doesn't look empty
+  // when there are only a few alerts (the alert panel stretches to fit).
+  flex: 1,
+  minHeight: 0,
 };
 
 const leftColumnStyle: React.CSSProperties = {
@@ -140,19 +144,33 @@ const alertRowStyle: React.CSSProperties = {
   background: 'var(--bg-input)',
 };
 
+// Where "Investigate" sends the operator for each metric family — the page
+// where they can actually dig into that signal.
+const FAMILY_ROUTE: Record<string, string> = {
+  pagespeed: 'performance',
+  rum_errors: 'rum',
+  orders: 'orders',
+  customer_session: 'customers',
+  journey: 'observability/journeys',
+};
+
 export default function AlertCenterPage() {
   const { projectId } = useParams();
+  const router = useRouter();
   const { apiFetch, token } = useAuth();
   // Active store selection — drives which connector's alerts are shown and
   // triggers a live DB re-sync whenever the operator switches stores.
   const { connectorInstanceId, connectorLabel, connectorSelectionTick } = useConnectorFilter();
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [initialLoaded, setInitialLoaded] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [alerts, setAlerts]   = useState<any[]>([]);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
   const [severityFilter, setSeverityFilter] = useState<string[]>([]);
-  const [sourceFilter, setSourceFilter] = useState<string[]>([]);
+  const [ruleConfigOpen, setRuleConfigOpen] = useState(false);
+  const [rules, setRules] = useState<any[]>([]);
+  const [ruleFilter, setRuleFilter] = useState<string[]>([]);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
@@ -171,37 +189,61 @@ export default function AlertCenterPage() {
       const res = await apiFetch(`/api/v1/dashboard/alerts?siteId=${projectId}`, { suppressUnauthorizedRedirect: true });
       // Handle both {alerts:[]} and plain []
       const list = Array.isArray(res) ? res : (res?.alerts ?? []);
-      // Defensive client-side scoping: when a store is selected, drop any alert
-      // not tied to that connector (system-wide alerts have a null connector).
-      const scoped = connectorInstanceId
-        ? list.filter((a: any) => String(a?.connectorInstanceId ?? '') === connectorInstanceId)
-        : list;
-      setAlerts(scoped);
+      // Alert Center is the rule-driven view: show only alerts raised by a
+      // configured alert rule (alertType "rule:<id>"). The "All Alerts" page
+      // (/alerts) shows every alert including order + system signals.
+      const ruleBased = list.filter((a: any) => String(a?.alertType ?? '').startsWith('rule:'));
+      // Rule-based alerts are project-wide (connectorInstanceId is null on the row).
+      // Do NOT filter by store here — the rule evaluates project metrics and must
+      // surface regardless of which store is selected in the UI.
+      setAlerts(ruleBased);
+
+      // Load configured rules so the page reflects what's being monitored
+      // (this is the rule-management view). Non-fatal if it fails.
+      try {
+        const rulesRes = await apiFetch(`/api/v1/dashboard/alert-rules`, { suppressUnauthorizedRedirect: true });
+        setRules(Array.isArray(rulesRes?.rules) ? rulesRes.rules : []);
+      } catch {
+        /* rules are secondary to alerts; ignore load errors */
+      }
     } catch (err: any) {
       console.error('[AlertCenter] Load failed', err);
       setError('Failed to synchronize operational signals.');
     } finally {
       setLoading(false);
+      setInitialLoaded(true);
     }
   }, [apiFetch, projectId, token, connectorInstanceId]);
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 30_000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+  // Stable ref always points to the latest loadData closure —
+  // prevents the interval from going stale without re-creating it.
+  const loadDataRef = useRef(loadData);
+  useEffect(() => { loadDataRef.current = loadData; }, [loadData]);
 
-  // Real-time re-synchronization when the operator switches the selected store.
-  // Clear stale alerts immediately so the panel never shows another store's data,
-  // then pull a fresh DB snapshot scoped to the newly selected connector.
+  // Interval fires every 30 s. Empty deps: created once, never torn down by
+  // apiFetch / AuthContext re-renders. Initial call returns early if token
+  // isn't ready yet — the [token] effect below handles that case.
+  useEffect(() => {
+    loadDataRef.current();
+    const interval = setInterval(() => loadDataRef.current(), 30_000);
+    return () => clearInterval(interval);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trigger an immediate load the moment the auth token becomes available
+  // (the interval's first tick can be up to 30 s away).
+  useEffect(() => {
+    if (token) loadDataRef.current();
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-synchronize when the operator switches the active store.
+  // Clear stale data immediately, then pull a scoped snapshot.
   useEffect(() => {
     if (!token || !projectId) return;
     setAlerts([]);
     setSeverityFilter([]);
-    setSourceFilter([]);
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectorSelectionTick]);
+    setRuleFilter([]);
+    loadDataRef.current();
+  }, [connectorSelectionTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Derive stats from live alerts
   const stats = useMemo(() => {
@@ -211,15 +253,46 @@ export default function AlertCenterPage() {
     return { active: active.length, critical: critical.length, resolved: resolved.length };
   }, [alerts]);
 
+  // Rule-management stats — this page owns alert rules, so surface their state.
+  const ruleStats = useMemo(() => {
+    const enabled = rules.filter((r) => r.enabled).length;
+    return { total: rules.length, enabled };
+  }, [rules]);
+
+  // Resolve the ruleId an alert came from (context.ruleId or "rule:<id>").
+  const alertRuleId = (a: any): string => {
+    if (a?.context?.ruleId) return String(a.context.ruleId);
+    const t = String(a?.alertType ?? '');
+    return t.startsWith('rule:') ? t.slice(5) : '';
+  };
+  const rulesById = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const r of rules) m[r.id] = r;
+    return m;
+  }, [rules]);
+
   // Map backend alert shape → AlertList component shape
-  const mappedAlerts = useMemo(() => alerts.map(a => ({
-    id: a.alertId || a.id,
-    title: a.message || a.kpiName || 'Alert',
-    severity: (a.severity?.toUpperCase() as any) || 'HIGH',
-    status: a.status === 'active' ? ('ACTIVE' as const) : ('RESOLVED' as const),
-    timestamp: a.triggeredAt ? new Date(a.triggeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
-    source: a.module || a.affectedEntity || 'System',
-  })), [alerts]);
+  const mappedAlerts = useMemo(() => alerts.map(a => {
+    const ruleId = alertRuleId(a);
+    return {
+      id: a.alertId || a.id,
+      ruleId,
+      title: a.message || a.kpiName || 'Alert',
+      severity: (a.severity?.toUpperCase() as any) || 'HIGH',
+      status: a.status === 'active' ? ('ACTIVE' as const) : ('RESOLVED' as const),
+      timestamp: a.triggeredAt ? new Date(a.triggeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
+      source: rulesById[ruleId]?.name || a.module || a.affectedEntity || 'System',
+      // Metric family drives where "Investigate" navigates. Prefer the alert's
+      // own context, fall back to the rule's criteria, then the module column.
+      metricFamily: a.context?.metricFamily || rulesById[ruleId]?.criteria?.metricFamily || a.module || '',
+    };
+  }), [alerts, rulesById]);
+
+  // "Investigate" → jump to the page for this alert's metric family.
+  const investigate = useCallback((metricFamily: string) => {
+    const sub = FAMILY_ROUTE[metricFamily] || 'overview';
+    router.push(`/project/${projectId}/${sub}`);
+  }, [router, projectId]);
 
   // Severity filter shows the full standard set of levels at all times so the
   // operator can filter by any severity — even ones with no live alerts yet.
@@ -229,16 +302,6 @@ export default function AlertCenterPage() {
   const severityCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const a of mappedAlerts) counts[a.severity] = (counts[a.severity] || 0) + 1;
-    return counts;
-  }, [mappedAlerts]);
-  // Signal sources are dynamic (derived from the alert module/entity).
-  const availableSources = useMemo(
-    () => Array.from(new Set(mappedAlerts.map((a) => a.source).filter(Boolean))),
-    [mappedAlerts],
-  );
-  const sourceCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const a of mappedAlerts) counts[a.source] = (counts[a.source] || 0) + 1;
     return counts;
   }, [mappedAlerts]);
 
@@ -262,16 +325,16 @@ export default function AlertCenterPage() {
       mappedAlerts.filter(
         (a) =>
           (severityFilter.length === 0 || severityFilter.includes(a.severity)) &&
-          (sourceFilter.length === 0 || sourceFilter.includes(a.source)),
+          (ruleFilter.length === 0 || ruleFilter.includes(a.ruleId)),
       ),
-    [mappedAlerts, severityFilter, sourceFilter],
+    [mappedAlerts, severityFilter, ruleFilter],
   );
 
   if (allowedPageKeys !== null && !allowedPageKeys.includes('observability/alerts')) {
     return <PageRestricted pageKey="observability/alerts" />;
   }
 
-  if (loading && alerts.length === 0) {
+  if (!initialLoaded) {
     return (
       <div style={{ ...pageStyle, ...sectionSpacingStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div className="flex flex-col items-center">
@@ -292,7 +355,7 @@ export default function AlertCenterPage() {
             <span>Alert Center</span>
           </h1>
           <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>
-            Real-time operational alerts and threshold monitoring for {projectId as string}
+            Rule-based alerts and threshold monitoring for {projectId as string} · configure rules via Rule Config. See every alert on the All Alerts page.
             {connectorInstanceId ? <> · <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{connectorLabel}</span></> : ' · All stores'}
           </p>
         </div>
@@ -301,10 +364,10 @@ export default function AlertCenterPage() {
           <button onClick={loadData} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
             <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0 }} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
-          <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
+          {/* <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
             <History style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Audit Log
-          </button>
-          <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid rgba(96,165,250,0.2)', background: '#2563EB', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: '#fff', flexShrink: 0, cursor: 'pointer' }}>
+          </button> */}
+          <button onClick={() => setRuleConfigOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid rgba(96,165,250,0.2)', background: '#2563EB', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: '#fff', flexShrink: 0, cursor: 'pointer' }}>
             <Settings style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Rule Config
           </button>
         </div>
@@ -321,13 +384,13 @@ export default function AlertCenterPage() {
         </div>
       )}
 
-      {/* Quick Stats */}
+      {/* Quick Stats — rule-focused: live rule alerts + configured rule state */}
       <div style={metricGridStyle}>
         {[
-          { label: 'Active Alerts',   value: String(stats.active),   color: 'text-rose-400',    icon: ShieldAlert },
-          { label: 'Critical',        value: String(stats.critical),  color: 'text-rose-500',    icon: AlertTriangle },
-          { label: 'Resolved (live)', value: String(stats.resolved),  color: 'text-emerald-400', icon: CheckCircle2 },
-          { label: 'Total Signals',   value: String(alerts.length),   color: 'text-indigo-400',  icon: Search },
+          { label: 'Active Alerts',    value: String(stats.active),       icon: ShieldAlert,   tone: stats.active > 0 ? 'error' : 'success',   tag: 'LIVE' },
+          { label: 'Critical',         value: String(stats.critical),     icon: AlertTriangle, tone: stats.critical > 0 ? 'error' : 'success', tag: 'CRITICAL' },
+          { label: 'Configured Rules', value: String(ruleStats.total),    icon: Settings,      tone: 'success',                                tag: 'RULES' },
+          { label: 'Enabled Rules',    value: String(ruleStats.enabled),  icon: CheckCircle2,  tone: 'success',                                tag: 'ENABLED' },
         ].map((stat) => (
           <div key={stat.label} style={metricCardStyle}>
             <div style={metricTopRowStyle}>
@@ -336,7 +399,7 @@ export default function AlertCenterPage() {
             </div>
             <div style={metricValueStyle}>{stat.value}</div>
             <div style={metricBottomRowStyle}>
-              <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: ['Critical', 'Active Alerts', 'Total Signals'].includes(stat.label) ? 'var(--error-bg)' : 'var(--success-bg)', color: ['Critical', 'Active Alerts', 'Total Signals'].includes(stat.label) ? 'var(--error-text)' : 'var(--success-text)' }}>{stat.label === 'Resolved (live)' ? 'RESOLVED' : stat.label === 'Total Signals' ? 'TOTAL' : stat.label === 'Active Alerts' ? 'ACTIVE' : 'CRITICAL'}</span>
+              <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', whiteSpace: 'nowrap', flexShrink: 0, background: stat.tone === 'error' ? 'var(--error-bg)' : 'var(--success-bg)', color: stat.tone === 'error' ? 'var(--error-text)' : 'var(--success-text)' }}>{stat.tag}</span>
               <span style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{stat.label}</span>
             </div>
           </div>
@@ -369,22 +432,36 @@ export default function AlertCenterPage() {
           </div>
 
           <div style={filterPanelStyle}>
-            <p style={filterTitleStyle}>Signal Source</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <p style={{ ...filterTitleStyle, marginBottom: 0 }}>Filter by Rule</p>
+              <button
+                onClick={() => setRuleConfigOpen(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'transparent', border: 'none', color: '#60a5fa', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+              >
+                <Settings style={{ width: '12px', height: '12px' }} /> Manage
+              </button>
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {availableSources.length === 0 ? (
-                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No sources</span>
+              {rules.length === 0 ? (
+                <span style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  No rules yet. Click <strong>Manage</strong> to create one.
+                </span>
               ) : (
-                availableSources.map((s) => (
-                  <label key={s} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={sourceFilter.includes(s)}
-                      onChange={() => setSourceFilter((list) => toggle(list, s))}
-                      style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }}
-                    />
-                    <span style={{ flex: 1 }}>{s}</span>
-                    <span style={{ padding: '1px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 600, background: 'var(--bg-input)', color: 'var(--text-muted)', flexShrink: 0 }}>{sourceCounts[s] || 0}</span>
-                  </label>
+                rules.map((r) => (
+                    <label
+                      key={r.id}
+                      title={`${r.criteria?.metric} ${r.criteria?.operator} ${r.criteria?.threshold}`}
+                      style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={ruleFilter.includes(r.id)}
+                        onChange={() => setRuleFilter((list) => toggle(list, r.id))}
+                        style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }}
+                      />
+                      <span title={r.enabled ? 'Enabled' : 'Disabled'} style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, background: r.enabled ? '#10b981' : 'var(--text-muted)' }} />
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                    </label>
                 ))
               )}
             </div>
@@ -394,11 +471,22 @@ export default function AlertCenterPage() {
 
         <div style={alertPanelStyle}>
           {visibleAlerts.length === 0 && !loading ? (
-            <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
-              <CheckCircle2 style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#10b981', flexShrink: 0 }} />
-              <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>All Clear</h3>
-              <p style={{ maxWidth: '20rem', fontSize: '14px', lineHeight: 1.625, color: 'var(--text-muted)' }}>No active alerts. All thresholds are within acceptable bounds.</p>
-            </div>
+            rules.length === 0 ? (
+              <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
+                <Bell style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#818cf8', flexShrink: 0 }} />
+                <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>No alert rules yet</h3>
+                <p style={{ maxWidth: '22rem', fontSize: '14px', lineHeight: 1.625, color: 'var(--text-muted)', marginBottom: '20px' }}>Create a rule to start monitoring your KPIs — when a threshold is breached, an alert appears here and recipients get emailed.</p>
+                <button onClick={() => setRuleConfigOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: 'none', background: '#2563EB', padding: '9px 16px', fontSize: '13px', fontWeight: 600, color: '#fff', cursor: 'pointer' }}>
+                  <Settings style={{ width: '16px', height: '16px' }} /> Configure a Rule
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
+                <CheckCircle2 style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#10b981', flexShrink: 0 }} />
+                <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>All Clear</h3>
+                <p style={{ maxWidth: '22rem', fontSize: '14px', lineHeight: 1.625, color: 'var(--text-muted)' }}>{ruleStats.enabled} of {ruleStats.total} rule{ruleStats.total === 1 ? '' : 's'} active — no thresholds breached.</p>
+              </div>
+            )
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {visibleAlerts.map((alert) => {
@@ -417,7 +505,7 @@ export default function AlertCenterPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, minWidth: 0 }}>
                       <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', background: sev.bg, color: sev.text, whiteSpace: 'nowrap', flexShrink: 0 }}>{alert.severity}</span>
                       <span style={{ fontSize: '11px', color: 'var(--text-label)', whiteSpace: 'nowrap', flexShrink: 0 }}>{alert.timestamp}</span>
-                      <button style={{ fontSize: '11px', color: '#60a5fa', fontWeight: 500, letterSpacing: '0.05em', whiteSpace: 'nowrap', flexShrink: 0, background: 'transparent', border: 'none', cursor: 'pointer' }}>INVESTIGATE</button>
+                      <button onClick={() => investigate(alert.metricFamily)} title="Open the page for this signal" style={{ fontSize: '11px', color: '#60a5fa', fontWeight: 500, letterSpacing: '0.05em', whiteSpace: 'nowrap', flexShrink: 0, background: 'transparent', border: 'none', cursor: 'pointer' }}>INVESTIGATE</button>
                     </div>
                   </div>
                 );
@@ -426,6 +514,16 @@ export default function AlertCenterPage() {
           )}
         </div>
       </div>
+
+      <AlertRuleConfigDrawer
+        isOpen={ruleConfigOpen}
+        onClose={() => setRuleConfigOpen(false)}
+        projectId={projectId as string}
+        apiFetch={apiFetch}
+        onChanged={loadData}
+        connectorInstanceId={connectorInstanceId ?? null}
+        connectorLabel={connectorLabel}
+      />
     </div>
   );
 }

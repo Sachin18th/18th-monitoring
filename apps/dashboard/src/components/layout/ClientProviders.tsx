@@ -27,27 +27,43 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const isPublicPath = pathname === '/' || pathname === '/login' || pathname === '/unauthorized';
 
   useEffect(() => {
-    if (!isLoading) {
-      if (!user) {
-        if (!isPublicPath) {
-          router.push('/login');
-        }
-      } else {
-        const assignedProjects = user.assignedProjects || [];
-        const shouldAutoOpenProject = user.role === 'CUSTOMER' && assignedProjects.length === 1;
+    if (isLoading) return;
 
-        if (pathname === '/') {
-          if (shouldAutoOpenProject) {
-            router.push(`/project/${assignedProjects[0]}/overview`);
-          } else {
-            router.push('/projects');
-          }
-        }
-        if (pathname === '/projects' && shouldAutoOpenProject) {
-          router.push(`/project/${assignedProjects[0]}/overview`);
-        }
+    // Defer navigation to the next tick. When there is no stored session the
+    // AuthProvider flips `isLoading` synchronously during the initial mount
+    // commit; dispatching a router action in that same commit throws Next.js's
+    // "Router action dispatched before initialization" error. Deferring lets
+    // the App Router finish wiring up before we navigate, with a hard
+    // window.location fallback if the router still isn't ready.
+    let target: string | null = null;
+
+    if (!user) {
+      if (!isPublicPath) target = '/login';
+    } else {
+      const assignedProjects = user.assignedProjects || [];
+      const shouldAutoOpenProject = user.role === 'CUSTOMER' && assignedProjects.length === 1;
+
+      if (pathname === '/') {
+        target = shouldAutoOpenProject ? `/project/${assignedProjects[0]}/overview` : '/projects';
+      } else if (pathname === '/projects' && shouldAutoOpenProject) {
+        target = `/project/${assignedProjects[0]}/overview`;
       }
     }
+
+    if (!target) return;
+
+    const destination = target;
+    const timer = setTimeout(() => {
+      try {
+        router.push(destination);
+      } catch {
+        if (typeof window !== 'undefined') {
+          window.location.assign(destination);
+        }
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, [user, isLoading, pathname, isPublicPath, router]);
 
   if (isLoading || (!user && !isPublicPath)) {

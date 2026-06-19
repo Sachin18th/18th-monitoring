@@ -16,6 +16,16 @@ import {
   Flame,
   Database,
 } from 'lucide-react';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 import { type TimeRangeValue } from '@kpi-platform/ui';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { useAuth } from '../../../../context/AuthContext';
@@ -40,11 +50,39 @@ type AlertItem = {
 };
 
 type StatSummary = {
+  totalOrders?: number;
+  totalRevenue?: number;
   failedCount?: number;
   delayedCount?: number;
   ordersPerMinute?: string | number;
   revenueAtRisk?: number;
+  atRiskOrderCount?: number;
 };
+
+type PerfSummary = {
+  p95?: number;
+  avg?: number;
+  uptime?: number;
+  errorRate?: number;
+  fcp?: number;
+  lcp?: number;
+  ttfb?: number;
+};
+
+type IntegrationSummary = {
+  successRate?: number;
+  failureCount24h?: number;
+  avgOmsLatency?: number;
+  healthScore?: number;
+};
+
+type UserActivitySummary = {
+  totalUsers?: number;
+  activeUsers?: number;
+  sessions?: number;
+};
+
+type TrendPoint = { timestamp: string; [key: string]: string | number };
 
 function formatCount(value?: number | string) {
   const numberValue = Number(value || 0);
@@ -66,22 +104,34 @@ function formatLiveSessions(value?: number | string) {
   return formatCount(value);
 }
 
-function deriveHealth(metrics: Metric[], stats: StatSummary | null) {
-  const map = new Map(metrics.map((metric) => [metric.kpiName, metric]));
-  const sync = map.get('syncSuccessRate');
-  const errorRate = map.get('errorRatePct');
+function formatMs(value?: number) {
+  const numberValue = Number(value || 0);
+  if (!Number.isFinite(numberValue) || numberValue <= 0) return '—';
+  return numberValue >= 1000 ? `${(numberValue / 1000).toFixed(2)}s` : `${Math.round(numberValue)}ms`;
+}
 
-  const scoreFromMetric =
-    sync?.value !== undefined
-      ? Number(sync.value)
-      : errorRate?.value !== undefined
-        ? Math.max(0, 100 - Number(errorRate.value))
-        : 100;
+// Composite health score derived from the real domain summaries. We anchor on the
+// integration sync success rate (or performance uptime when integrations are not
+// readable) and then penalise live failed/delayed orders, so the headline score
+// tracks the same signals the operator sees in the cards below.
+function deriveHealth(
+  perf: PerfSummary | null,
+  integration: IntegrationSummary | null,
+  stats: StatSummary | null
+) {
+  const baseline =
+    integration?.healthScore !== undefined
+      ? Number(integration.healthScore)
+      : integration?.successRate !== undefined
+        ? Number(integration.successRate)
+        : perf?.uptime !== undefined
+          ? Number(perf.uptime)
+          : 100;
 
   const failedCount = stats?.failedCount || 0;
   const delayedCount = stats?.delayedCount || 0;
 
-  const score = Math.max(0, Math.min(100, scoreFromMetric - failedCount * 2 - delayedCount * 1.5));
+  const score = Math.max(0, Math.min(100, baseline - failedCount * 2 - delayedCount * 1.5));
 
   if (score < 90) {
     return { label: 'Critical', status: 'critical' as const, score };
@@ -156,11 +206,16 @@ export default function ProjectOverviewPage() {
   const [trends, setTrends] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [stats, setStats] = useState<StatSummary | null>(null);
+  const [perf, setPerf] = useState<PerfSummary | null>(null);
+  const [integration, setIntegration] = useState<IntegrationSummary | null>(null);
+  const [userActivity, setUserActivity] = useState<UserActivitySummary | null>(null);
+  const [syncTrends, setSyncTrends] = useState<TrendPoint[]>([]);
+  const [orderTrends, setOrderTrends] = useState<TrendPoint[]>([]);
   const [timeRange, setTimeRange] = useState<TimeRangeValue>('24h');
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const activeAlerts = useMemo(() => alerts.filter((alert) => alert.severity && alert.severity !== 'low'), [alerts]);
-  const health = useMemo(() => deriveHealth(metrics, stats), [metrics, stats]);
+  const health = useMemo(() => deriveHealth(perf, integration, stats), [perf, integration, stats]);
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
@@ -199,18 +254,40 @@ export default function ProjectOverviewPage() {
       const canReadAlerts = nextAllowedPageKeys.includes('alerts') || nextAllowedPageKeys.includes('observability/alerts');
       const canReadPerformance = nextAllowedPageKeys.includes('performance');
       const canReadOrders = nextAllowedPageKeys.includes('orders');
+      const canReadIntegrations = nextAllowedPageKeys.includes('integrations');
+      const canReadCustomers = nextAllowedPageKeys.includes('customers');
 
-      const [summaryData, alertData, trendData, statsData] = await Promise.all([
+      const [
+        summaryData,
+        alertData,
+        trendData,
+        statsData,
+        perfData,
+        integrationData,
+        userData,
+        syncTrendData,
+        orderTrendData,
+      ] = await Promise.all([
         fetchSection(`/api/v1/dashboard/summaries?siteId=${projectId}&range=${timeRange}`, []),
         canReadAlerts ? fetchSection(`/api/v1/dashboard/alerts?siteId=${projectId}`, []) : [],
         canReadPerformance ? fetchSection(`/api/v1/dashboard/performance/trends?siteId=${projectId}&range=${timeRange}`, []) : [],
         canReadOrders ? fetchSection(`/api/v1/dashboard/orders/summary?siteId=${projectId}&range=${timeRange}`, null) : null,
+        canReadPerformance ? fetchSection(`/api/v1/dashboard/performance/summary?siteId=${projectId}&range=${timeRange}`, null) : null,
+        canReadIntegrations ? fetchSection(`/api/v1/dashboard/integrations/summary?siteId=${projectId}&range=${timeRange}`, null) : null,
+        canReadCustomers ? fetchSection(`/api/v1/dashboard/customers/summary?siteId=${projectId}&range=${timeRange}`, null) : null,
+        canReadIntegrations ? fetchSection(`/api/v1/dashboard/integrations/trends?siteId=${projectId}&range=${timeRange}`, []) : [],
+        canReadOrders ? fetchSection(`/api/v1/dashboard/orders/trends?siteId=${projectId}&range=${timeRange}`, []) : [],
       ]);
 
       setMetrics(Array.isArray(summaryData) ? summaryData : []);
       setAlerts(Array.isArray(alertData) ? alertData : alertData?.alerts || []);
       setTrends(Array.isArray(trendData) ? trendData : []);
       setStats(statsData || null);
+      setPerf(perfData || null);
+      setIntegration(integrationData || null);
+      setUserActivity(userData || null);
+      setSyncTrends(Array.isArray(syncTrendData) ? syncTrendData : []);
+      setOrderTrends(Array.isArray(orderTrendData) ? orderTrendData : []);
     } finally {
       setLoading(false);
     }
@@ -239,9 +316,15 @@ export default function ProjectOverviewPage() {
     [allowedPageKeys]
   );
 
-  const syncMetric = metrics.find((m) => m.kpiName === 'syncSuccessRate');
-  const pageLoadMetric = metrics.find((m) => m.kpiName === 'pageLoadTime');
-  const liveUserMetric = metrics.find((m) => m.kpiName === 'activeUsers');
+  // Real values sourced from the dedicated domain summaries. The legacy
+  // `summaries` endpoint only returns revenue/pageLoadTime/orders/aov, so the
+  // sync-success / latency / sessions cards now read from their own endpoints.
+  const apiReliability = integration?.successRate ?? (perf?.uptime ? 100 - (perf.errorRate || 0) : undefined);
+  const latencyP95 = perf?.p95 ?? (metrics.find((m) => m.kpiName === 'pageLoadTime')?.value);
+  const liveSessions = userActivity?.activeUsers ?? userActivity?.sessions;
+
+  const latencyTone = Number(latencyP95 || 0) > 3000 ? 'critical' : Number(latencyP95 || 0) > 2000 ? 'warning' : 'success';
+  const reliabilityTone = Number(apiReliability ?? 100) < 90 ? 'critical' : Number(apiReliability ?? 100) < 99 ? 'warning' : 'success';
 
   const metricCards = [
     {
@@ -266,27 +349,27 @@ export default function ProjectOverviewPage() {
     },
     {
       label: 'API Reliability',
-      value: formatAPIReliability(syncMetric?.value),
+      value: formatAPIReliability(apiReliability),
       unit: '',
-      status: syncMetric?.state === 'critical' ? 'Critical' : 'Healthy',
+      status: reliabilityTone === 'critical' ? 'Critical' : reliabilityTone === 'warning' ? 'Warning' : 'Healthy',
       contextLabel: 'Sync success',
       icon: RefreshCw,
-      tone: syncMetric?.state === 'critical' ? 'critical' as const : 'success' as const,
+      tone: reliabilityTone as 'success' | 'warning' | 'critical',
       pageKey: 'integrations',
     },
     {
       label: 'Latency P95',
-      value: `${pageLoadMetric?.value || 0}`,
-      unit: 'ms',
-      status: Number(pageLoadMetric?.value || 0) > 2000 ? 'Warning' : 'Healthy',
+      value: formatMs(Number(latencyP95 || 0)),
+      unit: '',
+      status: latencyTone === 'critical' ? 'Critical' : latencyTone === 'warning' ? 'Warning' : 'Healthy',
       contextLabel: 'User response',
       icon: Activity,
-      tone: Number(pageLoadMetric?.value || 0) > 2000 ? 'warning' as const : 'success' as const,
+      tone: latencyTone as 'success' | 'warning' | 'critical',
       pageKey: 'performance',
     },
     {
       label: 'Live Sessions',
-      value: formatLiveSessions(liveUserMetric?.value),
+      value: formatLiveSessions(liveSessions),
       unit: '',
       status: 'Healthy',
       contextLabel: 'Active users',
@@ -296,49 +379,83 @@ export default function ProjectOverviewPage() {
     },
   ].filter((card) => !card.pageKey || canSee(card.pageKey));
 
+  const uptimeValue = perf?.uptime;
+  const slaBadge = uptimeValue !== undefined ? `${Number(uptimeValue).toFixed(2)}%` : '—';
+  const slaStable = uptimeValue === undefined || Number(uptimeValue) >= 99;
+
+  // Real count of orders contributing to the at-risk revenue figure. Falls back
+  // to failed+delayed when the backend hasn't supplied the explicit count yet.
+  const atRiskOrderCount = stats?.atRiskOrderCount ?? ((stats?.failedCount || 0) + (stats?.delayedCount || 0));
+
   const executiveCards = [
     {
       label: 'SLA Adherence',
-      badge: '99.4%',
-      value: 'Stable',
-      description: 'All monitored endpoints are performing within target thresholds.',
+      badge: slaBadge,
+      badgeColor: slaStable ? '#22c55e' : '#ef4444',
+      value: slaStable ? 'Stable' : 'Degraded',
+      description: slaStable
+        ? 'All monitored endpoints are performing within target thresholds.'
+        : `Uptime is below target — error rate ${Number(perf?.errorRate || 0).toFixed(2)}%.`,
       actionLabel: '',
       pageKey: null,
     },
     {
       label: 'Revenue at Risk',
-      badge: `$${formatCount((stats?.revenueAtRisk ?? (stats?.delayedCount || 0) * 850))}`,
-      value: stats?.failedCount ? 'At Risk' : 'Protected',
-      description: `Derived from ${stats?.delayedCount || 0} delayed transactions.`,
+      badge: `$${formatCount(stats?.revenueAtRisk || 0)}`,
+      badgeColor: atRiskOrderCount > 0 ? '#ef4444' : '#22c55e',
+      value: atRiskOrderCount > 0 ? 'At Risk' : 'Protected',
+      description: `Tied up in ${formatCount(atRiskOrderCount)} failed / delayed order${atRiskOrderCount === 1 ? '' : 's'}.`,
       actionLabel: 'Resolve Exceptions',
       pageKey: 'orders',
     },
   ].filter((card) => !card.pageKey || canSee(card.pageKey));
+
+  const statusFromTone = (tone: 'success' | 'warning' | 'critical') =>
+    tone === 'critical' ? 'CRITICAL' : tone === 'warning' ? 'DEGRADED' : 'HEALTHY';
 
   const domainSnapshots = [
     {
       name: 'Integrations',
       icon: RefreshCw,
       path: 'integrations',
-      description: 'Deep intelligence on reliability and integrations throughput.',
+      tone: reliabilityTone as 'success' | 'warning' | 'critical',
+      metric:
+        integration?.successRate !== undefined
+          ? `${Number(integration.successRate).toFixed(0)}% sync success · ${integration.failureCount24h || 0} failures (24h)`
+          : 'Reliability and sync throughput across connectors.',
     },
     {
       name: 'Orders',
       icon: Package,
       path: 'orders',
-      description: 'Deep intelligence on reliability and orders throughput.',
+      tone: (stats?.failedCount ? 'critical' : stats?.delayedCount ? 'warning' : 'success') as
+        | 'success'
+        | 'warning'
+        | 'critical',
+      metric:
+        stats?.totalOrders !== undefined
+          ? `${formatCount(stats.totalOrders)} orders · ${stats.failedCount || 0} failed · ${stats.delayedCount || 0} delayed`
+          : 'Order throughput, failures and delays.',
     },
     {
       name: 'Performance',
       icon: Activity,
       path: 'performance',
-      description: 'Deep intelligence on reliability and performance throughput.',
+      tone: latencyTone as 'success' | 'warning' | 'critical',
+      metric:
+        perf?.p95 !== undefined
+          ? `p95 ${formatMs(perf.p95)} · uptime ${Number(perf.uptime || 0).toFixed(2)}%`
+          : 'Latency and uptime across the fleet.',
     },
     {
       name: 'Customers',
       icon: Users,
       path: 'customers',
-      description: 'Deep intelligence on reliability and customers throughput.',
+      tone: 'success' as 'success' | 'warning' | 'critical',
+      metric:
+        liveSessions !== undefined
+          ? `${formatCount(liveSessions)} active · ${formatCount(userActivity?.totalUsers)} total users`
+          : 'End-user activity and engagement.',
     },
   ].filter((domain) => canSee(domain.path));
 
@@ -666,7 +783,7 @@ export default function ProjectOverviewPage() {
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)' }}>{item.label}</span>
-                  <span style={{ fontSize: '12px', fontWeight: 500, color: '#22c55e' }}>{item.badge}</span>
+                  <span style={{ fontSize: '12px', fontWeight: 500, color: item.badgeColor }}>{item.badge}</span>
                 </div>
 
                 <p style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 6px' }}>{item.value}</p>
@@ -751,10 +868,10 @@ export default function ProjectOverviewPage() {
 
           <div style={{ display: 'flex', gap: '20px', marginTop: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
             {[
-              { label: 'FCP', color: '#10b981', value: '1.2s' },
-              { label: 'LCP', color: '#f59e0b', value: '2.4s' },
-              { label: 'LOAD TIME', color: '#3b82f6', value: '3.1s' },
-              { label: 'TTFB', color: '#ef4444', value: '240ms' },
+              { label: 'FCP', color: '#10b981', value: formatMs(perf?.fcp) },
+              { label: 'LCP', color: '#f59e0b', value: formatMs(perf?.lcp) },
+              { label: 'LOAD TIME', color: '#3b82f6', value: formatMs(perf?.avg) },
+              { label: 'TTFB', color: '#ef4444', value: formatMs(perf?.ttfb) },
             ].map((item) => (
               <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
                 <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: item.color, flexShrink: 0 }} />
@@ -763,6 +880,128 @@ export default function ProjectOverviewPage() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+      )}
+
+      {((canSee('integrations') && syncTrends.length > 0) || (canSee('orders') && orderTrends.length > 0)) && (
+      <section style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'visible' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              background: 'rgba(16,185,129,0.12)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              boxSizing: 'border-box',
+            }}
+          >
+            <Activity style={{ width: '16px', height: '16px', color: '#10b981' }} />
+          </div>
+          <div>
+            <p style={{ ...sectionTitleStyle, marginBottom: '2px' }}>Operational Trends</p>
+            <p style={sectionSubtitleStyle}>Live throughput across integrations and order flow.</p>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: canSee('integrations') && syncTrends.length > 0 && canSee('orders') && orderTrends.length > 0 ? '1fr 1fr' : '1fr',
+            gap: '16px',
+          }}
+        >
+          {canSee('integrations') && syncTrends.length > 0 && (
+            <div
+              style={{
+                borderRadius: '12px',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                padding: '20px 22px',
+                boxSizing: 'border-box',
+              }}
+            >
+              <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 16px' }}>Integration Sync Throughput</p>
+              <div style={{ width: '100%', height: 260 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={syncTrends} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="ovSyncSuccess" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="ovSyncFailure" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-card)" vertical={false} />
+                    <XAxis dataKey="timestamp" stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} width={32} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--border-card)',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                      }}
+                    />
+                    <Legend iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
+                    <Area type="monotone" dataKey="success" name="Success" stroke="#10b981" fill="url(#ovSyncSuccess)" strokeWidth={2.5} />
+                    <Area type="monotone" dataKey="failure" name="Failure" stroke="#ef4444" fill="url(#ovSyncFailure)" strokeWidth={2} strokeDasharray="5 5" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {canSee('orders') && orderTrends.length > 0 && (
+            <div
+              style={{
+                borderRadius: '12px',
+                border: '1px solid var(--border-card)',
+                background: 'var(--bg-card)',
+                padding: '20px 22px',
+                boxSizing: 'border-box',
+              }}
+            >
+              <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 16px' }}>Order Velocity (Online vs Offline)</p>
+              <div style={{ width: '100%', height: 260 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={orderTrends} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="ovOrdersOnline" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="ovOrdersOffline" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-card)" vertical={false} />
+                    <XAxis dataKey="timestamp" stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} />
+                    <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false} width={32} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--border-card)',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                      }}
+                    />
+                    <Legend iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
+                    <Area type="monotone" dataKey="online" name="Online" stroke="#3b82f6" fill="url(#ovOrdersOnline)" strokeWidth={2.5} />
+                    <Area type="monotone" dataKey="offline" name="Offline" stroke="#f59e0b" fill="url(#ovOrdersOffline)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </div>
       </section>
       )}
@@ -794,6 +1033,7 @@ export default function ProjectOverviewPage() {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' }}>
           {domainSnapshots.map((domain) => {
             const Icon = domain.icon;
+            const { statusBg, statusColor } = metricStatusStyle(domain.tone);
             return (
               <div
                 key={domain.name}
@@ -818,13 +1058,13 @@ export default function ProjectOverviewPage() {
                       padding: '3px 10px',
                       borderRadius: '999px',
                       fontSize: '10px',
-                      background: 'var(--success-bg)',
-                      color: 'var(--success-text)',
+                      background: statusBg,
+                      color: statusColor,
                       whiteSpace: 'nowrap',
                       flexShrink: 0,
                     }}
                   >
-                    ● HEALTHY
+                    ● {statusFromTone(domain.tone)}
                   </span>
                 </div>
 
@@ -842,7 +1082,7 @@ export default function ProjectOverviewPage() {
                     margin: 0,
                   }}
                 >
-                  {domain.description}
+                  {domain.metric}
                 </p>
 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto' }}>

@@ -15,12 +15,12 @@ import {
   Menu,
   Plus,
   Search,
-  Settings,
   Sun,
   Moon,
   Users,
   X,
 } from "lucide-react";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartTooltip } from "recharts";
 import { PerformanceChart } from "../../components/ui/PerformanceChart";
 import { CreateProjectModal } from "../../components/projects/CreateProjectModal";
 import { useAuth } from "../../context/AuthContext";
@@ -385,6 +385,20 @@ export default function ProjectsPage() {
     () => buildTrendData(selectedRange),
     [selectedRange],
   );
+
+  const HEALTH_PALETTE = ["#3B82F6", "#22C55E", "#8B5CF6", "#F59E0B", "#EC4899", "#06B6D4"];
+  const projectHealthData = useMemo(() => {
+    return projects.map((project, index) => {
+      const health = Math.max(0, 100 - (project.metricsSummary?.errorRate || 0));
+      return {
+        name: project.name,
+        value: Math.max(health, 1),
+        health: Math.round(health),
+        color: HEALTH_PALETTE[index % HEALTH_PALETTE.length],
+      };
+    });
+  }, [projects]);
+
   const isDark = mounted ? theme === "dark" : true;
   const filteredProjects = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -476,6 +490,13 @@ export default function ProjectsPage() {
   }
 
   const displayName = user.name || "18th Super Admin";
+  const operatorInitials =
+    displayName
+      .split(/\s+/)
+      .filter((word) => /[a-zA-Z]/.test(word.charAt(0)))
+      .slice(0, 2)
+      .map((word) => word.charAt(0).toUpperCase())
+      .join("") || userInitial;
 
   return (
     <div
@@ -960,16 +981,22 @@ export default function ProjectsPage() {
               <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h2
-                    className="mb-1 text-[15px] font-medium"
+                    className="mb-2 text-[15px] font-medium leading-tight"
                     style={{ color: "var(--text-primary)" }}
                   >
                     Cross-portfolio Trendline
                   </h2>
                   <p
-                    className="mb-4 text-[12px] font-normal"
+                    className="text-[12px] font-normal leading-relaxed"
                     style={{ color: "var(--text-secondary)" }}
                   >
-                    Synthetic performance pattern for the selected time range.
+                    Performance pattern across the last{" "}
+                    {selectedRange === "24h"
+                      ? "24 hours"
+                      : selectedRange === "7d"
+                        ? "7 days"
+                        : "30 days"}
+                    .
                   </p>
                 </div>
 
@@ -978,42 +1005,46 @@ export default function ProjectsPage() {
                     className="inline-flex items-center gap-1.5 text-[11px] font-normal"
                     style={{ color: "var(--text-secondary)" }}
                   >
-                    <span className="h-2 w-2 rounded-full bg-[#3B82F6]" />
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ background: "var(--primary)" }}
+                    />
                     PAGE LOAD
                   </span>
                   <span
                     className="inline-flex items-center gap-1.5 text-[11px] font-normal"
                     style={{ color: "var(--text-secondary)" }}
                   >
-                    <span className="h-2 w-2 rounded-full bg-[#22C55E]" />
+                    <span className="h-2 w-2 rounded-full bg-[#f59e0b]" />
                     LCP
                   </span>
                   <span
                     className="inline-flex items-center gap-1.5 text-[11px] font-normal"
                     style={{ color: "var(--text-secondary)" }}
                   >
-                    <span className="h-2 w-2 rounded-full bg-[#60A5FA]" />
+                    <span className="h-2 w-2 rounded-full bg-[#10b981]" />
                     FCP
                   </span>
                   <span
                     className="inline-flex items-center gap-1.5 text-[11px] font-normal"
                     style={{ color: "var(--text-secondary)" }}
                   >
-                    <span className="h-2 w-2 rounded-full bg-[#F59E0B]" />
+                    <span className="h-2 w-2 rounded-full bg-[#ef4444]" />
                     TTFB
                   </span>
                 </div>
               </div>
 
               <div
-                className="rounded-lg px-3 py-2"
+                className="rounded-lg px-4 py-4"
                 style={{
                   border: "1px solid var(--border-input)",
                   background: "var(--bg-input)",
+                  overflow: "hidden",
                 }}
               >
-                <div className="min-h-[240px]">
-                  <PerformanceChart data={trendData} title="" height={260} />
+                <div className="min-h-[260px]">
+                  <PerformanceChart data={trendData} title="" height={280} />
                 </div>
               </div>
             </div>
@@ -1021,137 +1052,237 @@ export default function ProjectsPage() {
             <div
               className="overflow-hidden rounded-xl lg:col-span-4"
               style={{
-                padding: "20px 22px",
+                padding: "24px 24px",
                 background: "var(--bg-card)",
                 border: "1px solid var(--border-card)",
               }}
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p
-                    className="mb-1 text-[10px] font-medium uppercase tracking-[0.08em]"
-                    style={{ color: "var(--text-label)" }}
-                  >
-                    Operator identity
-                  </p>
-                  <p
-                    className="text-[15px] font-medium"
-                    style={{ color: "var(--text-primary)" }}
-                  >
-                    18th Super Admin
-                  </p>
-                  <p
-                    className="text-[12px] font-normal"
-                    style={{ color: "var(--text-secondary)" }}
-                  >
-                    {user.email}
-                  </p>
-                </div>
+              {/* Header: label + role badge */}
+              <div className="flex items-center justify-between gap-3">
+                <p
+                  className="text-[10px] font-medium uppercase tracking-[0.12em]"
+                  style={{ color: "var(--text-label)" }}
+                >
+                  Operator identity
+                </p>
                 <span
                   className="inline-flex items-center rounded-md text-[10px] font-medium uppercase tracking-[0.08em]"
                   style={{
                     ...pillBaseStyle,
                     background: isDark ? "#0C1A40" : "#DBEAFE",
                     color: isDark ? "#3B82F6" : "#1E3A8A",
+                    flexShrink: 0,
                   }}
                 >
-                  SUPER ADMIN
+                  {userRoleLabel}
                 </span>
               </div>
 
+              {/* Identity: avatar + name + email */}
+              <div className="mt-5 flex items-center gap-3">
+                <div
+                  className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-[14px] font-semibold text-white"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, #3B82F6 0%, #8B5CF6 100%)",
+                    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.14)",
+                  }}
+                >
+                  {operatorInitials}
+                </div>
+                <div className="min-w-0">
+                  <p
+                    className="text-[15px] font-semibold leading-tight truncate"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    {displayName}
+                  </p>
+                  <p
+                    className="mt-1.5 text-[12px] font-normal leading-tight truncate"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    {user.email}
+                  </p>
+                </div>
+              </div>
+
+              {/* Authorized scope */}
+              <div className="mt-7">
+                <p
+                  className="text-[10px] font-medium uppercase tracking-[0.12em]"
+                  style={{ color: "var(--text-label)" }}
+                >
+                  Authorized scope
+                </p>
+                <p
+                  className="mt-2 text-[15px] font-semibold leading-tight"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  {metrics.totalProjects || 1}{" "}
+                  {metrics.totalProjects === 1 ? "Workspace" : "Workspaces"}
+                </p>
+              </div>
+
+              {/* Portfolio intelligence */}
+              <div className="mt-6">
+                <span
+                  className="inline-flex items-center rounded-full text-[9px] font-medium uppercase tracking-[0.08em]"
+                  style={{
+                    ...pillBaseStyle,
+                    background: isDark ? "#1C2D50" : "#DBEAFE",
+                    color: isDark ? "#60A5FA" : "#1E40AF",
+                  }}
+                >
+                  Portfolio intelligence
+                </span>
+                <p
+                  className="mt-3 text-[12px] font-normal leading-[1.7]"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Monitoring {metrics.totalProjects || 0} active streams with a
+                  stable operational surface designed for low-friction scanning
+                  and quick workspace launch.
+                </p>
+              </div>
+
               <div
-                className="my-4 h-px"
+                className="my-5 h-px"
                 style={{ background: "var(--border-card)" }}
               />
 
+              {/* Meta rows */}
               <div className="space-y-4">
-                <div>
-                  <p
-                    className="text-[10px] font-medium uppercase tracking-[0.08em]"
-                    style={{ color: "var(--text-label)" }}
-                  >
-                    Authorized scope
-                  </p>
-                  <div className="mt-1 flex items-center justify-between gap-2">
-                    <p
-                      className="text-[14px] font-medium"
-                      style={{ color: "var(--text-primary)" }}
-                    >
-                      {metrics.totalProjects || 1}{" "}
-                      {metrics.totalProjects === 1 ? "Workspace" : "Workspaces"}
-                    </p>
-                    <Settings
-                      size={14}
-                      style={{ color: "var(--text-secondary)" }}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2 text-[12px]">
+                  <span className="font-normal" style={{ color: "var(--text-secondary)" }}>
+                    Attention surface
+                  </span>
                   <span
-                    className="inline-flex items-center rounded-full text-[10px] font-medium uppercase tracking-[0.08em]"
+                    className="font-medium"
                     style={{
-                      ...pillBaseStyle,
-                      background: isDark ? "#1C2D50" : "#DBEAFE",
-                      color: isDark ? "#60A5FA" : "#1E40AF",
+                      color:
+                        metrics.projectsAtRisk > 0
+                          ? "#F59E0B"
+                          : "var(--text-primary)",
                     }}
                   >
-                    Portfolio intelligence
+                    {metrics.projectsAtRisk}{" "}
+                    {metrics.projectsAtRisk === 1 ? "project" : "projects"}
                   </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-[12px]">
+                  <span className="font-normal" style={{ color: "var(--text-secondary)" }}>
+                    Portfolio health
+                  </span>
+                  <span
+                    className="font-medium"
+                    style={{
+                      color:
+                        Number(metrics.avgHealth) < 95 ? "#EF4444" : "#22C55E",
+                    }}
+                  >
+                    {metrics.avgHealth}%
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 text-[12px]">
+                  <span className="font-normal" style={{ color: "var(--text-secondary)" }}>
+                    Active operators
+                  </span>
+                  <span className="font-medium" style={{ color: "var(--text-primary)" }}>
+                    {formatValue(metrics.totalUsers)}
+                  </span>
+                </div>
+              </div>
+
+              <div
+                className="my-5 h-px"
+                style={{ background: "var(--border-card)" }}
+              />
+
+              {/* Health by project donut */}
+              <div>
+                <p
+                  className="text-[10px] font-medium uppercase tracking-[0.12em]"
+                  style={{ color: "var(--text-label)" }}
+                >
+                  Health by project
+                </p>
+
+                {projectHealthData.length > 0 ? (
+                  <>
+                    <div className="relative mt-3" style={{ height: 150 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={projectHealthData}
+                            dataKey="value"
+                            nameKey="name"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={48}
+                            outerRadius={68}
+                            paddingAngle={2}
+                            stroke="none"
+                          >
+                            {projectHealthData.map((entry) => (
+                              <Cell key={entry.name} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <RechartTooltip
+                            contentStyle={{
+                              background: "var(--bg-card)",
+                              border: "1px solid var(--border-card)",
+                              borderRadius: 8,
+                              fontSize: 12,
+                            }}
+                            formatter={(_value: any, _name: any, item: any) => [
+                              `${item?.payload?.health ?? 0}% health`,
+                              item?.payload?.name,
+                            ]}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div
+                        className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"
+                      >
+                        <span
+                          className="text-[18px] font-semibold leading-none"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {metrics.avgHealth}%
+                        </span>
+                        <span
+                          className="mt-1 text-[10px] font-normal uppercase tracking-[0.08em]"
+                          style={{ color: "var(--text-label)" }}
+                        >
+                          Avg health
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                      {projectHealthData.map((entry) => (
+                        <span
+                          key={entry.name}
+                          className="inline-flex items-center gap-1.5 text-[11px] font-normal"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
+                          <span
+                            className="h-2 w-2 rounded-full"
+                            style={{ background: entry.color }}
+                          />
+                          {entry.name}
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                ) : (
                   <p
-                    className="max-h-[64px] overflow-hidden text-[12px] font-normal leading-[1.7]"
+                    className="mt-3 text-[12px] font-normal"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Monitoring {metrics.totalProjects} active streams with a
-                    stable operational surface designed for low-friction
-                    scanning and quick workspace launch.
+                    No project health data available yet.
                   </p>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span
-                      className="font-normal"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      Attention surface
-                    </span>
-                    <span
-                      className="font-normal"
-                      style={{ color: "var(--text-primary)" }}
-                    >
-                      {metrics.projectsAtRisk} projects
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span
-                      className="font-normal"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      Scanning effort
-                    </span>
-                    <span
-                      className="font-normal"
-                      style={{ color: "var(--text-primary)" }}
-                    >
-                      Low
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span
-                      className="font-normal"
-                      style={{ color: "var(--text-secondary)" }}
-                    >
-                      Navigation depth
-                    </span>
-                    <span
-                      className="font-normal"
-                      style={{ color: "var(--text-primary)" }}
-                    >
-                      Portfolio first
-                    </span>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           </section>

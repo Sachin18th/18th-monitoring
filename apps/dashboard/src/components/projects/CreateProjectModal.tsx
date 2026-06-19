@@ -56,7 +56,6 @@ export const CreateProjectModal = ({
   const [step, setStep] = useState<Step>("form");
   const [formData, setFormData] = useState({
     name: "",
-    slug: "",
     description: "",
     timezone: "UTC",
   });
@@ -71,26 +70,10 @@ export const CreateProjectModal = ({
     setFormData((prev) => ({
       ...prev,
       name: newName,
-      // Auto-generate slug if user hasn't manually edited it
-      slug:
-        !prev.slug || prev.slug === generateSlug(prev.name)
-          ? generateSlug(newName)
-          : prev.slug,
     }));
     // Clear name error when user starts typing
     if (errors.name) {
       setErrors((prev) => ({ ...prev, name: "" }));
-    }
-  };
-
-  const handleSlugChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newSlug = generateSlug(e.target.value); // Enforce slug format
-    setFormData((prev) => ({
-      ...prev,
-      slug: newSlug,
-    }));
-    if (errors.slug) {
-      setErrors((prev) => ({ ...prev, slug: "" }));
     }
   };
 
@@ -121,12 +104,6 @@ export const CreateProjectModal = ({
       newErrors.name = "Project name must not exceed 100 characters";
     }
 
-    if (!formData.slug.trim()) {
-      newErrors.slug = "Slug is required";
-    } else if (formData.slug.length > 100) {
-      newErrors.slug = "Slug must not exceed 100 characters";
-    }
-
     if (formData.description && formData.description.length > 500) {
       newErrors.description = "Description must not exceed 500 characters";
     }
@@ -153,7 +130,7 @@ export const CreateProjectModal = ({
     try {
       const project = await createProject(token, {
         name: formData.name,
-        slug: formData.slug,
+        slug: generateSlug(formData.name),
         description: formData.description || undefined,
         timezone: formData.timezone,
       });
@@ -183,7 +160,7 @@ export const CreateProjectModal = ({
 
   const handleClose = () => {
     if (step === "creating") return; // Prevent closing while creating
-    setFormData({ name: "", slug: "", description: "", timezone: "UTC" });
+    setFormData({ name: "", description: "", timezone: "UTC" });
     setErrors({});
     setApiError(null);
     setCreatedProject(null);
@@ -331,62 +308,6 @@ export const CreateProjectModal = ({
                     }}
                   >
                     {errors.name}
-                  </p>
-                )}
-              </div>
-
-              {/* Slug */}
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "14px",
-                    fontWeight: "800",
-                    color: "var(--text-primary)",
-                    marginBottom: "8px",
-                  }}
-                >
-                  Slug *
-                </label>
-                <input
-                  type="text"
-                  placeholder="my-ecommerce-store"
-                  value={formData.slug}
-                  onChange={handleSlugChange}
-                  style={{
-                    width: "100%",
-                    padding: "12px 14px",
-                    border: errors.slug
-                      ? "1px solid var(--error)"
-                      : "1px solid var(--border)",
-                    borderRadius: "12px",
-                    background: "var(--bg-app)",
-                    color: "var(--text-primary)",
-                    fontSize: "14px",
-                    fontFamily: "monospace",
-                    boxSizing: "border-box",
-                  }}
-                />
-                <p
-                  style={{
-                    fontSize: "12px",
-                    color: "var(--text-secondary)",
-                    marginTop: "6px",
-                    margin: "6px 0 0 0",
-                  }}
-                >
-                  Lowercase, hyphens only. Auto-generated from name.
-                </p>
-                {errors.slug && (
-                  <p
-                    style={{
-                      fontSize: "12px",
-                      color: "var(--error)",
-                      marginTop: "6px",
-                      margin: "6px 0 0 0",
-                    }}
-                  >
-                    {errors.slug}
                   </p>
                 )}
               </div>

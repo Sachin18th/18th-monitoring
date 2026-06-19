@@ -824,13 +824,22 @@ export class DashboardService {
             'MISMATCH'
         ]);
 
-        const failedCount = allOrders.filter(o => {
+        const isFailedOrder = (o: typeof allOrders[number]) => {
             const normalizedStatus = (o.normalizedStatus || '').toUpperCase();
             const lifecycleState = (o.lifecycleState || '').toUpperCase();
             return criticalFailureStatuses.has(normalizedStatus) || criticalFailureStatuses.has(lifecycleState);
-        }).length;
-        const delayedCount = allOrders.filter(o => (o.lifecycleState || '').toUpperCase() === 'PROCESSING').length;
+        };
+        const isDelayedOrder = (o: typeof allOrders[number]) => (o.lifecycleState || '').toUpperCase() === 'PROCESSING';
+
+        const failedCount = allOrders.filter(isFailedOrder).length;
+        const delayedCount = allOrders.filter(isDelayedOrder).length;
         const mismatches = allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'MISMATCH').length;
+
+        // Real revenue at risk: the actual order value tied up in orders that are
+        // either failed (critical states) or delayed (still processing). An order
+        // can match both predicates, so we de-dupe on id before summing.
+        const atRiskOrders = allOrders.filter(o => isFailedOrder(o) || isDelayedOrder(o));
+        const revenueAtRisk = atRiskOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
         
         const now = Date.now();
         const hourAgo = now - 3600000;
@@ -860,6 +869,8 @@ export class DashboardService {
             failedCount,
             delayedCount,
             mismatches,
+            revenueAtRisk: Math.round(revenueAtRisk * 100) / 100,
+            atRiskOrderCount: atRiskOrders.length,
             ordersPerMinute: (ordersThisHour / 60).toFixed(2),
             stages,
             metadata: {

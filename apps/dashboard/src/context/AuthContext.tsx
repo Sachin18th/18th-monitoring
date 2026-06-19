@@ -409,6 +409,7 @@ interface AuthContextType {
     token: string | null;
     currentProject: string | null;
     login: (email: string, password: string) => Promise<void>;
+    establishSession: (token: string, user: User) => void;
     logout: () => void;
     setProject: (id: string) => void;
     isLoading: boolean;
@@ -875,6 +876,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('current-project', id);
     }, [currentProject, user]);
 
+    // Shared session-establishment path. Both password login and OTP login feed
+    // the same { token, user } shape through here so persistence (localStorage +
+    // cookie) and the post-auth redirect are identical regardless of method.
+    const establishSession = React.useCallback((newToken: string, newUser: User) => {
+        setToken(newToken);
+        setUser(newUser);
+        localStorage.setItem('session-token', newToken);
+        syncSessionCookie(newToken);
+        localStorage.setItem('session-user', JSON.stringify(newUser));
+
+        if (newUser.role === 'CUSTOMER' && newUser.assignedProjects.length === 1) {
+            console.log('[AuthContext] session:redirect_single_customer_project', {
+                projectId: newUser.assignedProjects[0],
+                userId: newUser?.id || null,
+            });
+            setProject(newUser.assignedProjects[0]);
+            router.push(`/project/${newUser.assignedProjects[0]}/overview`);
+        } else {
+            console.log('[AuthContext] session:redirect_projects', {
+                userId: newUser?.id || null,
+                role: newUser?.role || null,
+                assignedProjects: newUser?.assignedProjects || [],
+            });
+            router.push('/projects');
+        }
+    }, [router, setProject]);
+
     const login = React.useCallback(async (email: string, password: string) => {
         try {
             console.log('[AuthContext] login:start', { email });
@@ -888,28 +916,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 assignedProjects: newUser?.assignedProjects || [],
                 currentStoredProject: localStorage.getItem('current-project'),
             });
-            
-            setToken(newToken);
-            setUser(newUser);
-            localStorage.setItem('session-token', newToken);
-            syncSessionCookie(newToken);
-            localStorage.setItem('session-user', JSON.stringify(newUser));
 
-            if (newUser.role === 'CUSTOMER' && newUser.assignedProjects.length === 1) {
-                console.log('[AuthContext] login:redirect_single_customer_project', {
-                    projectId: newUser.assignedProjects[0],
-                    userId: newUser?.id || null,
-                });
-                setProject(newUser.assignedProjects[0]);
-                router.push(`/project/${newUser.assignedProjects[0]}/overview`);
-            } else {
-                console.log('[AuthContext] login:redirect_projects', {
-                    userId: newUser?.id || null,
-                    role: newUser?.role || null,
-                    assignedProjects: newUser?.assignedProjects || [],
-                });
-                router.push('/projects');
-            }
+            establishSession(newToken, newUser);
         } catch (error: any) {
             const status = error?.response?.status;
             const message = error?.response?.data?.message || error?.message || 'Invalid credentials';
@@ -930,12 +938,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             throw new Error(message);
         }
-    }, [API_BASE, router, setProject]);
+    }, [API_BASE, establishSession]);
 
     return (
-        <AuthContext.Provider value={{ 
-            user, token, currentProject, login, logout, setProject, isLoading, apiFetch,
-            outageStatus, lastUpdated 
+        <AuthContext.Provider value={{
+            user, token, currentProject, login, establishSession, logout, setProject, isLoading, apiFetch,
+            outageStatus, lastUpdated
         }}>
             {children}
         </AuthContext.Provider>

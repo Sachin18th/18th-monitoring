@@ -1,13 +1,11 @@
 // apps/dashboard/src/app/project/[projectId]/rum/page.tsx
-
-
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { DeviceDistribution } from '@/components/rum/DeviceDistribution';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Globe, Users, AlertCircle, RefreshCw } from 'lucide-react';
+import { Globe, Users, AlertCircle, RefreshCw, BarChart3, Smartphone, Network, Image as ImageIcon, MousePointerClick, Move, Server, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PageRestricted } from '@/components/PageRestricted';
@@ -64,14 +62,6 @@ const metricCardStyle: React.CSSProperties = {
   overflow: 'visible',
 };
 
-const chartSectionGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 320px',
-  gap: '24px',
-  marginBottom: '24px',
-  overflow: 'visible',
-};
-
 const sectionCardStyle: React.CSSProperties = {
   borderRadius: '12px',
   border: '1px solid var(--border-card)',
@@ -80,12 +70,44 @@ const sectionCardStyle: React.CSSProperties = {
   overflow: 'visible',
 };
 
-const bottomSectionGridStyle: React.CSSProperties = {
+// Three secondary panels (page-load trend, device split, route performance) in a
+// single row below the full-width Errors card; wraps when the viewport narrows.
+const threeColGridStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
+  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
   gap: '24px',
   overflow: 'visible',
 };
+
+const sectionHeadingStyle: React.CSSProperties = {
+  fontSize: '10px',
+  textTransform: 'uppercase',
+  letterSpacing: '0.1em',
+  color: 'var(--text-label)',
+  fontWeight: 500,
+  marginBottom: '16px',
+};
+
+// Friendly placeholder for panels whose data source isn't populated yet, so the
+// page reads as intentional rather than broken/blank.
+const PanelEmptyState: React.FC<{ icon: React.ReactNode; message: string; hint?: string }> = ({ icon, message, hint }) => (
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      textAlign: 'center',
+      gap: '10px',
+      minHeight: '220px',
+      padding: '16px',
+    }}
+  >
+    <div style={{ color: 'var(--text-label)', opacity: 0.7 }}>{icon}</div>
+    <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>{message}</span>
+    {hint ? <span style={{ fontSize: '11px', color: 'var(--text-label)', maxWidth: '260px', lineHeight: 1.5 }}>{hint}</span> : null}
+  </div>
+);
 
 const errorBannerStyle: React.CSSProperties = {
   width: '100%',
@@ -136,6 +158,22 @@ const severityBadge = (severity: string): { bg: string; color: string } => {
 };
 
 const formatErrorType = (type: string) => String(type || '').replace(/_/g, ' ');
+
+// Compact "time ago" used to show how fresh a metric sample is, so cached values
+// read as dated rather than static/stale.
+const formatRelativeTime = (iso?: string | null): string => {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const diffMs = Date.now() - then;
+  if (diffMs < 60_000) return 'just now';
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+};
 
 // Category buckets — mirror the backend grouping (storefront-error.service.ts).
 // "js" spans uncaught exceptions and promise rejections.
@@ -390,6 +428,7 @@ export default function RumDashboardPage() {
     return [
       {
         name: 'LCP',
+        Icon: ImageIcon,
         value: row('lcp').value,
         unit: row('lcp').unit || 'ms',
         status: row('lcp').status,
@@ -398,6 +437,7 @@ export default function RumDashboardPage() {
       },
       {
         name: 'FID',
+        Icon: MousePointerClick,
         value: row('fid').value,
         unit: row('fid').unit || 'ms',
         status: row('fid').status,
@@ -406,6 +446,7 @@ export default function RumDashboardPage() {
       },
       {
         name: 'CLS',
+        Icon: Move,
         value: row('cls').value,
         unit: '',
         status: row('cls').status,
@@ -414,6 +455,7 @@ export default function RumDashboardPage() {
       },
       {
         name: 'TTFB',
+        Icon: Server,
         value: row('ttfb').value,
         unit: row('ttfb').unit || 'ms',
         status: row('ttfb').status,
@@ -498,10 +540,10 @@ export default function RumDashboardPage() {
         </div>
         
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-          <div style={actionButtonStyle}>
+          {/* <div style={actionButtonStyle}>
             <Users style={{ width: '16px', height: '16px', color: '#818cf8', flexShrink: 0 }} />
             <span>{analytics?.activeUsers || 0} Active Sessions</span>
-          </div>
+          </div> */}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <div style={{ display: 'inline-flex', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-input)' }}>
               <button type="button" onClick={() => setDevice('mobile')} style={{ padding: '8px 12px', background: device === 'mobile' ? 'var(--bg-input)' : 'transparent', border: 'none', cursor: 'pointer', fontWeight: device === 'mobile' ? 700 : 500 }}>Mobile</button>
@@ -538,13 +580,15 @@ export default function RumDashboardPage() {
           const hasValue = typeof vital.value === 'number' && Number.isFinite(vital.value);
           const displayValue = loading ? 'Loading...' : hasValue ? (vital.name === 'CLS' ? Number(vital.value).toFixed(2) : Math.round(Number(vital.value))) : '—';
           const statusLabel = status === 'needs-improvement' ? 'NEEDS IMPROVEMENT' : status.toUpperCase();
+          const Icon = vital.Icon;
+          const freshness = hasValue ? formatRelativeTime(vital.timestamp) : '';
           return (
             <div key={vital.name} style={metricCardStyle}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', fontWeight: 500 }}>
                   {vital.name}
                 </span>
-                <Globe style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
+                <Icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
               </div>
 
               <div style={{ fontSize: '38px', fontWeight: 500, color: loading ? 'var(--text-muted)' : 'var(--text-primary)', lineHeight: 1, padding: '8px 0' }}>
@@ -568,11 +612,11 @@ export default function RumDashboardPage() {
                 >
                   {loading ? 'CALCULATING' : hasValue ? statusLabel : 'NO DATA'}
                 </span>
-                <span style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span title={vital.description} style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {loading
                     ? `Computing ${device} PageSpeed metrics from your store (may take 15-30s)...`
                     : hasValue
-                      ? vital.description
+                      ? (freshness ? `Updated ${freshness}` : vital.description)
                       : `No ${device} metric cached yet. Click Refresh to compute.`}
                 </span>
               </div>
@@ -581,163 +625,192 @@ export default function RumDashboardPage() {
         })}
       </div>
 
-      <div style={chartSectionGridStyle}>
-        {/* Performance Trend */}
-        <div style={sectionCardStyle}>
-          <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500, marginBottom: '16px' }}>
-            AVERAGE PAGE LOAD TIME (MS)
+      {/* Storefront Errors — full width */}
+      <div style={{ ...sectionCardStyle, minHeight: '400px', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500 }}>
+            STOREFRONT ERRORS{errorsTotal > 0 ? ` (${errorsTotal})` : ''}
           </p>
-          <div style={{ width: '100%', height: '300px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={loadTimeTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                <XAxis dataKey="timestamp" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}ms`} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px' }}
-                  itemStyle={{ color: '#818cf8' }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="pageLoadTime" 
-                  stroke="#6366f1" 
-                  strokeWidth={3} 
-                  dot={{ r: 4, fill: '#6366f1', strokeWidth: 2, stroke: 'var(--bg-card)' }}
-                  activeDot={{ r: 6, strokeWidth: 0 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <span style={{ fontSize: '10px', color: '#4ade80', textTransform: 'uppercase', letterSpacing: '0.08em' }}>LIVE</span>
+        </div>
+
+        {/* Category filter pills */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+          {ERROR_CATEGORIES.map((category) => {
+            const count = errorCategoryCounts[category.key];
+            if (category.key !== 'all' && count === 0) return null;
+            const active = errorCategory === category.key;
+            return (
+              <button
+                key={category.key}
+                type="button"
+                onClick={() => setErrorCategory(category.key)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '4px 12px',
+                  borderRadius: '999px',
+                  fontSize: '12px',
+                  fontWeight: active ? 700 : 500,
+                  cursor: 'pointer',
+                  border: `1px solid ${active ? 'var(--border-input)' : 'var(--border-card)'}`,
+                  background: active ? 'var(--bg-input)' : 'transparent',
+                  color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {category.label}
+                <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '520px' }}>
+          {filteredErrors.length === 0 ? (
+            loading ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px', padding: '12px' }}>
+                <AlertCircle style={{ width: '14px', height: '14px', flexShrink: 0 }} />
+                Loading storefront errors…
+              </div>
+            ) : storefrontErrors.length === 0 ? (
+              <PanelEmptyState
+                icon={<CheckCircle2 style={{ width: '36px', height: '36px', color: '#4ade80' }} />}
+                message="No errors — all clear"
+                hint="No storefront errors have been captured in the last 24 hours. New errors will appear here in real time."
+              />
+            ) : (
+              <PanelEmptyState
+                icon={<CheckCircle2 style={{ width: '36px', height: '36px', color: '#4ade80' }} />}
+                message="No errors in this category"
+                hint="Try a different category, or check back later."
+              />
+            )
+          ) : (
+            filteredErrors.map((err) => {
+              const badge = severityBadge(err.severity);
+              return (
+                <div key={err.id} style={{ padding: '12px', borderRadius: '8px', background: 'var(--bg-input)', border: '1px solid var(--border-card)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                      <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap', flexShrink: 0, background: badge.bg, color: badge.color }}>
+                        {err.severity}
+                      </span>
+                      <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'capitalize', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {formatErrorType(err.error_type)}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: '10px', color: 'var(--text-label)', flexShrink: 0 }}>
+                      {err.occurred_at ? new Date(err.occurred_at).toLocaleString() : ''}
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4, overflowWrap: 'anywhere', marginBottom: (err.page_url || err.status_code) ? '6px' : 0 }}>
+                    {err.message}
+                  </div>
+
+                  {(err.page_url || err.status_code || err.page_type) && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '11px', color: 'var(--text-label)', fontFamily: 'monospace' }}>
+                      {err.page_type ? <span>{err.page_type}</span> : null}
+                      {typeof err.status_code === 'number' ? <span>{err.http_method ? `${err.http_method} ` : ''}{err.status_code}</span> : null}
+                      {err.page_url ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{err.page_url}</span> : null}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Three secondary panels below the Errors card */}
+      <div style={threeColGridStyle}>
+        {/* Average Page Load Time */}
+        <div style={sectionCardStyle}>
+          <p style={sectionHeadingStyle}>AVERAGE PAGE LOAD TIME (MS)</p>
+          {loadTimeTrend.length === 0 ? (
+            <PanelEmptyState
+              icon={<BarChart3 style={{ width: '28px', height: '28px' }} />}
+              message="No page-load samples yet"
+              hint="Real-user page timing will appear here once the storefront tracker reports navigation timing."
+            />
+          ) : (
+            <div style={{ width: '100%', height: '260px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={loadTimeTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis dataKey="timestamp" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}ms`} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px' }}
+                    itemStyle={{ color: '#818cf8' }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="pageLoadTime"
+                    stroke="#6366f1"
+                    strokeWidth={3}
+                    dot={{ r: 4, fill: '#6366f1', strokeWidth: 2, stroke: 'var(--bg-card)' }}
+                    activeDot={{ r: 6, strokeWidth: 0 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
 
         {/* Device Split */}
         <div style={sectionCardStyle}>
-          <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500, marginBottom: '16px' }}>
-            DEVICE DISTRIBUTION
-          </p>
-          <DeviceDistribution data={devices} title="Device Distribution" />
-        </div>
-      </div>
-
-      <div style={bottomSectionGridStyle}>
-        {/* Storefront Errors */}
-        <div style={{ ...sectionCardStyle, minHeight: '400px', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500 }}>
-              STOREFRONT ERRORS{errorsTotal > 0 ? ` (${errorsTotal})` : ''}
-            </p>
-            <span style={{ fontSize: '10px', color: '#4ade80', textTransform: 'uppercase', letterSpacing: '0.08em' }}>LIVE</span>
-          </div>
-
-          {/* Category filter pills */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
-            {ERROR_CATEGORIES.map((category) => {
-              const count = errorCategoryCounts[category.key];
-              if (category.key !== 'all' && count === 0) return null;
-              const active = errorCategory === category.key;
-              return (
-                <button
-                  key={category.key}
-                  type="button"
-                  onClick={() => setErrorCategory(category.key)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '4px 12px',
-                    borderRadius: '999px',
-                    fontSize: '12px',
-                    fontWeight: active ? 700 : 500,
-                    cursor: 'pointer',
-                    border: `1px solid ${active ? 'var(--border-input)' : 'var(--border-card)'}`,
-                    background: active ? 'var(--bg-input)' : 'transparent',
-                    color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {category.label}
-                  <span style={{ fontSize: '11px', color: 'var(--text-label)' }}>{count}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '520px' }}>
-            {filteredErrors.length === 0 ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '12px', padding: '12px' }}>
-                <AlertCircle style={{ width: '14px', height: '14px', flexShrink: 0 }} />
-                {loading
-                  ? 'Loading storefront errors…'
-                  : storefrontErrors.length === 0
-                    ? 'No storefront errors captured in the last 24 hours.'
-                    : 'No errors in this category.'}
-              </div>
-            ) : (
-              filteredErrors.map((err) => {
-                const badge = severityBadge(err.severity);
-                return (
-                  <div key={err.id} style={{ padding: '12px', borderRadius: '8px', background: 'var(--bg-input)', border: '1px solid var(--border-card)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap', flexShrink: 0, background: badge.bg, color: badge.color }}>
-                          {err.severity}
-                        </span>
-                        <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', textTransform: 'capitalize', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {formatErrorType(err.error_type)}
-                        </span>
-                      </div>
-                      <span style={{ fontSize: '10px', color: 'var(--text-label)', flexShrink: 0 }}>
-                        {err.occurred_at ? new Date(err.occurred_at).toLocaleString() : ''}
-                      </span>
-                    </div>
-
-                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.4, overflowWrap: 'anywhere', marginBottom: (err.page_url || err.status_code) ? '6px' : 0 }}>
-                      {err.message}
-                    </div>
-
-                    {(err.page_url || err.status_code || err.page_type) && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '11px', color: 'var(--text-label)', fontFamily: 'monospace' }}>
-                        {err.page_type ? <span>{err.page_type}</span> : null}
-                        {typeof err.status_code === 'number' ? <span>{err.http_method ? `${err.http_method} ` : ''}{err.status_code}</span> : null}
-                        {err.page_url ? <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{err.page_url}</span> : null}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
+          <p style={sectionHeadingStyle}>DEVICE DISTRIBUTION</p>
+          {devices.length === 0 ? (
+            <PanelEmptyState
+              icon={<Smartphone style={{ width: '28px', height: '28px' }} />}
+              message="No device data yet"
+              hint="The mobile vs. desktop split will appear here once real-user sessions are recorded."
+            />
+          ) : (
+            <DeviceDistribution data={devices} title="" />
+          )}
         </div>
 
         {/* Route Performance */}
-        <div style={{ ...sectionCardStyle, minHeight: '400px' }}>
-          <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500, marginBottom: '16px' }}>
-            ROUTE PERFORMANCE
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 100px', gap: '16px', padding: '8px 0', borderBottom: '1px solid var(--border-card)', marginBottom: '8px' }}>
-            <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>PATH</span>
-            <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', textAlign: 'right' }}>AVG LOAD</span>
-            <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', textAlign: 'right' }}>STATUS</span>
-          </div>
+        <div style={sectionCardStyle}>
+          <p style={sectionHeadingStyle}>ROUTE PERFORMANCE</p>
+          {topPages.length === 0 ? (
+            <PanelEmptyState
+              icon={<Network style={{ width: '28px', height: '28px' }} />}
+              message="No route metrics yet"
+              hint="Your slowest pages will be ranked here once per-route load times are collected."
+            />
+          ) : (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 100px', gap: '16px', padding: '8px 0', borderBottom: '1px solid var(--border-card)', marginBottom: '8px' }}>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>PATH</span>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', textAlign: 'right' }}>AVG LOAD</span>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', textAlign: 'right' }}>STATUS</span>
+              </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {topPages.map((row) => {
-              const normalized = String(row.status || '').toLowerCase();
-              const badgeBg = normalized === 'healthy' ? 'var(--success-bg)' : normalized === 'warning' ? 'var(--warning-bg)' : 'var(--error-bg)';
-              const badgeColor = normalized === 'healthy' ? 'var(--success-text)' : normalized === 'warning' ? 'var(--warning-text)' : 'var(--error-text)';
-              return (
-                <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '1fr 120px 100px', gap: '16px', padding: '12px 0', borderBottom: '1px solid var(--border-card)', alignItems: 'center' }}>
-                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}</span>
-                  <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, textAlign: 'right' }}>{row.avgLoadTime}ms</span>
-                  <span style={{ textAlign: 'right' }}>
-                    <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', background: badgeBg, color: badgeColor, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                      {row.status}
-                    </span>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {topPages.map((row) => {
+                  const normalized = String(row.status || '').toLowerCase();
+                  const badgeBg = normalized === 'healthy' ? 'var(--success-bg)' : normalized === 'warning' ? 'var(--warning-bg)' : 'var(--error-bg)';
+                  const badgeColor = normalized === 'healthy' ? 'var(--success-text)' : normalized === 'warning' ? 'var(--warning-text)' : 'var(--error-text)';
+                  return (
+                    <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '1fr 120px 100px', gap: '16px', padding: '12px 0', borderBottom: '1px solid var(--border-card)', alignItems: 'center' }}>
+                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}</span>
+                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, textAlign: 'right' }}>{row.avgLoadTime}ms</span>
+                      <span style={{ textAlign: 'right' }}>
+                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', background: badgeBg, color: badgeColor, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {row.status}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

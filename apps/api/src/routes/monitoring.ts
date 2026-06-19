@@ -3,8 +3,11 @@ import { prisma } from '@kpi-platform/db';
 import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
 import { HealthEngine } from '../services/health-engine.service';
 import { AlertEngine } from '../services/alert-engine.service';
+import { AlertRuleService } from '../services/alert-rule.service';
+import { ProjectSettingsService } from '../services/project-settings.service';
+import { NotificationService } from '../services/notification.service';
+import { alertRuleInputSchema, alertNotificationsSchema } from '../utils/alerting/rule-criteria';
 import { DashboardService } from '../services/dashboard.service';
-import { OrderAlertService } from '../services/order-alert.service';
 import { tenantAuthHandler } from '../middlewares/auth.middleware';
 import { tenantIsolationGuard } from '../middlewares/tenant-isolation.middleware';
 import { ResponseUtil } from '../utils/response';
@@ -132,13 +135,14 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
         const { tenantId, siteId } = req.params as any;
         const { status, connector_instance_id } = req.query as any;
 
-        // Derive + persist live order-based alerts to the DB before reading,
-        // so the Alert Center renders real signals (delayed / failed orders)
-        // rather than static or stale data.
+        // Evaluate user-configured alert rules on read so rule-based alerts
+        // surface immediately (complements the 5-min scheduled evaluation).
+        // All alerts are now driven by the configurable rules in
+        // observability/alerts — no hardcoded order/refund heuristics.
         try {
-            await OrderAlertService.syncOrderAlerts(siteId, tenantId);
+            await AlertEngine.evaluateProject(siteId, tenantId);
         } catch (err) {
-            (req as any).log?.warn?.({ err }, '[Alerts] syncOrderAlerts failed');
+            (req as any).log?.warn?.({ err }, '[Alerts] rule evaluation failed');
         }
 
         const activeStatuses = ['TRIGGERED', 'ACTIVE', 'ACKNOWLEDGED'];
@@ -149,7 +153,14 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
             ? connector_instance_id[0]
             : connector_instance_id;
         if (connectorInstanceId && connectorInstanceId !== 'all') {
-            where.connectorInstanceId = connectorInstanceId;
+            // Match alerts stamped with this store OR project-wide alerts
+            // (connectorInstanceId null — e.g. rule alerts that evaluate the
+            // whole project). Without the null branch, project-wide rule
+            // alerts vanish the moment a specific store is selected.
+            where.OR = [
+                { connectorInstanceId },
+                { connectorInstanceId: null },
+            ];
         }
         if (status === 'resolved') {
             where.status = 'RESOLVED';
@@ -240,12 +251,124 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
 
     /**
      * GET /alert-rules
-     * Lists all configured alert rules for the project.
+     * Lists all configured alert rules for the project (DB-backed).
      */
     fastify.get('/tenants/:tenantId/projects/:siteId/alert-rules', async (req, reply) => {
         const { siteId } = req.params as any;
-        const rules = (GlobalMemoryStore.alertRules || []).filter((r: any) => r.siteId === siteId);
+        const rules = await AlertRuleService.list(siteId);
         return reply.send(ResponseUtil.success({ rules }, {}, req.id as string));
+    });
+
+    /**
+     * POST /alert-rules
+     * Creates a new alert rule from the Alert Center config form.
+     */
+    fastify.post('/tenants/:tenantId/projects/:siteId/alert-rules', async (req, reply) => {
+        const { tenantId, siteId } = req.params as any;
+        try {
+            const parsed = alertRuleInputSchema.parse(req.body);
+            const rule = await AlertRuleService.create(siteId, tenantId, parsed);
+            return reply.code(201).send(ResponseUtil.success({ rule }, {}, req.id as string));
+        } catch (err: any) {
+            return reply.code(400).send(ResponseUtil.error(err?.message || 'Invalid alert rule', 'VALIDATION_ERROR', null, req.id as string));
+        }
+    });
+
+    /**
+     * PUT /alert-rules/:ruleId
+     * Updates an existing alert rule.
+     */
+    fastify.put('/tenants/:tenantId/projects/:siteId/alert-rules/:ruleId', async (req, reply) => {
+        const { tenantId, siteId, ruleId } = req.params as any;
+        try {
+            const parsed = alertRuleInputSchema.parse(req.body);
+            const rule = await AlertRuleService.update(siteId, ruleId, parsed);
+            if (!rule) return reply.code(404).send(ResponseUtil.error('Alert rule not found', 'NOT_FOUND', null, req.id as string));
+            // The condition may have changed: clear alerts raised under the old
+            // criteria and re-evaluate now so the Alert Center is filtered on the
+            // updated rule immediately (not after the next scheduled cycle).
+            try {
+                await AlertEngine.handleRuleChanged(siteId, tenantId, ruleId);
+            } catch (err) {
+                (req as any).log?.warn?.({ err, ruleId }, '[Alerts] post-update re-evaluation failed');
+            }
+            return reply.send(ResponseUtil.success({ rule }, {}, req.id as string));
+        } catch (err: any) {
+            return reply.code(400).send(ResponseUtil.error(err?.message || 'Invalid alert rule', 'VALIDATION_ERROR', null, req.id as string));
+        }
+    });
+
+    /**
+     * PATCH /alert-rules/:ruleId/toggle
+     * Enables or disables a rule without resubmitting the whole form.
+     */
+    fastify.patch('/tenants/:tenantId/projects/:siteId/alert-rules/:ruleId/toggle', async (req, reply) => {
+        const { siteId, ruleId } = req.params as any;
+        const { enabled } = (req.body || {}) as any;
+        const rule = await AlertRuleService.setEnabled(siteId, ruleId, enabled !== false);
+        if (!rule) return reply.code(404).send(ResponseUtil.error('Alert rule not found', 'NOT_FOUND', null, req.id as string));
+        // A paused rule must not leave its alerts open in the Alert Center.
+        if (!rule.enabled) {
+            try {
+                await AlertEngine.resolveAlertsForRule(siteId, ruleId);
+            } catch (err) {
+                (req as any).log?.warn?.({ err, ruleId }, '[Alerts] resolve-on-disable failed');
+            }
+        }
+        return reply.send(ResponseUtil.success({ rule }, {}, req.id as string));
+    });
+
+    /**
+     * DELETE /alert-rules/:ruleId
+     */
+    fastify.delete('/tenants/:tenantId/projects/:siteId/alert-rules/:ruleId', async (req, reply) => {
+        const { siteId, ruleId } = req.params as any;
+        const ok = await AlertRuleService.remove(siteId, ruleId);
+        if (!ok) return reply.code(404).send(ResponseUtil.error('Alert rule not found', 'NOT_FOUND', null, req.id as string));
+        // The rule is gone, so it can no longer auto-resolve its own alerts on
+        // the scheduled cycle — clear them now so they don't linger forever.
+        try {
+            await AlertEngine.resolveAlertsForRule(siteId, ruleId);
+        } catch (err) {
+            (req as any).log?.warn?.({ err, ruleId }, '[Alerts] resolve-on-delete failed');
+        }
+        return reply.send(ResponseUtil.success({ deleted: true }, {}, req.id as string));
+    });
+
+    /**
+     * GET /alert-notifications
+     * Project-level notification settings (shared recipients + summary cadence).
+     */
+    fastify.get('/tenants/:tenantId/projects/:siteId/alert-notifications', async (req, reply) => {
+        const { siteId } = req.params as any;
+        const settings = await ProjectSettingsService.getAlertNotifications(siteId);
+        return reply.send(ResponseUtil.success({ settings }, {}, req.id as string));
+    });
+
+    /**
+     * PUT /alert-notifications
+     * Updates the project's shared notification settings.
+     */
+    fastify.put('/tenants/:tenantId/projects/:siteId/alert-notifications', async (req, reply) => {
+        const { siteId } = req.params as any;
+        try {
+            const parsed = alertNotificationsSchema.parse(req.body);
+            const settings = await ProjectSettingsService.updateAlertNotifications(siteId, parsed);
+            return reply.send(ResponseUtil.success({ settings }, {}, req.id as string));
+        } catch (err: any) {
+            return reply.code(400).send(ResponseUtil.error(err?.message || 'Invalid notification settings', 'VALIDATION_ERROR', null, req.id as string));
+        }
+    });
+
+    /**
+     * POST /alert-notifications/test
+     * Sends a one-off test email to the configured recipients so the operator
+     * can verify SMTP delivery on demand.
+     */
+    fastify.post('/tenants/:tenantId/projects/:siteId/alert-notifications/test', async (req, reply) => {
+        const { siteId } = req.params as any;
+        const result = await NotificationService.sendTestEmail(siteId);
+        return reply.send(ResponseUtil.success(result, {}, req.id as string));
     });
 
     /**

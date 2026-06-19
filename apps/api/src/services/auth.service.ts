@@ -133,8 +133,35 @@ export class AuthService {
             }
         });
 
-        // Get assigned projects
-        const assignedProjects = await getAssignedProjects(updatedUser.id);
+        // Issue a session using the single shared session-issuance path.
+        const { token, user: responseUser } = await this.createSession(updatedUser);
+
+        await AuditService.log({
+            action: 'LOGIN_SUCCESS',
+            actorId: email,
+            tenantId: user.tenantId,
+            projectId: responseUser.assignedProjects[0] || undefined,
+            actorRole: user.role,
+            status: 'SUCCESS'
+        });
+        return { token, user: responseUser };
+    }
+
+    /**
+     * Single source of truth for issuing a session. Both the password login
+     * flow and the OTP login flow MUST go through this so the session shape
+     * (opaque token in `user_sessions`, 1-hour expiry, metadata claims) and the
+     * returned user object are identical regardless of how the user authenticated.
+     */
+    static async createSession(user: {
+        id: string;
+        email: string;
+        name: string;
+        role: string;
+        tenantId: string;
+        lastLoginAt?: Date | null;
+    }): Promise<{ token: string; user: any }> {
+        const assignedProjects = await getAssignedProjects(user.id);
 
         // Generate token and create session in database
         const token = crypto.randomBytes(32).toString('hex');
@@ -143,40 +170,32 @@ export class AuthService {
         await prisma.userSession.create({
             data: {
                 token,
-                userId: updatedUser.id,
+                userId: user.id,
                 expiresAt,
                 metadata: {
-                    email: updatedUser.email,
-                    role: updatedUser.role,
-                    tenantId: updatedUser.tenantId
+                    email: user.email,
+                    role: user.role,
+                    tenantId: user.tenantId
                 }
             }
         });
 
         // Build response user object (exclude passwordHash)
         const responseUser = {
-            id: updatedUser.id,
-            email: updatedUser.email,
-            name: updatedUser.name,
-            role: updatedUser.role,
-            tenantId: updatedUser.tenantId,
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            tenantId: user.tenantId,
             assignedProjects,
-            lastLoginAt: updatedUser.lastLoginAt?.toISOString() || null,
+            lastLoginAt: user.lastLoginAt?.toISOString() || null,
             audit: {
-                lastLoginAt: updatedUser.lastLoginAt?.toISOString() || null,
+                lastLoginAt: user.lastLoginAt?.toISOString() || null,
                 failedLogins: 0,
                 lockoutUntil: null
             }
         };
 
-        await AuditService.log({
-            action: 'LOGIN_SUCCESS',
-            actorId: email,
-            tenantId: user.tenantId,
-            projectId: assignedProjects[0] || undefined,
-            actorRole: user.role,
-            status: 'SUCCESS'
-        });
         return { token, user: responseUser };
     }
 

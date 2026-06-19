@@ -227,7 +227,9 @@ export default function RumMetricsPanel() {
       await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/sync`, {
         method: 'POST',
         body: connectorInstanceId ? JSON.stringify({ connectorInstanceId }) : undefined,
-        timeout: 70000,
+        // Mobile + desktop scans now run concurrently server-side (~30-40s typical),
+        // but BigCommerce storefronts can be slow for PSI — give comfortable headroom.
+        timeout: 120000,
       });
       await loadMetrics();
       // Re-fetch ALL page types for the current strategy (force bypasses the 1h cache).

@@ -416,8 +416,11 @@ export const ConnectorPlatformProvider: React.FC<{
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setConnectedStores((stores) =>
-        stores.map((store) => {
+      setConnectedStores((stores) => {
+        // Skip the update entirely when no store is actively syncing —
+        // this prevents an unnecessary re-render cascade every 1.5 s.
+        if (!stores.some((s) => s.initialSyncState === "in_progress")) return stores;
+        return stores.map((store) => {
           if (store.initialSyncState !== "in_progress") return store;
           const nextProgress = Math.min(store.syncProgress + 20, 100);
           return {
@@ -430,8 +433,8 @@ export const ConnectorPlatformProvider: React.FC<{
                 : store.lastSuccessfulSync,
             status: nextProgress >= 100 ? "healthy" : store.status,
           };
-        }),
-      );
+        });
+      });
     }, 1500);
 
     return () => window.clearInterval(interval);

@@ -1,13 +1,13 @@
 'use client';
 import React, { memo } from 'react';
-import { 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  ResponsiveContainer 
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer
 } from 'recharts';
 
 interface ChartPoint {
@@ -37,7 +37,7 @@ export const PerformanceChart = memo(({ data, title, height = 240 }: Performance
             
             <div style={{ width: '100%', height }}>
                 <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <LineChart data={data} margin={{ top: 12, right: 16, left: 8, bottom: 8 }}>
                         <defs>
                            <linearGradient id="colorPageLoad" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.1}/>
@@ -49,9 +49,10 @@ export const PerformanceChart = memo(({ data, title, height = 240 }: Performance
                             dataKey="timestamp" 
                             stroke="var(--text-muted)" 
                             fontSize={10} 
-                            tickLine={false} 
+                            tickLine={false}
                             axisLine={false}
-                            dy={10}
+                            dy={8}
+                            padding={{ left: 8, right: 8 }}
                             tickFormatter={(val) => {
                                 try {
                                     return val.split(':')[0] + ':' + val.split(':')[1];
