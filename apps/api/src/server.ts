@@ -151,8 +151,13 @@ export const bootstrapApi = async () => {
     });
 
     server.addHook('onRequest', secureHeaders);
-    // Rate limit: Max 100 requests per minute per IP
-    server.addHook('onRequest', rateLimiter(100, 60_000));
+    // Per-IP rate limit. The dashboard polls several endpoints continuously
+    // (alerts, metrics, health) so a single authenticated user legitimately makes
+    // far more than 100 req/min — and in dev every request shares 127.0.0.1.
+    // Default is generous and overridable via env for stricter environments.
+    const rateLimitMax = Number(process.env.RATE_LIMIT_MAX) || 1000;
+    const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000;
+    server.addHook('onRequest', rateLimiter(rateLimitMax, rateLimitWindowMs));
 
     // Scoped Dashboard Routes
     await server.register(dashboardRoutes, { 

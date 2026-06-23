@@ -23,5 +23,3 @@ export { db, getDbConnection, closeDbConnection, DatabaseFactory } from './confi
 export { GlobalMemoryStore } from './adapters/in-memory.adapter';
 export * from './models/metric.model';
 export * from './models/tenant.model';
-// DRIZZLE DEPRECATED — will be removed after full migration
-// export * from './drizzle/schema';

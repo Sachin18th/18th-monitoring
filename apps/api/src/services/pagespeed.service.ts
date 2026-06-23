@@ -626,8 +626,15 @@ export class PageSpeedService {
     // ─── Page-type breakdown (Homepage / PDP / PLP / Checkout) ──────────────────
 
     /**
-     * Discover representative Shopify URLs, run PageSpeed for each page type at the
-     * given strategy (cache-first, 1h TTL), and return one entry per page type.
+     * Run PageSpeed for each page type at the given strategy (cache-first, 1h TTL)
+     * and return one entry per page type.
+     *
+     * Per the product brief, every page type is measured against the store's base
+     * (homepage) URL for now. We deliberately do NOT discover or fabricate
+     * PDP/PLP/checkout sub-paths — that discovery is unreliable (password-protected
+     * storefronts, missing Admin tokens, Shopify blocking checkout) and previously
+     * left those tabs permanently "Unavailable". The homepage is measured once and
+     * reused for the other page types, annotated so the UI can surface a note.
      */
     static async getPageTypeMetrics(
         tenantId: string,
@@ -651,36 +658,59 @@ export class PageSpeedService {
 
         const result = {} as Record<PageType, any>;
 
-        if (!connector) {
+        const noStore = () => {
             for (const pt of PAGE_TYPES) result[pt] = this.unavailablePage(pt, null, 'No connected store found for this project.');
             return result;
-        }
+        };
+
+        if (!connector) return noStore();
 
         const connectorInstanceId = connector.id;
-        const urls = await this.discoverPageUrls(connector);
+        const storeUrl = await this.resolveStoreUrl(connector);
+        const homepageUrl = storeUrl ? `${storeUrl.replace(/\/$/, '')}/` : null;
+        if (!homepageUrl) return noStore();
 
-        // Resolve each page type concurrently; a single page failing never breaks the others.
-        await Promise.all(PAGE_TYPES.map(async (pageType) => {
-            const url = urls[pageType];
-            if (!url) {
-                result[pageType] = this.unavailablePage(pageType, null, this.missingUrlReason(pageType));
-                return;
-            }
-            try {
-                result[pageType] = await this.resolvePageMetrics({
-                    tenantId, projectId, connectorInstanceId, strategy, pageType, url, forceRefresh,
-                });
-            } catch (error) {
-                console.warn('[PageSpeedService] getPageTypeMetrics:page-failed', {
-                    projectId, pageType, url, error: error instanceof Error ? error.message : String(error),
-                });
-                // Cache an "unavailable" sentinel so we don't re-hit PSI within the TTL.
-                await this.upsertPageMetric({ tenantId, siteId: projectId, connectorInstanceId, strategy, pageType, metricName: 'score', metricValue: -1, url, timestamp: new Date() });
-                result[pageType] = this.unavailablePage(pageType, url, this.failureReason(pageType));
-            }
-        }));
+        // Measure the homepage once.
+        let homepage: any;
+        try {
+            homepage = await this.resolvePageMetrics({
+                tenantId, projectId, connectorInstanceId, strategy, pageType: 'homepage', url: homepageUrl, forceRefresh,
+            });
+        } catch (error) {
+            console.warn('[PageSpeedService] getPageTypeMetrics:homepage-failed', {
+                projectId, url: homepageUrl, error: error instanceof Error ? error.message : String(error),
+            });
+            await this.upsertPageMetric({ tenantId, siteId: projectId, connectorInstanceId, strategy, pageType: 'homepage', metricName: 'score', metricValue: -1, url: homepageUrl, timestamp: new Date() });
+            homepage = this.unavailablePage('homepage', homepageUrl, this.failureReason('homepage'));
+        }
+
+        // Reuse the homepage measurement for the other page types until per-page-type
+        // URL configuration exists. Each is annotated so the UI shows a clear note.
+        result.homepage = homepage;
+        for (const pageType of ['pdp', 'plp', 'checkout'] as PageType[]) {
+            result[pageType] = this.proxyHomepageResult(pageType, homepage);
+        }
 
         return result;
+    }
+
+    /**
+     * Build a page-type result that reuses the homepage measurement, flagged so the
+     * frontend can render a "Measured against store homepage" note.
+     */
+    private static proxyHomepageResult(pageType: PageType, homepage: any): any {
+        if (!homepage || !homepage.available) {
+            return {
+                ...this.unavailablePage(pageType, homepage?.url ?? null, homepage?.reason || this.failureReason(pageType), homepage?.timestamp ?? null),
+                measuredAgainstHomepage: true,
+            };
+        }
+        return {
+            ...homepage,
+            pageType,
+            measuredAgainstHomepage: true,
+            note: 'Measured against store homepage',
+        };
     }
 
     private static async resolvePageMetrics(input: {
@@ -772,14 +802,10 @@ export class PageSpeedService {
         };
     }
 
-    private static missingUrlReason(pageType: PageType): string {
-        if (pageType === 'pdp') return 'No published product found in the store to test.';
-        if (pageType === 'plp') return 'No collection found in the store to test.';
-        return 'Could not resolve a URL for this page type.';
-    }
-
-    private static failureReason(pageType: PageType): string {
-        if (pageType === 'checkout') return 'Unavailable – Shopify restricts PageSpeed analysis for this page.';
+    // Uniform across all platforms and page types — no platform- or page-specific
+    // messaging. Page-type tabs proxy the homepage result, so this only surfaces
+    // when the homepage measurement itself could not be analyzed.
+    private static failureReason(_pageType: PageType): string {
         return 'Unavailable – PageSpeed could not analyze this page.';
     }
 
@@ -859,122 +885,4 @@ export class PageSpeedService {
         });
     }
 
-    // ─── Shopify representative-URL discovery ───────────────────────────────────
-
-    private static async discoverPageUrls(connector: ConnectorInstanceConfig): Promise<Record<PageType, string | null>> {
-        // Homepage works for any provider via the existing store-URL resolver.
-        const storeUrl = await this.resolveStoreUrl(connector);
-        const homepage = storeUrl ? `${storeUrl.replace(/\/$/, '')}/` : null;
-
-        // PDP / PLP / Checkout discovery is Shopify-specific (Admin REST).
-        if (connector.providerId !== 'shopify') {
-            return { homepage, pdp: null, plp: null, checkout: null };
-        }
-
-        const cfg = (connector.syncConfig || {}) as Record<string, any>;
-        const shopDomain = this.normalizeShopDomain(cfg.shopDomain);
-        const credentials = this.parseCredentials(connector.credentials?.[0]?.encryptedSecret);
-        const token = String(credentials.adminApiAccessToken || credentials.accessToken || credentials.token || '').trim();
-        const apiVersion = String(cfg.apiVersion || '2024-01').trim();
-
-        if (!shopDomain) {
-            return { homepage, pdp: null, plp: null, checkout: null };
-        }
-
-        // Public domain: prefer the shop's primary domain over the myshopify domain.
-        // The Admin API is optional here — if the token is missing/invalid (401), we
-        // fall back to Shopify's public storefront JSON endpoints, which need no auth.
-        let publicDomain = shopDomain;
-        if (token) {
-            const shop = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/shop.json');
-            const primary = shop?.shop?.domain || shop?.shop?.myshopify_domain;
-            if (primary) publicDomain = this.normalizeShopDomain(primary);
-        }
-
-        const base = `https://${publicDomain}`;
-
-        // PDP: first published product handle. Try the Admin API first (richer
-        // filtering), then fall back to the public /products.json endpoint.
-        let pdp: string | null = null;
-        let productHandle: string | undefined;
-        if (token) {
-            const products = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/products.json?limit=1&published_status=published');
-            productHandle = products?.products?.[0]?.handle;
-        }
-        if (!productHandle) {
-            const products = await this.shopifyPublicGet(publicDomain, '/products.json?limit=1');
-            productHandle = products?.products?.[0]?.handle;
-        }
-        if (productHandle) pdp = `${base}/products/${productHandle}`;
-
-        // PLP: first collection handle (custom or smart via Admin API, else public).
-        let plp: string | null = null;
-        let collectionHandle: string | undefined;
-        if (token) {
-            const custom = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/custom_collections.json?limit=1');
-            collectionHandle = custom?.custom_collections?.[0]?.handle;
-            if (!collectionHandle) {
-                const smart = await this.shopifyAdminGet(shopDomain, token, apiVersion, '/smart_collections.json?limit=1');
-                collectionHandle = smart?.smart_collections?.[0]?.handle;
-            }
-        }
-        if (!collectionHandle) {
-            const collections = await this.shopifyPublicGet(publicDomain, '/collections.json?limit=1');
-            collectionHandle = collections?.collections?.[0]?.handle;
-        }
-        if (collectionHandle) plp = `${base}/collections/${collectionHandle}`;
-
-        return {
-            homepage: `${base}/`,
-            pdp,
-            plp,
-            checkout: `${base}/checkout`,
-        };
-    }
-
-    /**
-     * Fetch a public Shopify storefront JSON endpoint (e.g. /products.json,
-     * /collections.json). These require no authentication and work as long as the
-     * storefront isn't password-protected — used to discover representative PDP/PLP
-     * URLs when the Admin API token is missing or rejected (401).
-     */
-    private static async shopifyPublicGet(publicDomain: string, path: string): Promise<any | null> {
-        try {
-            const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
-            const response = await fetchFn(`https://${publicDomain}${path}`, {
-                method: 'GET',
-                headers: { Accept: 'application/json' },
-            });
-            if (!response.ok) {
-                console.warn('[PageSpeedService] shopifyPublicGet:non-ok', { path, status: response.status });
-                return null;
-            }
-            return await response.json();
-        } catch (error) {
-            console.warn('[PageSpeedService] shopifyPublicGet:failed', { path, error: error instanceof Error ? error.message : String(error) });
-            return null;
-        }
-    }
-
-    private static normalizeShopDomain(value: unknown): string {
-        return String(value || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '').split('/')[0];
-    }
-
-    private static async shopifyAdminGet(shopDomain: string, token: string, apiVersion: string, path: string): Promise<any | null> {
-        try {
-            const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
-            const response = await fetchFn(`https://${shopDomain}/admin/api/${apiVersion}${path}`, {
-                method: 'GET',
-                headers: { 'X-Shopify-Access-Token': token, Accept: 'application/json', 'Content-Type': 'application/json' },
-            });
-            if (!response.ok) {
-                console.warn('[PageSpeedService] shopifyAdminGet:non-ok', { path, status: response.status });
-                return null;
-            }
-            return await response.json();
-        } catch (error) {
-            console.warn('[PageSpeedService] shopifyAdminGet:failed', { path, error: error instanceof Error ? error.message : String(error) });
-            return null;
-        }
-    }
 }

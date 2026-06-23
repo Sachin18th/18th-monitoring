@@ -125,7 +125,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
   const [selectedEnv, setSelectedEnv] = React.useState('Production');
   const [availableProjects, setAvailableProjects] = React.useState<any[]>([]);
-  const [alertCount, setAlertCount] = React.useState<number>(0);
   const [hoveredHref, setHoveredHref] = React.useState<string | null>(null);
   const [showUserDropdown, setShowUserDropdown] = React.useState(false);
   const [showStoreDropdown, setShowStoreDropdown] = React.useState(false);
@@ -196,23 +195,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
       setAvailableProjects(list);
     }
   }, [token, user, apiFetch, isProjectRoute, normalizedRole]);
-
-  useEffect(() => {
-    if (!token || !projectId || !isProjectRoute || !user?.tenantId) return;
-
-    const fetchAlerts = () => {
-      apiFetch(`/api/v1/tenants/${user.tenantId}/projects/${projectId}/alerts?status=active`)
-        .then((data) => {
-          const criticalCount = data?.data?.alerts?.filter((a: any) => a.severity === 'critical')?.length || 0;
-          setAlertCount(criticalCount);
-        })
-        .catch((err) => console.error('[DashboardShell] Failed to load alerts:', err));
-    };
-
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, 60000);
-    return () => clearInterval(interval);
-  }, [token, projectId, apiFetch, isProjectRoute, user?.tenantId]);
 
   useEffect(() => {
     if (!token || !projectId || !isProjectRoute || !user) {
@@ -321,8 +303,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
       {
         name: 'System',
         items: [
-          { label: 'Integrations', href: `${prefix}/integrations`, icon: Link2, pageKey: 'integrations' },
-          { label: 'Alerts', href: `${prefix}/alerts`, icon: Bell, badge: alertCount, pageKey: 'alerts' }
+          { label: 'Integrations', href: `${prefix}/integrations`, icon: Link2, pageKey: 'integrations' }
         ]
       }
     ];
@@ -356,7 +337,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         }))
         .filter((item: any) => isVisible(item.pageKey))
     }));
-  }, [projectId, normalizedRole, alertCount, isProjectRoute]);
+  }, [projectId, normalizedRole, isProjectRoute]);
 
   const breadcrumbs = useMemo(() => {
     if (!isProjectRoute) return [];
@@ -1033,7 +1014,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
             <button
               type="button"
               className="project-header-icon-button"
-              onClick={() => router.push(`/project/${projectId}/alerts`)}
+              onClick={() => router.push(`/project/${projectId}/observability/alerts`)}
               aria-label="Notifications"
               title="Notifications"
               style={{ position: 'relative' }}

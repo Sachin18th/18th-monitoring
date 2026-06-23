@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
+import { useConnectorPlatform } from '@/context/ConnectorPlatformContext';
 import { PageRestricted } from '@/components/PageRestricted';
 import { AlertRuleConfigDrawer } from '@/components/observability/AlertRuleConfigDrawer';
 
@@ -161,6 +162,12 @@ export default function AlertCenterPage() {
   // Active store selection — drives which connector's alerts are shown and
   // triggers a live DB re-sync whenever the operator switches stores.
   const { connectorInstanceId, connectorLabel, connectorSelectionTick } = useConnectorFilter();
+  // Alert rules only make sense once at least one store is connected — every
+  // metric family (orders, pagespeed, errors, sessions, journeys) is sourced
+  // from a connected store. With no store, there's nothing to watch, so we
+  // block alert configuration until one is connected.
+  const { connectedStores } = useConnectorPlatform();
+  const hasStores = connectedStores.length > 0;
 
   const [loading, setLoading] = useState(false);
   const [initialLoaded, setInitialLoaded] = useState(false);
@@ -367,8 +374,13 @@ export default function AlertCenterPage() {
           {/* <button style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>
             <History style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Audit Log
           </button> */}
-          <button onClick={() => setRuleConfigOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid rgba(96,165,250,0.2)', background: '#2563EB', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: '#fff', flexShrink: 0, cursor: 'pointer' }}>
-            <Settings style={{ width: '16px', height: '16px', flexShrink: 0 }} /> Rule Config
+          <button
+            onClick={() => hasStores && setRuleConfigOpen(true)}
+            disabled={!hasStores}
+            title={hasStores ? 'Configure alert rules' : 'Connect a store before configuring alerts'}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid rgba(96,165,250,0.2)', background: '#2563EB', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: '#fff', flexShrink: 0, cursor: hasStores ? 'pointer' : 'not-allowed', opacity: hasStores ? 1 : 0.5 }}
+          >
+            <Settings style={{ width: '16px', height: '16px', flexShrink: 0 }} />  Configure Rule
           </button>
         </div>
       </div>
@@ -435,8 +447,10 @@ export default function AlertCenterPage() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <p style={{ ...filterTitleStyle, marginBottom: 0 }}>Filter by Rule</p>
               <button
-                onClick={() => setRuleConfigOpen(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'transparent', border: 'none', color: '#60a5fa', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                onClick={() => hasStores && setRuleConfigOpen(true)}
+                disabled={!hasStores}
+                title={hasStores ? 'Manage alert rules' : 'Connect a store before configuring alerts'}
+                style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'transparent', border: 'none', color: '#60a5fa', fontSize: '11px', fontWeight: 600, cursor: hasStores ? 'pointer' : 'not-allowed', opacity: hasStores ? 1 : 0.5, padding: 0 }}
               >
                 <Settings style={{ width: '12px', height: '12px' }} /> Manage
               </button>
@@ -444,7 +458,9 @@ export default function AlertCenterPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {rules.length === 0 ? (
                 <span style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                  No rules yet. Click <strong>Manage</strong> to create one.
+                  {hasStores
+                    ? <>No rules yet. Click <strong>Manage</strong> to create one.</>
+                    : <>Connect a store first, then create alert rules.</>}
                 </span>
               ) : (
                 rules.map((r) => (
@@ -472,14 +488,22 @@ export default function AlertCenterPage() {
         <div style={alertPanelStyle}>
           {visibleAlerts.length === 0 && !loading ? (
             rules.length === 0 ? (
-              <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
-                <Bell style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#818cf8', flexShrink: 0 }} />
-                <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>No alert rules yet</h3>
-                <p style={{ maxWidth: '22rem', fontSize: '14px', lineHeight: 1.625, color: 'var(--text-muted)', marginBottom: '20px' }}>Create a rule to start monitoring your KPIs — when a threshold is breached, an alert appears here and recipients get emailed.</p>
-                <button onClick={() => setRuleConfigOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: 'none', background: '#2563EB', padding: '9px 16px', fontSize: '13px', fontWeight: 600, color: '#fff', cursor: 'pointer' }}>
-                  <Settings style={{ width: '16px', height: '16px' }} /> Configure a Rule
-                </button>
-              </div>
+              !hasStores ? (
+                <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
+                  <ShieldAlert style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#94a3b8', flexShrink: 0 }} />
+                  <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>Connect a store first</h3>
+                  <p style={{ maxWidth: '22rem', fontSize: '14px', lineHeight: 1.625, color: 'var(--text-muted)' }}>Alerts watch your store's orders, performance, errors and traffic. Connect a store to start configuring alert rules.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
+                  <Bell style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#818cf8', flexShrink: 0 }} />
+                  <h3 style={{ marginBottom: '8px', fontSize: '18px', fontWeight: 500, color: 'var(--text-primary)' }}>No alert rules yet</h3>
+                  <p style={{ maxWidth: '22rem', fontSize: '14px', lineHeight: 1.625, color: 'var(--text-muted)', marginBottom: '20px' }}>Create a rule to start monitoring your KPIs — when a threshold is breached, an alert appears here and recipients get emailed.</p>
+                  <button onClick={() => setRuleConfigOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: 'none', background: '#2563EB', padding: '9px 16px', fontSize: '13px', fontWeight: 600, color: '#fff', cursor: 'pointer' }}>
+                    <Settings style={{ width: '16px', height: '16px' }} /> Configure Rule
+                  </button>
+                </div>
+              )
             ) : (
               <div style={{ display: 'flex', flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingTop: '48px', paddingBottom: '48px', textAlign: 'center' }}>
                 <CheckCircle2 style={{ width: '56px', height: '56px', marginBottom: '16px', color: '#10b981', flexShrink: 0 }} />
@@ -516,7 +540,7 @@ export default function AlertCenterPage() {
       </div>
 
       <AlertRuleConfigDrawer
-        isOpen={ruleConfigOpen}
+        isOpen={ruleConfigOpen && hasStores}
         onClose={() => setRuleConfigOpen(false)}
         projectId={projectId as string}
         apiFetch={apiFetch}

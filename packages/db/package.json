@@ -10,8 +10,7 @@
     "db:migrate:deploy": "prisma migrate deploy --schema=./prisma/schema.prisma",
     "db:studio": "prisma studio --schema=./prisma/schema.prisma",
     "db:push": "prisma db push --schema=./prisma/schema.prisma",
-    "seed:auth": "tsx src/seeders/seed-18th-auth-users.ts"
-    ,"seed:auth:prisma": "tsx src/seeders/seed-18th-auth-users-prisma.ts"
+    "seed:auth:prisma": "tsx src/seeders/seed-18th-auth-users-prisma.ts"
     ,"secrets:encrypt": "tsx src/scripts/encrypt-connector-credentials.ts"
     ,"secrets:rotate": "tsx src/scripts/rotate-connector-secret.ts"
   },

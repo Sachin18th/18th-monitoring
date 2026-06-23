@@ -12,15 +12,13 @@ import { PageRestricted } from "../../../../components/PageRestricted";
 import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 import { useParams } from "next/navigation";
 import {
-  FilterBar,
   DiagnosticDrawer,
   OperationalTable,
   Column,
 } from "@kpi-platform/ui";
 import {
   AlertCircle,
-  ArrowRightLeft,
-  Activity,
+  CheckCircle2,
   RefreshCw,
   MoreHorizontal,
   Plus,
@@ -59,31 +57,6 @@ const panelStyle: React.CSSProperties = {
   background: "var(--bg-card)",
   padding: "24px",
   overflow: "visible",
-};
-
-const actionButtonStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "8px 16px",
-  borderRadius: "8px",
-  border: "1px solid var(--border-input)",
-  background: "var(--bg-input)",
-  color: "var(--text-primary)",
-  fontSize: "14px",
-  fontWeight: 500,
-  cursor: "pointer",
-};
-
-const secondaryActionButtonStyle: React.CSSProperties = {
-  ...actionButtonStyle,
-};
-
-const primaryActionButtonStyle: React.CSSProperties = {
-  ...actionButtonStyle,
-  border: "none",
-  background: "#2563EB",
-  color: "#fff",
 };
 
 const errorBannerStyle: React.CSSProperties = {
@@ -126,8 +99,6 @@ export default function IntegrationsPage() {
   const [resyncJobs, setResyncJobs] = useState<
     Record<string, { jobId: string; status: string; error?: string | null }>
   >({});
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
   const { openConnectorSetupModal } = useConnectorPlatform();
   const { success, error: showError } = useToast();
   const resyncPollersRef = useRef<Record<string, number>>({});
@@ -582,25 +553,14 @@ export default function IntegrationsPage() {
   ]);
 
   const filteredConnectors = useMemo(() => {
-    return connectors.filter((c) => {
-      // If a connectorInstanceId is selected globally, only show that connector
-      if (connectorInstanceId) {
-        return (
-          toText(c?.connectorInstanceId).trim() === connectorInstanceId ||
-          toText(c?.id).trim() === connectorInstanceId
-        );
-      }
-
-      const normalizedName = toText(c?.name).toLowerCase();
-      const normalizedProvider = toText(c?.provider).toLowerCase();
-      const normalizedQuery = toText(searchQuery).toLowerCase();
-      const matchesSearch =
-        normalizedName.includes(normalizedQuery) ||
-        normalizedProvider.includes(normalizedQuery);
-      const matchesStatus = !filterStatus || c.status === filterStatus;
-      return matchesSearch && matchesStatus;
-    });
-  }, [connectors, searchQuery, filterStatus, connectorInstanceId]);
+    // If a connectorInstanceId is selected globally, only show that connector.
+    if (!connectorInstanceId) return connectors;
+    return connectors.filter(
+      (c) =>
+        toText(c?.connectorInstanceId).trim() === connectorInstanceId ||
+        toText(c?.id).trim() === connectorInstanceId,
+    );
+  }, [connectors, connectorInstanceId]);
 
   const summary = useMemo(() => {
     const total = connectors.length;
@@ -631,6 +591,14 @@ export default function IntegrationsPage() {
   const trends = useMemo(() => {
     return Array.isArray(trendRecords) ? trendRecords : [];
   }, [trendRecords]);
+
+  const syncTimeRange = useMemo(() => {
+    if (trends.length === 0) return "";
+    const first = toText(trends[0]?.timestamp).trim();
+    const last = toText(trends[trends.length - 1]?.timestamp).trim();
+    if (!first && !last) return "";
+    return first === last ? first : `${first} - ${last}`;
+  }, [trends]);
 
   const failedSyncs = useMemo(() => {
     if (failedSyncRecords.length > 0) {
@@ -710,25 +678,14 @@ export default function IntegrationsPage() {
           <div style={{ maxWidth: "42rem", minWidth: 0 }}>
             <h1
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "12px",
                 marginBottom: "4px",
-                fontSize: "20px",
+                fontSize: "24px",
                 lineHeight: 1.25,
-                fontWeight: 500,
+                fontWeight: 700,
                 color: "var(--text-primary)",
               }}
             >
-              <ArrowRightLeft
-                style={{
-                  width: "20px",
-                  height: "20px",
-                  color: "#818cf8",
-                  flexShrink: 0,
-                }}
-              />
-              Integrations Command Center
+              Integrations
             </h1>
             <p
               style={{
@@ -739,8 +696,7 @@ export default function IntegrationsPage() {
                 overflowWrap: "anywhere",
               }}
             >
-              Deep operational visibility and control over all connector health
-              and activity.
+              Connector health and sync activity
             </p>
           </div>
 
@@ -753,11 +709,6 @@ export default function IntegrationsPage() {
               marginBottom: "8px",
             }}
           >
-            {/* <button onClick={loadData} style={actionButtonStyle}>
-                            <RefreshCw style={{ width: '14px', height: '14px', animation: loading ? 'spin 1s linear infinite' : 'none' }} /> Refresh
-                        </button> */}
-            <button style={secondaryActionButtonStyle}>Audit Log</button>
-            <button style={primaryActionButtonStyle}>Rule Config</button>
             <button
               onClick={() => openConnectorSetupModal()}
               style={{
@@ -836,94 +787,34 @@ export default function IntegrationsPage() {
           </div>
         )}
 
-        {/* 3. Unified Filter Bar */}
-        <div style={panelStyle}>
-          <FilterBar
-            searchPlaceholder="Search system name or provider..."
-            searchValue={searchQuery}
-            onSearchChange={setSearchQuery}
-            filters={[
-              {
-                id: "status",
-                label: "Status",
-                value: filterStatus,
-                options: [
-                  { label: "Healthy", value: "healthy" },
-                  { label: "Degraded", value: "degraded" },
-                  { label: "Critical", value: "critical" },
-                  { label: "Stale", value: "stale" },
-                ],
-              },
-            ]}
-            onFilterChange={(_, val) => setFilterStatus(val)}
-            activeFilterCount={filterStatus ? 1 : 0}
-            onClearFilters={() => {
-              setFilterStatus("");
-              setSearchQuery("");
-            }}
-          />
-        </div>
-
-        {/* 4. Connector Grid */}
-        <section style={panelStyle}>
-          <div
+        {/* 3. Connector reliability */}
+        <section>
+          <p
             style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: "16px",
+              margin: "0 0 16px",
+              fontSize: "18px",
+              fontWeight: 700,
+              color: "var(--text-primary)",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <Activity
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  color: "rgba(255,255,255,0.45)",
-                }}
-              />
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: "16px",
-                  fontWeight: 700,
-                  color: "var(--text-primary)",
-                }}
-              >
-                Connector Reliability Matrix
-              </p>
-            </div>
-            <span style={{ fontSize: "12px", color: "rgba(255,255,255,0.5)" }}>
-              Showing {filteredConnectors.length} of {connectors.length} total
-            </span>
-          </div>
+            Connector reliability
+          </p>
 
           {loading ? (
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: "24px",
+                height: "220px",
+                borderRadius: "12px",
+                border: "1px solid var(--border-card)",
+                background: "var(--bg-card)",
+                animation: "pulse 1.4s ease-in-out infinite",
               }}
-            >
-              {[1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  style={{
-                    height: "256px",
-                    borderRadius: "12px",
-                    border: "1px solid var(--border-card)",
-                    background: "var(--bg-card)",
-                    animation: "pulse 1.4s ease-in-out infinite",
-                  }}
-                />
-              ))}
-            </div>
+            />
           ) : (
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gridTemplateColumns: "minmax(0, 1fr)",
                 gap: "24px",
               }}
             >
@@ -1042,17 +933,12 @@ export default function IntegrationsPage() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "8px",
+                justifyContent: "space-between",
+                gap: "12px",
                 marginBottom: "16px",
+                flexWrap: "wrap",
               }}
             >
-              <RefreshCw
-                style={{
-                  width: "18px",
-                  height: "18px",
-                  color: "rgba(255,255,255,0.45)",
-                }}
-              />
               <p
                 style={{
                   margin: 0,
@@ -1061,8 +947,41 @@ export default function IntegrationsPage() {
                   color: "var(--text-primary)",
                 }}
               >
-                Synchronization Confidence
+                Synchronization confidence
               </p>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "14px",
+                  fontSize: "12px",
+                  color: "var(--text-muted)",
+                }}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "999px",
+                      background: "var(--accent-green, #22c55e)",
+                    }}
+                  />
+                  Success
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span
+                    style={{
+                      width: "8px",
+                      height: "8px",
+                      borderRadius: "999px",
+                      background: "var(--accent-red, #f43f5e)",
+                    }}
+                  />
+                  Failure
+                </span>
+                {syncTimeRange && <span>{syncTimeRange}</span>}
+              </div>
             </div>
             <SyncTrendChart
               data={trends}
@@ -1077,15 +996,12 @@ export default function IntegrationsPage() {
               ...panelStyle,
               padding: 0,
               overflow: "hidden",
-              background: "#ffffff",
-              border: "1px solid #e5e7eb",
             }}
           >
             <div
               style={{
-                padding: "16px",
-                borderBottom: "1px solid #e5e7eb",
-                background: "#ffffff",
+                padding: "16px 24px",
+                borderBottom: "1px solid var(--border-card)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -1095,7 +1011,11 @@ export default function IntegrationsPage() {
                 style={{ display: "flex", alignItems: "center", gap: "8px" }}
               >
                 <AlertCircle
-                  style={{ width: "18px", height: "18px", color: "#f87171" }}
+                  style={{
+                    width: "18px",
+                    height: "18px",
+                    color: failedSyncs.length > 0 ? "#f87171" : "rgba(255,255,255,0.45)",
+                  }}
                 />
                 <p
                   style={{
@@ -1105,7 +1025,7 @@ export default function IntegrationsPage() {
                     color: "var(--text-primary)",
                   }}
                 >
-                  Critical Failure Audit
+                  Critical failure audit
                 </p>
               </div>
               <span
@@ -1116,8 +1036,11 @@ export default function IntegrationsPage() {
                   textTransform: "uppercase",
                   letterSpacing: "0.08em",
                   whiteSpace: "nowrap",
-                  background: "#f70e0e59",
-                  color: "#390d0d",
+                  background:
+                    failedSyncs.length > 0
+                      ? "rgba(244,63,94,0.15)"
+                      : "rgba(34,197,94,0.15)",
+                  color: failedSyncs.length > 0 ? "#fca5a5" : "#4ade80",
                 }}
               >
                 {failedSyncs.length} Errors
@@ -1131,7 +1054,6 @@ export default function IntegrationsPage() {
                   alignItems: "center",
                   justifyContent: "center",
                   padding: "32px 24px",
-                  background: "#ffffff",
                 }}
               >
                 <div
@@ -1139,11 +1061,7 @@ export default function IntegrationsPage() {
                     maxWidth: "420px",
                     width: "100%",
                     textAlign: "center",
-                    borderRadius: "16px",
-                    border: "1px solid #e5e7eb",
-                    background: "#ffffff",
-                    padding: "36px 28px",
-                    boxShadow: "0 12px 30px rgba(15,23,42,0.06)",
+                    padding: "12px 8px",
                   }}
                 >
                   <div
@@ -1152,15 +1070,15 @@ export default function IntegrationsPage() {
                       height: "52px",
                       borderRadius: "14px",
                       margin: "0 auto 16px",
-                      background: "rgba(129,140,248,0.1)",
-                      border: "1px solid rgba(129,140,248,0.2)",
+                      background: "rgba(34,197,94,0.1)",
+                      border: "1px solid rgba(34,197,94,0.25)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      color: "#a5b4fc",
+                      color: "#4ade80",
                     }}
                   >
-                    <AlertCircle style={{ width: "24px", height: "24px" }} />
+                    <CheckCircle2 style={{ width: "24px", height: "24px" }} />
                   </div>
                   <p
                     style={{
@@ -1180,7 +1098,7 @@ export default function IntegrationsPage() {
                       color: "var(--text-muted)",
                     }}
                   >
-                    There are no records available at this time.
+                    There are no records at this time.
                   </p>
                 </div>
               </div>

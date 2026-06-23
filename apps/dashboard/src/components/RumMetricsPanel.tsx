@@ -120,6 +120,8 @@ type PageResult = {
   url: string | null;
   available: boolean;
   reason?: string;
+  note?: string;
+  measuredAgainstHomepage?: boolean;
   score: number | null;
   scoreStatus: MetricStatus | null;
   metrics: { lcp: PageMetric; tbt: PageMetric; cls: PageMetric; ttfb: PageMetric };
@@ -356,23 +358,31 @@ export default function RumMetricsPanel() {
             {activeResult.reason || 'Unavailable – PageSpeed could not analyze this page.'}
           </div>
         ) : activeResult ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
-            {PAGE_VITALS.map((metricName) => {
-              const m = activeResult.metrics[metricName as 'lcp' | 'tbt' | 'cls' | 'ttfb'];
-              const value = m?.value;
-              const status = (m?.status as MetricStatus) || getMetricStatus(metricName, Number(value || 0));
-              return (
-                <VitalCard
-                  key={metricName}
-                  metricKey={metricName}
-                  device={device}
-                  value={value}
-                  status={status}
-                  timestamp={m?.timestamp ?? activeResult.timestamp}
-                />
-              );
-            })}
-          </div>
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
+              {PAGE_VITALS.map((metricName) => {
+                const m = activeResult.metrics[metricName as 'lcp' | 'tbt' | 'cls' | 'ttfb'];
+                const value = m?.value;
+                const status = (m?.status as MetricStatus) || getMetricStatus(metricName, Number(value || 0));
+                return (
+                  <VitalCard
+                    key={metricName}
+                    metricKey={metricName}
+                    device={device}
+                    value={value}
+                    status={status}
+                    timestamp={m?.timestamp ?? activeResult.timestamp}
+                  />
+                );
+              })}
+            </div>
+            {activePage !== 'homepage' && activeResult.measuredAgainstHomepage ? (
+              <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Activity size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                Measured against store homepage — no dedicated {activePage.toUpperCase()} URL is configured yet.
+              </p>
+            ) : null}
+          </>
         ) : (
           <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '20px', color: 'var(--text-muted)', fontSize: '14px' }}>
             No page-type metrics yet — click <strong>Refresh</strong> to analyze your storefront's key pages.

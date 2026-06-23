@@ -4,8 +4,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { DeviceDistribution } from '@/components/rum/DeviceDistribution';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Globe, Users, AlertCircle, RefreshCw, BarChart3, Smartphone, Network, Image as ImageIcon, MousePointerClick, Move, Server, CheckCircle2 } from 'lucide-react';
+import { Globe, Users, AlertCircle, RefreshCw, Smartphone, Image as ImageIcon, MousePointerClick, Move, Server, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PageRestricted } from '@/components/PageRestricted';
@@ -70,11 +69,11 @@ const sectionCardStyle: React.CSSProperties = {
   overflow: 'visible',
 };
 
-// Three secondary panels (page-load trend, device split, route performance) in a
-// single row below the full-width Errors card; wraps when the viewport narrows.
-const threeColGridStyle: React.CSSProperties = {
+// Device-split panel below the full-width Errors card. Constrained width so the
+// donut doesn't stretch awkwardly across the full row.
+const deviceCardRowStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+  gridTemplateColumns: 'minmax(0, 420px)',
   gap: '24px',
   overflow: 'visible',
 };
@@ -121,13 +120,6 @@ const errorBannerStyle: React.CSSProperties = {
   padding: '12px 16px',
   color: '#fb7185',
   overflow: 'visible',
-};
-
-type RoutePerformanceRow = {
-  key: string;
-  url: string;
-  avgLoadTime: number;
-  status: 'healthy' | 'warning' | 'critical';
 };
 
 type StorefrontErrorRow = {
@@ -292,32 +284,6 @@ const buildPagespeedPayloadForConnector = (
   return scopedPayload;
 };
 
-const getRouteStatus = (avgLoadTime: number, status?: string): RoutePerformanceRow['status'] => {
-  const normalized = status?.toLowerCase();
-  if (normalized === 'healthy' || normalized === 'warning' || normalized === 'critical') {
-    return normalized;
-  }
-
-  if (avgLoadTime > 4000) return 'critical';
-  if (avgLoadTime > 3000) return 'warning';
-  return 'healthy';
-};
-
-const normalizeRoutePerformanceRows = (rows: any[]): RoutePerformanceRow[] => {
-  return rows.map((row, index) => {
-    const url = String(row?.url || row?.route || row?.page || row?.path || row?.dimension || '/unknown').trim() || '/unknown';
-    const rawLoadTime = Number(row?.avgLoadTime ?? row?.loadTime ?? row?.pageLoadTime ?? row?.p95 ?? 0);
-    const avgLoadTime = Number.isFinite(rawLoadTime) ? rawLoadTime : 0;
-
-    return {
-      key: `${url}-${index}`,
-      url,
-      avgLoadTime,
-      status: getRouteStatus(avgLoadTime, row?.status),
-    };
-  });
-};
-
 export default function RumDashboardPage() {
   const { projectId } = useParams();
   const { apiFetch, token, user } = useAuth();
@@ -331,12 +297,10 @@ export default function RumDashboardPage() {
 
   const [pagespeedMetrics, setPagespeedMetrics] = useState<PagespeedLatestPayload | null>(null);
   const [devices, setDevices] = useState<any[]>([]);
-  const [loadTimeTrend, setLoadTimeTrend] = useState<any[]>([]);
   const [storefrontErrors, setStorefrontErrors] = useState<StorefrontErrorRow[]>([]);
   const [errorsTotal, setErrorsTotal] = useState(0);
   const [errorCategory, setErrorCategory] = useState<ErrorCategoryKey>('all');
   const [analytics, setAnalytics] = useState<any>(null);
-  const [topPages, setTopPages] = useState<RoutePerformanceRow[]>([]);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
   const isLoadingRef = useRef(false);
 
@@ -355,12 +319,10 @@ export default function RumDashboardPage() {
 
       if (!nextAllowedPageKeys.includes('rum')) return;
 
-      const [perfSummary, deviceData, trendData, userAnalytics, slowestPages] = await Promise.all([
+      const [perfSummary, deviceData, userAnalytics] = await Promise.all([
         apiFetch(`/api/v1/dashboard/performance/summary?siteId=${projectId}`),
         apiFetch(`/api/v1/dashboard/performance/device?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/performance/trends?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/customers/analytics?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/performance/slowest-pages?siteId=${projectId}`)
+        apiFetch(`/api/v1/dashboard/customers/analytics?siteId=${projectId}`)
       ]);
 
       console.log('[RUM] Performance summary response', { projectId, perfSummary });
@@ -377,13 +339,9 @@ export default function RumDashboardPage() {
       }
 
       const scopedDevices = Array.isArray(deviceData) ? deviceData.filter((row) => rowMatchesActiveConnector(row, connectorInstanceId)) : [];
-      const scopedTrends = Array.isArray(trendData) ? trendData.filter((row) => rowMatchesActiveConnector(row, connectorInstanceId)) : [];
-      const scopedSlowestPages = Array.isArray(slowestPages) ? slowestPages.filter((row) => rowMatchesActiveConnector(row, connectorInstanceId)) : [];
 
       setDevices(scopedDevices);
-      setLoadTimeTrend(scopedTrends);
       setAnalytics(userAnalytics);
-      setTopPages(normalizeRoutePerformanceRows(scopedSlowestPages));
 
       // Storefront errors captured by the public RUM tracker (storefront_errors table).
       try {
@@ -414,11 +372,9 @@ export default function RumDashboardPage() {
     setError(null);
     setPagespeedMetrics(null);
     setDevices([]);
-    setLoadTimeTrend([]);
     setStorefrontErrors([]);
     setErrorsTotal(0);
     setAnalytics(null);
-    setTopPages([]);
   }, [connectorSelectionTick, projectId, token]);
 
   const webVitals = useMemo(() => {
@@ -724,42 +680,8 @@ export default function RumDashboardPage() {
         </div>
       </div>
 
-      {/* Three secondary panels below the Errors card */}
-      <div style={threeColGridStyle}>
-        {/* Average Page Load Time */}
-        <div style={sectionCardStyle}>
-          <p style={sectionHeadingStyle}>AVERAGE PAGE LOAD TIME (MS)</p>
-          {loadTimeTrend.length === 0 ? (
-            <PanelEmptyState
-              icon={<BarChart3 style={{ width: '28px', height: '28px' }} />}
-              message="No page-load samples yet"
-              hint="Real-user page timing will appear here once the storefront tracker reports navigation timing."
-            />
-          ) : (
-            <div style={{ width: '100%', height: '260px' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={loadTimeTrend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis dataKey="timestamp" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}ms`} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px' }}
-                    itemStyle={{ color: '#818cf8' }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="pageLoadTime"
-                    stroke="#6366f1"
-                    strokeWidth={3}
-                    dot={{ r: 4, fill: '#6366f1', strokeWidth: 2, stroke: 'var(--bg-card)' }}
-                    activeDot={{ r: 6, strokeWidth: 0 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
+      {/* Device split panel below the Errors card */}
+      <div style={deviceCardRowStyle}>
         {/* Device Split */}
         <div style={sectionCardStyle}>
           <p style={sectionHeadingStyle}>DEVICE DISTRIBUTION</p>
@@ -771,45 +693,6 @@ export default function RumDashboardPage() {
             />
           ) : (
             <DeviceDistribution data={devices} title="" />
-          )}
-        </div>
-
-        {/* Route Performance */}
-        <div style={sectionCardStyle}>
-          <p style={sectionHeadingStyle}>ROUTE PERFORMANCE</p>
-          {topPages.length === 0 ? (
-            <PanelEmptyState
-              icon={<Network style={{ width: '28px', height: '28px' }} />}
-              message="No route metrics yet"
-              hint="Your slowest pages will be ranked here once per-route load times are collected."
-            />
-          ) : (
-            <>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 100px', gap: '16px', padding: '8px 0', borderBottom: '1px solid var(--border-card)', marginBottom: '8px' }}>
-                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>PATH</span>
-                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', textAlign: 'right' }}>AVG LOAD</span>
-                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', textAlign: 'right' }}>STATUS</span>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {topPages.map((row) => {
-                  const normalized = String(row.status || '').toLowerCase();
-                  const badgeBg = normalized === 'healthy' ? 'var(--success-bg)' : normalized === 'warning' ? 'var(--warning-bg)' : 'var(--error-bg)';
-                  const badgeColor = normalized === 'healthy' ? 'var(--success-text)' : normalized === 'warning' ? 'var(--warning-text)' : 'var(--error-text)';
-                  return (
-                    <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '1fr 120px 100px', gap: '16px', padding: '12px 0', borderBottom: '1px solid var(--border-card)', alignItems: 'center' }}>
-                      <span style={{ fontSize: '13px', color: 'var(--text-secondary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}</span>
-                      <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, textAlign: 'right' }}>{row.avgLoadTime}ms</span>
-                      <span style={{ textAlign: 'right' }}>
-                        <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '10px', textTransform: 'uppercase', background: badgeBg, color: badgeColor, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                          {row.status}
-                        </span>
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
           )}
         </div>
       </div>

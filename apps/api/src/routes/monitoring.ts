@@ -303,18 +303,22 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
      * Enables or disables a rule without resubmitting the whole form.
      */
     fastify.patch('/tenants/:tenantId/projects/:siteId/alert-rules/:ruleId/toggle', async (req, reply) => {
-        const { siteId, ruleId } = req.params as any;
+        const { tenantId, siteId, ruleId } = req.params as any;
         const { enabled } = (req.body || {}) as any;
         const rule = await AlertRuleService.setEnabled(siteId, ruleId, enabled !== false);
         if (!rule) return reply.code(404).send(ResponseUtil.error('Alert rule not found', 'NOT_FOUND', null, req.id as string));
-        // A paused rule must not leave its alerts open in the Alert Center.
-        if (!rule.enabled) {
-            try {
-                await AlertEngine.resolveAlertsForRule(siteId, ruleId);
-            } catch (err) {
-                (req as any).log?.warn?.({ err, ruleId }, '[Alerts] resolve-on-disable failed');
-            }
-        }
+        // Treat a toggle like any other rule change: on disable this just resolves
+        // the rule's open alerts; on RE-ENABLE it also re-evaluates immediately and
+        // bypasses cooldown — otherwise the just-resolved alert would sit inside the
+        // cooldown window and block the rule from re-firing (so flipping it back on
+        // appeared to "do nothing" until the cooldown elapsed).
+        //
+        // Fire-and-forget: re-evaluation runs metric queries (and may send email),
+        // which can take seconds. The UI only needs the new enabled state, so we
+        // don't make the toggle wait on it — the alert surfaces on completion.
+        AlertEngine.handleRuleChanged(siteId, tenantId, ruleId).catch((err) => {
+            (req as any).log?.warn?.({ err, ruleId }, '[Alerts] post-toggle re-evaluation failed');
+        });
         return reply.send(ResponseUtil.success({ rule }, {}, req.id as string));
     });
 

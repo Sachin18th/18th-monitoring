@@ -424,10 +424,10 @@ export function AlertRuleConfigDrawer({
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
               <button onClick={openSettings} style={ghostBtn}>
-                <Mail style={{ width: '16px', height: '16px' }} /> Notifications
+                <Mail style={{ width: '16px', height: '16px' }} />Add Mail Recipients
               </button>
               <button onClick={startCreate} style={primaryBtn}>
-                <Plus style={{ width: '16px', height: '16px' }} /> New alert
+                <Plus style={{ width: '16px', height: '16px' }} /> Create New Alert
               </button>
             </div>
           </div>

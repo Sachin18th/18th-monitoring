@@ -16,8 +16,8 @@
   },
 
   "dependencies": {
-    "@fastify/cors": "^10.0.0",
-    "@kpi-platform/db": "workspace:*",
+    "@fastify/cors": "^8.5.0",
+    "@kpi-platform/db": "*",
     "dotenv": "^16.0.0",
     "fastify": "^4.0.0",
     "@prisma/client": "^5.22.0",

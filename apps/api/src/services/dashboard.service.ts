@@ -383,23 +383,52 @@ export class DashboardService {
 
     static async getDeviceSegmentation(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const metrics = await prisma.performanceMetric.findMany({
-            where: { siteId, metricName: 'usersByDevice' },
-            select: { device: true }
+
+        // Real-user device split comes from storefront_sessions (captured by the
+        // /api/track tracker), scoped to this project's connectors. ConnectorInstance.siteId
+        // is the project id.
+        const connectors = await prisma.connectorInstance.findMany({
+            where: { siteId },
+            select: { id: true }
         });
-        
-        const deviceMap: Record<string, number> = {};
-        metrics.forEach(m => {
-            const device = m.device || 'Other';
-            deviceMap[device] = (deviceMap[device] || 0) + 1;
+        const connectorIds = connectors.map(c => c.id);
+        if (connectorIds.length === 0) return [];
+
+        const sessions = await prisma.storefrontSession.findMany({
+            where: { connectorInstanceId: { in: connectorIds } },
+            select: { connectorInstanceId: true, deviceType: true }
         });
 
-        const total = Object.values(deviceMap).reduce((a, b) => a + b, 0) || 1;
-        return Object.entries(deviceMap).map(([name, count]) => ({
-            name,
-            value: Math.round((count / total) * 100),
-            color: name === 'Desktop' ? 'var(--accent-blue)' : name === 'Mobile' ? 'var(--accent-green)' : 'var(--accent-purple)'
+        // Normalize device labels and count per (connector, device). Tagging each row
+        // with connectorInstanceId lets the RUM page's connector filter rescope the donut.
+        const normalizeDevice = (raw?: string | null) => {
+            const d = (raw || '').toLowerCase();
+            if (d === 'mobile') return 'Mobile';
+            if (d === 'desktop') return 'Desktop';
+            if (d === 'tablet') return 'Tablet';
+            return 'Other';
+        };
+
+        const counts = new Map<string, { connectorInstanceId: string; name: string; value: number }>();
+        for (const s of sessions) {
+            const name = normalizeDevice(s.deviceType);
+            const key = `${s.connectorInstanceId}::${name}`;
+            const existing = counts.get(key);
+            if (existing) existing.value += 1;
+            else counts.set(key, { connectorInstanceId: s.connectorInstanceId, name, value: 1 });
+        }
+
+        const colorFor = (name: string) =>
+            name === 'Desktop' ? 'var(--accent-blue)'
+            : name === 'Mobile' ? 'var(--accent-green)'
+            : name === 'Tablet' ? 'var(--accent-purple)'
+            : 'var(--accent-orange)';
+
+        return Array.from(counts.values()).map(row => ({
+            name: row.name,
+            value: row.value,
+            connectorInstanceId: row.connectorInstanceId,
+            color: colorFor(row.name)
         }));
     }
 
