@@ -35,7 +35,6 @@ const PAGESPEED_SOURCE_PREFIX = 'pagespeed_api';
 // (siteId, metricName, source) unique constraint gives us per-(strategy,pageType)
 // cache dedup for free — no schema migration required.
 const PAGE_SOURCE_PREFIX = 'pagespeed_page';
-const PAGE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 type PageType = 'homepage' | 'pdp' | 'plp' | 'checkout';
 const PAGE_TYPES: PageType[] = ['homepage', 'pdp', 'plp', 'checkout'];
@@ -736,15 +735,24 @@ export class PageSpeedService {
         const { tenantId, projectId, connectorInstanceId, strategy, pageType, url, forceRefresh } = input;
         const source = this.buildPageSource(strategy, pageType);
 
-        // Cache-first.
+        // A normal page load NEVER triggers a live PageSpeed run. We serve the last
+        // stored measurement regardless of age, so opening/reloading the page is fast
+        // and can't hang on a slow Google PageSpeed call (the "socket hang up" / 500
+        // and the "recalculating on every reload" symptom). A fresh measurement only
+        // happens on an explicit refresh (the Refresh button, forceRefresh=true) or
+        // the background sync.
         if (!forceRefresh) {
             const cached = await this.readCachedPage(projectId, connectorInstanceId, source, strategy);
-            if (cached && cached.ageMs < PAGE_CACHE_TTL_MS) {
+            if (cached) {
                 if (cached.values.score !== undefined && cached.values.score < 0) {
                     return this.unavailablePage(pageType, cached.url || url, this.failureReason(pageType), cached.timestamp);
                 }
                 return this.buildPageResult(pageType, cached.url || url, cached.values, cached.timestamp);
             }
+            // No measurement has ever been taken — don't block the page load on a live
+            // run. Surface a "not measured yet" state; the user runs the first
+            // measurement with Refresh.
+            return this.unavailablePage(pageType, url, 'Not measured yet — click Refresh to run PageSpeed.', null);
         }
 
         // Fetch fresh from PageSpeed. On an explicit refresh, bust Google's result
