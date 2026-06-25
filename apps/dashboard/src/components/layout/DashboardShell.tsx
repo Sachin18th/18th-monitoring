@@ -293,7 +293,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
           { label: 'Performance', href: `${prefix}/performance`, icon: Activity, pageKey: 'performance' },
           { label: 'Frontend RUM', href: `${prefix}/rum`, icon: Monitor, pageKey: 'rum' },
           { label: 'Backend API', href: `${prefix}/observability/backend`, icon: Server, pageKey: 'observability/backend' },
-          { label: 'Failure Intel', href: `${prefix}/observability/failures`, icon: ShieldAlert, pageKey: 'observability/failures' },
           { label: 'Journey Intel', href: `${prefix}/observability/journeys`, icon: Map, pageKey: 'observability/journeys' },
           { label: 'Synthetic', href: `${prefix}/observability/synthetic`, icon: Activity, pageKey: 'observability/synthetic' },
           { label: 'Customers', href: `${prefix}/customers`, icon: Users, pageKey: 'customers' },

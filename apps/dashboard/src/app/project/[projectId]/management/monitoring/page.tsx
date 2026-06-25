@@ -15,7 +15,10 @@ import {
   BarChart3,
   Clock,
   Bell,
-  WifiOff
+  WifiOff,
+  Server,
+  Database,
+  Inbox
 } from 'lucide-react';
 
 type HealthStatus = 'healthy' | 'warning' | 'degraded' | 'critical' | 'failed';
@@ -79,6 +82,7 @@ export default function MonitoringDashboardPage() {
 
   const [loading, setLoading] = useState(true);
   const [snapshot, setSnapshot] = useState<any>(null);
+  const [backend, setBackend] = useState<any>(null);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'active' | 'resolved'>('active');
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
@@ -93,12 +97,16 @@ export default function MonitoringDashboardPage() {
 
       if (!nextAllowedPageKeys.includes('management/monitoring')) return;
 
-      const [healthRes, alertsRes] = await Promise.all([
+      const [healthRes, alertsRes, backendRes] = await Promise.all([
         apiFetch(`/api/v1/tenants/current/projects/${projectId}/health/snapshot`, { suppressUnauthorizedRedirect: true }),
-        apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts`, { suppressUnauthorizedRedirect: true })
+        apiFetch(`/api/v1/tenants/current/projects/${projectId}/alerts`, { suppressUnauthorizedRedirect: true }),
+        apiFetch(`/api/v1/tenants/current/projects/${projectId}/system-health`, { suppressUnauthorizedRedirect: true })
       ]);
       setSnapshot(healthRes?.data?.snapshot);
       setAlerts(alertsRes?.data?.alerts || []);
+      // apiFetch already unwraps the { success, data } envelope, so the snapshot
+      // is at backendRes.snapshot (not backendRes.data.snapshot).
+      setBackend(backendRes?.snapshot || backendRes?.data?.snapshot || null);
     } catch (err) {
       console.error('Failed to load monitoring data', err);
     } finally {
@@ -258,6 +266,110 @@ export default function MonitoringDashboardPage() {
             </div>
           </div>
         </div>
+
+        {backend && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <span style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)' }}>
+                Backend Infrastructure
+              </span>
+              <span
+                style={{
+                  fontSize: '10px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  fontWeight: 600,
+                  color: healthColors[(backend.overall as HealthStatus) || 'healthy']
+                }}
+              >
+                {backend.overall}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', overflow: 'visible' }}>
+              {/* API Process */}
+              {(() => {
+                const status: HealthStatus = backend.api?.status === 'up' ? 'healthy' : 'critical';
+                const up = Math.max(0, Number(backend.api?.uptimeSeconds || 0));
+                const uptimeLabel = up >= 3600 ? `${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m` : `${Math.floor(up / 60)}m`;
+                return (
+                  <div style={{ ...cardStyle, border: healthBorders[status] }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: healthColors[status] }}>
+                      <Server style={{ width: '16px', height: '16px' }} />
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>API</span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '6px' }}>API Process</div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: healthColors[status], marginBottom: '6px' }}>
+                      {backend.api?.status === 'up' ? 'Up' : 'Down'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      Uptime {uptimeLabel} · {backend.api?.memoryMb ?? '—'} MB
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Database */}
+              {(() => {
+                const status: HealthStatus = (backend.database?.status as HealthStatus) || 'healthy';
+                return (
+                  <div style={{ ...cardStyle, border: healthBorders[status] }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: healthColors[status] }}>
+                      <Database style={{ width: '16px', height: '16px' }} />
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>Database</span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '6px' }}>Connectivity</div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: healthColors[status], marginBottom: '6px' }}>
+                      {backend.database?.reachable ? 'Reachable' : 'Unreachable'}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {backend.database?.latencyMs != null ? `${backend.database.latencyMs} ms latency` : 'No response'}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Sync Jobs */}
+              {(() => {
+                const status: HealthStatus = (backend.syncJobs?.status as HealthStatus) || 'healthy';
+                return (
+                  <div style={{ ...cardStyle, border: healthBorders[status] }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: healthColors[status] }}>
+                      <GitMerge style={{ width: '16px', height: '16px' }} />
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>Sync Jobs</span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '6px' }}>Connector Freshness</div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: healthColors[status], marginBottom: '6px' }}>
+                      {backend.syncJobs?.stale ?? 0}/{backend.syncJobs?.total ?? 0} stale
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {backend.syncJobs?.failed ?? 0} failed last run
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Dead-Letter Queue */}
+              {(() => {
+                const status: HealthStatus = (backend.dlq?.status as HealthStatus) || 'healthy';
+                return (
+                  <div style={{ ...cardStyle, border: healthBorders[status] }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', color: healthColors[status] }}>
+                      <Inbox style={{ width: '16px', height: '16px' }} />
+                      <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>DLQ</span>
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, marginBottom: '6px' }}>Dead-Letter Queue</div>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: healthColors[status], marginBottom: '6px' }}>
+                      {backend.dlq?.depth ?? 0} queued
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {backend.dlq?.unreviewed ?? 0} unreviewed
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
 
         {snapshot?.signals && (
           <div>

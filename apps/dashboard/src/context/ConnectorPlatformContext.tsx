@@ -32,6 +32,9 @@ import { connectorFilterStore } from "../lib/connectorFilterStore";
 type ConnectorSetupState = {
   platform: EcommercePlatform | null;
   open: boolean;
+  // When set, the setup modal runs in "re-authenticate" mode: it rotates the
+  // credentials of this existing connector instead of creating a new one.
+  reauthConnectorId?: string | null;
 };
 
 type StoreOption = {
@@ -89,6 +92,12 @@ type ConnectorPlatformContextValue = {
   ) => Promise<ConnectedStore>;
   disconnectConnector: (connectorId: string) => void;
   reconnectConnector: (connectorId: string) => void;
+  openReauthSetup: (connectorInstanceId: string, platform: EcommercePlatform) => void;
+  reauthConnector: (
+    connectorInstanceId: string,
+    platform: EcommercePlatform,
+    values: ConnectorSetupValues,
+  ) => Promise<void>;
   syncConnectorNow: (connectorId: string) => void;
   healthLevel: "healthy" | "warning" | "critical";
   healthLabel: string;
@@ -485,7 +494,17 @@ export const ConnectorPlatformProvider: React.FC<{
   }, []);
 
   const beginConnectorSetup = (platform: EcommercePlatform) => {
-    setConnectorSetup({ platform, open: true });
+    setConnectorSetup({ platform, open: true, reauthConnectorId: null });
+    setIsSetupModalOpen(true);
+  };
+
+  const openReauthSetup = (
+    connectorInstanceId: string,
+    platform: EcommercePlatform,
+  ) => {
+    // Pre-select the platform and flag re-auth mode; the modal renders the same
+    // credential fields but Save rotates the token instead of creating.
+    setConnectorSetup({ platform, open: true, reauthConnectorId: connectorInstanceId });
     setIsSetupModalOpen(true);
   };
 
@@ -763,6 +782,40 @@ export const ConnectorPlatformProvider: React.FC<{
     );
   };
 
+  const reauthConnector = async (
+    connectorInstanceId: string,
+    platform: EcommercePlatform,
+    values: ConnectorSetupValues,
+  ): Promise<void> => {
+    // Gate on the same live-provider test the create flow uses.
+    const testResult = await testConnectorConnection(platform, values);
+    if (!testResult.ok) {
+      throw new Error(
+        "error" in testResult
+          ? testResult.error
+          : "Connection test failed. Please check your credentials and try again.",
+      );
+    }
+
+    const projectId = currentProject || "default-project";
+    const tenantId = user?.tenantId || "current";
+    // Reuse the create-payload builder, then send only config + credentials.
+    const payload = buildConnectorPayload(platform, values, projectId);
+
+    await apiFetch(
+      `/api/v1/tenants/${tenantId}/projects/${projectId}/integrations/${connectorInstanceId}/credentials`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          config: payload.config,
+          credentials: payload.credentials,
+        }),
+      },
+    );
+
+    await refreshConnectors();
+  };
+
   const reconnectConnector = (connectorId: string) => {
     setConnectedStores((stores) =>
       stores.map((store) =>
@@ -977,6 +1030,8 @@ export const ConnectorPlatformProvider: React.FC<{
     saveConnectorConnection,
     disconnectConnector,
     reconnectConnector,
+    openReauthSetup,
+    reauthConnector,
     syncConnectorNow,
     healthLevel,
     healthLabel:

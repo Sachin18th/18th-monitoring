@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Activity, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -145,40 +145,18 @@ export default function RumMetricsPanel() {
   const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
   const tenantId = user?.tenantId;
 
-  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [metrics, setMetrics] = useState<Record<string, Record<MetricKey, MetricRow>> | null>(null);
   const [device, setDevice] = useState<'mobile' | 'desktop'>('mobile');
   const [error, setError] = useState<string | null>(null);
 
-  // Page-type breakdown state (cached client-side per strategy).
+  // Page-type breakdown state (cached client-side per strategy). This is also the
+  // single source of truth for the site-wide "Core Web Vitals" panel above, which
+  // reads its numbers from the `homepage` entry — so the two panels can never show
+  // conflicting values for the same page.
   const [pageData, setPageData] = useState<Record<'mobile' | 'desktop', PagesResponse | null>>({ mobile: null, desktop: null });
   const [activePage, setActivePage] = useState<PageType>('homepage');
   const [pagesLoading, setPagesLoading] = useState(false);
   const [pagesError, setPagesError] = useState<string | null>(null);
-
-  const metricsByKey = useMemo(() => {
-    if (!metrics) return {} as Record<MetricKey, MetricRow>;
-    return (metrics[device] || {}) as Record<MetricKey, MetricRow>;
-  }, [metrics, device]);
-
-  const loadMetrics = useCallback(async () => {
-    if (!token || !projectId || !tenantId) return;
-
-    setError(null);
-    setLoading(true);
-    try {
-      const response = await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/latest`);
-      const payload = response?.data ? response.data : response;
-      setMetrics(payload || null);
-    } catch (err) {
-      console.error('[RumMetricsPanel] load failed', err);
-      setMetrics(null);
-      setError(err instanceof Error ? err.message : 'No cached metrics yet — click Refresh to compute');
-    } finally {
-      setLoading(false);
-    }
-  }, [apiFetch, projectId, tenantId, token]);
 
   const fetchPages = useCallback(async (strategy: 'mobile' | 'desktop', force = false) => {
     if (!token || !projectId || !tenantId) return;
@@ -187,7 +165,10 @@ export default function RumMetricsPanel() {
     try {
       const response = await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/pages`, {
         params: { strategy, ...(force ? { refresh: 'true' } : {}) },
-        timeout: 180000,
+        // Exceed the server's worst-case PageSpeed time (mobile = 2 retries × 120s).
+        // If the client times out first, apiFetch serves STALE cached data, which is
+        // exactly the "refresh shows old numbers" symptom we are fixing.
+        timeout: 250000,
       });
       const payload = response?.data ? response.data : response;
       setPageData((prev) => ({ ...prev, [strategy]: payload || null }));
@@ -199,16 +180,10 @@ export default function RumMetricsPanel() {
     }
   }, [apiFetch, projectId, tenantId, token]);
 
-  useEffect(() => {
-    loadMetrics();
-  }, [loadMetrics, connectorSelectionTick]);
-
   // Reset all cached state when the active connector changes.
   useEffect(() => {
     if (!token || !projectId) return;
-    setLoading(true);
     setError(null);
-    setMetrics(null);
     setPageData({ mobile: null, desktop: null });
   }, [connectorSelectionTick, projectId, token]);
 
@@ -225,31 +200,44 @@ export default function RumMetricsPanel() {
 
     setRefreshing(true);
     setError(null);
+
+    // Kick off the site-wide sync in the BACKGROUND. It only feeds alerts/RUM and
+    // can take 30-120s; it must never block or fail the visible refresh below.
+    // (Previously it was awaited first, so a slow/failed sync left the panel showing
+    // stale numbers — the "refresh does nothing" symptom.)
+    apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/sync`, {
+      method: 'POST',
+      body: connectorInstanceId ? JSON.stringify({ connectorInstanceId }) : undefined,
+      timeout: 120000,
+    }).catch((err) => console.warn('[RumMetricsPanel] background sync failed', err));
+
     try {
-      await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/sync`, {
-        method: 'POST',
-        body: connectorInstanceId ? JSON.stringify({ connectorInstanceId }) : undefined,
-        // Mobile + desktop scans now run concurrently server-side (~30-40s typical),
-        // but BigCommerce storefronts can be slow for PSI — give comfortable headroom.
-        timeout: 120000,
-      });
-      await loadMetrics();
-      // Re-fetch ALL page types for the current strategy (force bypasses the 1h cache).
+      // Force a FRESH PageSpeed run (refresh=true bypasses the server cache). This is
+      // the single measurement that drives BOTH the Core Web Vitals panel and the
+      // page-type breakdown, so the displayed numbers always reflect this new run.
       setPageData((prev) => ({ ...prev, [device]: null }));
       await fetchPages(device, true);
     } catch (err) {
       console.error('[RumMetricsPanel] refresh failed', err);
-      setMetrics(null);
       setError(err instanceof Error ? err.message : 'PageSpeed calculation failed. API may be rate-limited. Try again in a moment.');
     } finally {
       setRefreshing(false);
     }
-  }, [apiFetch, connectorInstanceId, device, fetchPages, loadMetrics, projectId, tenantId, token]);
+  }, [apiFetch, connectorInstanceId, device, fetchPages, projectId, tenantId, token]);
 
-  const noData = !loading && !metrics;
   const pages = pageData[device];
   const activeResult: PageResult | null = pages ? pages[activePage] : null;
   const pagesLoadingActive = pagesLoading && !pages;
+
+  // The site-wide "Core Web Vitals" panel and the page-type "Homepage" tab both
+  // describe the same homepage URL. Drive them from a SINGLE measurement so they
+  // can never contradict each other (previously they ran two independent PageSpeed
+  // scans at different moments and showed different LCP/TBT for the same page).
+  const homepageResult: PageResult | null = pages ? pages.homepage : null;
+  const vitalsLoading = pagesLoading && !pages;
+  const vitalsNoData = !pagesLoading && !homepageResult;
+  // PageSpeed reports TBT (lab), not FID, for the mobile/desktop Lighthouse run.
+  const SITE_VITALS: MetricKey[] = ['lcp', 'tbt', 'cls', 'ttfb'];
 
   return (
     <>
@@ -275,14 +263,14 @@ export default function RumMetricsPanel() {
           </div>
         </div>
 
-        {loading ? (
+        {vitalsLoading ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-muted)', fontSize: '14px' }}>
             <div style={{ width: '18px', height: '18px', borderRadius: '999px', border: '2px solid var(--border-card)', borderTopColor: 'var(--text-primary)', animation: 'spin 0.8s linear infinite' }} />
             Loading PageSpeed data...
           </div>
-        ) : noData ? (
+        ) : vitalsNoData ? (
           <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '20px', color: 'var(--text-muted)', fontSize: '14px' }}>
-            No cached metrics yet — click <strong>Refresh</strong> to compute PageSpeed metrics from your store (first run may take 15–30 seconds).
+            No metrics yet — click <strong>Refresh</strong> to compute PageSpeed metrics from your store (first run may take 15–30 seconds).
           </div>
         ) : null}
 
@@ -290,12 +278,12 @@ export default function RumMetricsPanel() {
           <div style={{ borderRadius: '12px', border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.08)', padding: '14px 16px', color: 'var(--error-text)', fontSize: '14px' }}>{error}</div>
         ) : null}
 
-        {!loading && metrics ? (
+        {homepageResult && homepageResult.available ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
-            {(['lcp', 'fid', 'cls', 'ttfb'] as MetricKey[]).map((metricName) => {
-              const row = metricsByKey[metricName];
-              const value = row?.value ?? row?.metricValue;
-              const status = (row?.status as MetricStatus) || getMetricStatus(metricName, Number(value || 0));
+            {SITE_VITALS.map((metricName) => {
+              const m = homepageResult.metrics[metricName as 'lcp' | 'tbt' | 'cls' | 'ttfb'];
+              const value = m?.value;
+              const status = (m?.status as MetricStatus) || getMetricStatus(metricName, Number(value || 0));
               return (
                 <VitalCard
                   key={metricName}
@@ -303,16 +291,20 @@ export default function RumMetricsPanel() {
                   device={device}
                   value={value}
                   status={status}
-                  timestamp={row?.timestamp}
+                  timestamp={m?.timestamp ?? homepageResult.timestamp}
                 />
               );
             })}
+          </div>
+        ) : homepageResult && !homepageResult.available ? (
+          <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '20px', color: 'var(--text-muted)', fontSize: '14px' }}>
+            {homepageResult.reason || 'Unavailable – PageSpeed could not analyze your storefront.'}
           </div>
         ) : null}
       </section>
 
       {/* ── Page-Type Performance Breakdown ─────────────────────────────────── */}
-      <section style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      {/* <section style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
           <div>
             <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>PageSpeed Metrics</p>
@@ -321,7 +313,7 @@ export default function RumMetricsPanel() {
           <ScoreBadge score={activeResult?.available ? activeResult.score : null} />
         </div>
 
-        {/* Page-type tabs */}
+       
         <div style={{ display: 'inline-flex', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-input)', alignSelf: 'flex-start' }}>
           {PAGE_TABS.map((tab) => (
             <button
@@ -335,7 +327,7 @@ export default function RumMetricsPanel() {
           ))}
         </div>
 
-        {/* Tested URL */}
+       
         {activeResult?.url ? (
           <a href={activeResult.url} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: 'var(--text-muted)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={activeResult.url}>
             Testing: {activeResult.url}
@@ -388,7 +380,7 @@ export default function RumMetricsPanel() {
             No page-type metrics yet — click <strong>Refresh</strong> to analyze your storefront's key pages.
           </div>
         )}
-      </section>
+      </section> */}
     </>
   );
 }

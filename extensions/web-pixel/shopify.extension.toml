@@ -1,0 +1,33 @@
+# Shopify Web Pixel extension for the KPI Monitoring platform.
+#
+# Registered programmatically via webPixelCreate (see
+# packages/connectors/src/commerce/shopify-pixel.service.ts). Shopify runs the
+# code bundled from src/index.js inside the strict pixel sandbox; the `settings`
+# passed to webPixelCreate are delivered to that code via `api.settings` and
+# MUST match the field schema declared below.
+api_version = "2024-01"
+
+[[extensions]]
+name = "KPI Monitoring Web Pixel"
+handle = "kpi-web-pixel"
+type = "web_pixel_extension"
+# strict: no direct DOM/cookie access; fetch + the analytics API only.
+runtime_context = "strict"
+
+  [extensions.settings]
+  type = "object"
+
+    [extensions.settings.fields.ingestUrl]
+    name = "Ingest URL"
+    description = "Absolute URL of the platform ingest endpoint (…/api/track)."
+    type = "single_line_text_field"
+
+    [extensions.settings.fields.connectorInstanceId]
+    name = "Connector Instance ID"
+    description = "connector_instances.id this store maps to."
+    type = "single_line_text_field"
+
+    [extensions.settings.fields.projectId]
+    name = "Project ID"
+    description = "Owning project/site id (sent through for reference)."
+    type = "single_line_text_field"

@@ -1,3 +1,4 @@
+//apps/api/src/services/pagespeed.service.ts
 import { prisma, decryptSecret } from '@kpi-platform/db';
 
 type PagespeedMetricName = 'lcp' | 'fid' | 'cls' | 'ttfb';
@@ -34,7 +35,7 @@ const PAGESPEED_SOURCE_PREFIX = 'pagespeed_api';
 // (siteId, metricName, source) unique constraint gives us per-(strategy,pageType)
 // cache dedup for free — no schema migration required.
 const PAGE_SOURCE_PREFIX = 'pagespeed_page';
-const PAGE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const PAGE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 type PageType = 'homepage' | 'pdp' | 'plp' | 'checkout';
 const PAGE_TYPES: PageType[] = ['homepage', 'pdp', 'plp', 'checkout'];
@@ -489,13 +490,13 @@ export class PageSpeedService {
         return null;
     }
 
-    private static async fetchPageSpeedResultWithRetry(storeUrl: string, strategy: PagespeedStrategy) {
+    private static async fetchPageSpeedResultWithRetry(storeUrl: string, strategy: PagespeedStrategy, bustCache = false) {
         const attempts = strategy === 'mobile' ? 2 : 1;
         let lastError: unknown;
 
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
             try {
-                return await this.fetchPageSpeedResult(storeUrl, strategy);
+                return await this.fetchPageSpeedResult(storeUrl, strategy, bustCache);
             } catch (error) {
                 lastError = error;
                 console.warn('[PageSpeedService] fetchPageSpeedResultWithRetry:attempt-failed', {
@@ -511,9 +512,24 @@ export class PageSpeedService {
         throw lastError instanceof Error ? lastError : new Error(`PageSpeed ${strategy} request failed`);
     }
 
-    private static async fetchPageSpeedResult(storeUrl: string, strategy: PagespeedStrategy = 'mobile') {
+    private static async fetchPageSpeedResult(storeUrl: string, strategy: PagespeedStrategy = 'mobile', bustCache = false) {
+        // Google caches runPagespeed results per URL for several minutes and returns
+        // the same analysis on repeated calls — which makes the dashboard "Refresh"
+        // look like it does nothing. When the user forces a refresh, append a unique
+        // cache-busting query param so Google performs a genuinely fresh Lighthouse run.
+        let targetUrl = storeUrl;
+        if (bustCache) {
+            try {
+                const u = new URL(storeUrl);
+                u.searchParams.set('psi_cb', String(Date.now()));
+                targetUrl = u.toString();
+            } catch {
+                // Keep the original URL if it can't be parsed.
+            }
+        }
+
         const url = new URL('https://www.googleapis.com/pagespeedonline/v5/runPagespeed');
-        url.searchParams.set('url', storeUrl);
+        url.searchParams.set('url', targetUrl);
         url.searchParams.set('strategy', strategy);
         url.searchParams.set('category', 'performance');
 
@@ -722,7 +738,7 @@ export class PageSpeedService {
 
         // Cache-first.
         if (!forceRefresh) {
-            const cached = await this.readCachedPage(projectId, connectorInstanceId, source);
+            const cached = await this.readCachedPage(projectId, connectorInstanceId, source, strategy);
             if (cached && cached.ageMs < PAGE_CACHE_TTL_MS) {
                 if (cached.values.score !== undefined && cached.values.score < 0) {
                     return this.unavailablePage(pageType, cached.url || url, this.failureReason(pageType), cached.timestamp);
@@ -731,8 +747,9 @@ export class PageSpeedService {
             }
         }
 
-        // Fetch fresh from PageSpeed.
-        const response = await this.fetchPageSpeedResultWithRetry(url, strategy);
+        // Fetch fresh from PageSpeed. On an explicit refresh, bust Google's result
+        // cache so the user gets a brand-new measurement instead of a repeated one.
+        const response = await this.fetchPageSpeedResultWithRetry(url, strategy, forceRefresh);
         const extracted = this.extractPageMetrics(response);
 
         // Checkout (and other restricted pages) often return a 0 score / no lab data.
@@ -834,6 +851,7 @@ export class PageSpeedService {
         projectId: string,
         connectorInstanceId: string | undefined,
         source: string,
+        strategy: PagespeedStrategy,
     ): Promise<{ values: Partial<Record<PageMetricName, number>>; url: string | null; timestamp: string | null; ageMs: number } | null> {
         const rows = await (prisma.performanceMetric as any).findMany({
             where: {
@@ -841,6 +859,7 @@ export class PageSpeedService {
                 ...(connectorInstanceId ? { connectorInstanceId } : {}),
                 source,
                 metricName: { in: PAGE_METRIC_NAMES },
+                device: strategy,
             },
             orderBy: { timestamp: 'desc' },
         });

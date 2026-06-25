@@ -12,7 +12,6 @@ import { PageRestricted } from "../../../../components/PageRestricted";
 import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 import { useParams } from "next/navigation";
 import {
-  DiagnosticDrawer,
   OperationalTable,
   Column,
 } from "@kpi-platform/ui";
@@ -33,7 +32,6 @@ import {
   ConnectorCard,
   ConnectorHealth,
 } from "../../../../components/integrations/ConnectorCard";
-import { DiagnosticDrawerContent } from "../../../../components/integrations/DiagnosticDrawerContent";
 import { SyncTrendChart } from "../../../../components/ui/SyncTrendChart";
 
 const pageStyle: React.CSSProperties = {
@@ -99,7 +97,7 @@ export default function IntegrationsPage() {
   const [resyncJobs, setResyncJobs] = useState<
     Record<string, { jobId: string; status: string; error?: string | null }>
   >({});
-  const { openConnectorSetupModal } = useConnectorPlatform();
+  const { openConnectorSetupModal, openReauthSetup } = useConnectorPlatform();
   const { success, error: showError } = useToast();
   const resyncPollersRef = useRef<Record<string, number>>({});
 
@@ -302,6 +300,23 @@ export default function IntegrationsPage() {
     setConnectorInstanceId(resolveConnectorInstanceId(connector) || null);
     setSelectedConnector(connector);
     setIsDrawerOpen(true);
+  };
+
+  const handleReauth = (connector: any) => {
+    const connectorInstanceId = resolveConnectorInstanceId(connector);
+    const providerId = toText(connector?.providerId).toLowerCase();
+    const platform = providerId.includes("shopify")
+      ? "shopify"
+      : providerId.includes("bigcommerce")
+        ? "bigcommerce"
+        : providerId.includes("adobe")
+          ? "adobe_commerce"
+          : null;
+    if (!connectorInstanceId || !platform) {
+      console.warn("[Integrations] cannot re-authenticate; unknown provider", providerId);
+      return;
+    }
+    openReauthSetup(connectorInstanceId, platform);
   };
 
   const clearResyncPoller = useCallback((connectorId: string) => {
@@ -544,6 +559,7 @@ export default function IntegrationsPage() {
         },
         recordsByType: integration?.recordsByType || {},
         activeResyncJob: integration?.activeResyncJob || null,
+        providerId: toText(integration?.providerId).trim(),
         endpoint: toText(integration?.providerId).trim() || "—",
       };
     });
@@ -826,6 +842,7 @@ export default function IntegrationsPage() {
                   )}
                   {...connector}
                   onInspect={() => handleInspect(connector)}
+                  onReauth={() => handleReauth(connector)}
                   onResync={(connectorId) => {
                     const normalizedId = toText(
                       connectorId || resolveConnectorInstanceId(connector),
@@ -1294,39 +1311,6 @@ export default function IntegrationsPage() {
           </div>
         </div>
       )}
-
-      {/* Diagnostic Side Panel */}
-      <DiagnosticDrawer
-        isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
-        title={selectedConnector?.name || "Connector Details"}
-        subtitle={`${selectedConnector?.provider} • Last activity ${selectedConnector?.lastSync}`}
-        width="520px"
-      >
-        <DiagnosticDrawerContent
-          connector={selectedConnector}
-          syncHistory={[
-            selectedConnector?.lastSync && selectedConnector.lastSync !== "—"
-              ? [
-                  {
-                    timestamp: new Date().toISOString(),
-                    type: "Latest",
-                    status:
-                      selectedConnector.status === "healthy" ? "success" : "error",
-                    records: Object.values(
-                      selectedConnector.recordsByType || {},
-                    ).reduce(
-                      (sum: number, value: any) => sum + Number(value || 0),
-                      0,
-                    ),
-                  },
-                ]
-              : []
-          ]}
-          webhookActivity={[]}
-          onAction={handleAction}
-        />
-      </DiagnosticDrawer>
 
       <style jsx global>{`
         .integrations-backend-theme [class*="bg-slate-"],

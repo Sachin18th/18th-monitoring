@@ -11,7 +11,8 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
-  Activity
+  Activity,
+  Key
 } from 'lucide-react';
 
 export type ConnectorHealth = 'healthy' | 'degraded' | 'critical' | 'stale' | 'offline';
@@ -39,6 +40,7 @@ export interface ConnectorCardProps {
   onInspect: (id: string) => void;
   onActionsClick?: (id: string) => void;
   onResync?: (id: string) => void;
+  onReauth?: (id: string) => void;
   isResyncDisabled?: boolean;
   isResyncRunning?: boolean;
   isSelected?: boolean;
@@ -58,6 +60,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
   onInspect,
   onActionsClick,
   onResync,
+  onReauth,
   isResyncDisabled = false,
   isResyncRunning = false,
   isSelected = false
@@ -152,10 +155,10 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
         </div>
       </div>
 
-      <div className="mt-4 border-t border-subtle pt-4">
+      <div className="mt-4 border-t border-subtle pt-4 flex gap-2">
         <button
           type="button"
-          className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-2.5 text-sm font-semibold text-primary transition-all hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-2.5 text-sm font-semibold text-primary transition-all hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isResyncDisabled || !onResync}
           onClick={(e) => {
             e.stopPropagation();
@@ -165,6 +168,19 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
           <RefreshCw size={14} className={isResyncRunning ? 'animate-spin' : ''} />
           {isResyncRunning ? 'Syncing...' : 'Re-Sync Data'}
         </button>
+        {onReauth && (
+          <button
+            type="button"
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-2.5 text-sm font-semibold text-primary transition-all hover:bg-primary/15"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReauth(id);
+            }}
+          >
+            <Key size={14} />
+            Re-authenticate
+          </button>
+        )}
       </div>
     </Card>
   );

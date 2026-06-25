@@ -1,7 +1,8 @@
-import { prisma } from '@kpi-platform/db';
+import { prisma, decryptSecret } from '@kpi-platform/db';
 import { HealthEngine } from './health-engine.service';
 import { AlertEngine } from './alert-engine.service';
 import { NotificationService } from './notification.service';
+import { registerShopifyPixel, verifyShopifyPixelExists } from '../../../../packages/connectors/src/commerce/shopify-pixel.service';
 
 /**
  * Scheduled monitor that periodically evaluates health and alerts for ALL active projects.
@@ -72,6 +73,134 @@ export class ScheduledMonitor {
             }
         }
 
+        // ─── Shopify Web Pixel health checks (per connector) ──────────────────
+        // Verify each active Shopify connector's registered pixel still exists on
+        // the store; auto-recover (re-register) if it has gone missing. Best-effort.
+        try {
+            const shopifyConnectors = await prisma.connectorInstance.findMany({
+                where: { providerId: 'shopify', disconnectedAt: null },
+                select: { id: true },
+            });
+            for (const { id } of shopifyConnectors) {
+                await this.checkShopifyPixelHealth(id);
+            }
+        } catch (err: any) {
+            console.error('[ScheduledMonitor] Shopify pixel health sweep failed:', err?.message);
+        }
+
         console.log(`[ScheduledMonitor] ✓ Periodic cycle complete (${projects.length} project${projects.length === 1 ? '' : 's'}).`);
+    }
+
+    /**
+     * Verify (and auto-recover) the Shopify Web Pixel for a single connector.
+     * Reads the connector, probes Shopify for the registered pixel, and
+     * re-registers it if missing. Never throws.
+     */
+    private static async checkShopifyPixelHealth(connectorInstanceId: string): Promise<void> {
+        try {
+            const instance = await prisma.connectorInstance.findUnique({
+                where: { id: connectorInstanceId },
+                select: {
+                    id: true,
+                    siteId: true,
+                    providerId: true,
+                    syncConfig: true,
+                    pixelConfig: true,
+                    credentials: {
+                        orderBy: { lastRotatedAt: 'desc' },
+                        take: 1,
+                        select: { encryptedSecret: true },
+                    },
+                },
+            });
+
+            if (!instance || instance.providerId !== 'shopify') return;
+
+            const pixelConfig = (instance.pixelConfig || {}) as Record<string, any>;
+            const isRegistered = pixelConfig.status === 'active' && !!pixelConfig.pixel_id;
+
+            const config = (instance.syncConfig || {}) as Record<string, any>;
+            const shopDomain = String(config.shopDomain || '')
+                .trim()
+                .replace(/^https?:\/\//i, '')
+                .split('/')[0]
+                .replace(/\/+$/, '')
+                .trim();
+            const accessToken = this.resolveShopifyToken(instance.credentials?.[0]?.encryptedSecret);
+
+            if (!shopDomain || !accessToken) return;
+
+            // If a pixel is already registered, verify it still exists on the
+            // store; healthy ones need no action. Connectors with an empty/
+            // unregistered pixel_config fall through and get registered for the
+            // first time (bootstrap), so instances created before pixel support
+            // — or whose registration was skipped at activation — self-heal.
+            if (isRegistered) {
+                const verification = await verifyShopifyPixelExists(shopDomain, accessToken, String(pixelConfig.pixel_id));
+                if (verification.exists) return; // Healthy — nothing to do.
+            }
+
+            // Pixel missing or never registered — attempt to (re-)register.
+            const base = process.env.PUBLIC_BASE_URL || process.env.TRACKER_PUBLIC_BASE_URL;
+            if (!base) {
+                console.warn('[ShopifyPixel] PUBLIC_BASE_URL/TRACKER_PUBLIC_BASE_URL not set — cannot auto-recover pixel.');
+                return;
+            }
+            const ingestUrl = `${base.replace(/\/+$/, '')}/api/track`;
+            const result = await registerShopifyPixel(shopDomain, accessToken, instance.siteId, instance.id, ingestUrl);
+
+            if (result.success) {
+                await prisma.connectorInstance.update({
+                    where: { id: instance.id },
+                    data: {
+                        pixelConfig: {
+                            ...pixelConfig,
+                            pixel_id: result.pixelId,
+                            status: 'active',
+                            flow: 'programmatic',
+                            ...(isRegistered
+                                ? { auto_recovered: true, recovered_at: new Date().toISOString() }
+                                : { registered_at: new Date().toISOString() }),
+                            error: null,
+                        },
+                    },
+                });
+                console.log(
+                    `[ShopifyPixel] ${isRegistered ? 'Auto-recovered missing' : 'Bootstrapped'} pixel for connector ${instance.id}.`
+                );
+            } else {
+                await prisma.connectorInstance.update({
+                    where: { id: instance.id },
+                    data: {
+                        pixelConfig: {
+                            ...pixelConfig,
+                            status: 'failed',
+                            error: result.error,
+                        },
+                    },
+                });
+            }
+        } catch (err: any) {
+            console.error(`[ShopifyPixel] checkShopifyPixelHealth failed for ${connectorInstanceId}:`, err?.message || err);
+        }
+    }
+
+    /** Decrypt a credential envelope and normalize the Shopify admin token. */
+    private static resolveShopifyToken(serialized: string | null | undefined): string {
+        if (!serialized) return '';
+        try {
+            const parsed = decryptSecret(serialized);
+            if (!parsed || typeof parsed !== 'object') return '';
+            const token =
+                parsed.adminApiAccessToken ||
+                parsed.accessToken ||
+                parsed.access_token ||
+                parsed.token ||
+                parsed.apiKey ||
+                parsed.password;
+            return token ? String(token).trim() : '';
+        } catch {
+            return '';
+        }
     }
 }

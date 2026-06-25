@@ -2,6 +2,7 @@
 import { prisma } from '@kpi-platform/db';
 import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
 import { HealthEngine } from '../services/health-engine.service';
+import { BackendHealthService } from '../services/backend-health.service';
 import { AlertEngine } from '../services/alert-engine.service';
 import { AlertRuleService } from '../services/alert-rule.service';
 import { ProjectSettingsService } from '../services/project-settings.service';
@@ -39,6 +40,23 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
             .sort((a: any, b: any) => new Date(b.computedAt).getTime() - new Date(a.computedAt).getTime())
             .slice(0, 50);
         return reply.send(ResponseUtil.success({ history }, {}, req.id as string));
+    });
+
+    /**
+     * GET /system-health
+     * Live snapshot of OUR backend's own health: API process, DB reachability +
+     * latency, sync-job staleness/failures, and dead-letter-queue depth.
+     * Distinct from /api-health (which probes external store APIs).
+     */
+    fastify.get('/tenants/:tenantId/projects/:siteId/system-health', async (req, reply) => {
+        const { siteId } = req.params as any;
+        try {
+            const snapshot = await BackendHealthService.snapshot(siteId);
+            return reply.send(ResponseUtil.success({ snapshot }, {}, req.id as string));
+        } catch (err) {
+            console.error('[BackendHealth] snapshot failed', err);
+            return reply.code(500).send(ResponseUtil.error('Failed to load backend health', 'BACKEND_HEALTH_FAILED', null, req.id as string));
+        }
     });
 
     /**

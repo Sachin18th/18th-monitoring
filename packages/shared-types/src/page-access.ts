@@ -5,7 +5,6 @@ export type ProjectPageKey =
   | 'performance'
   | 'rum'
   | 'observability/backend'
-  | 'observability/failures'
   | 'observability/journeys'
   | 'observability/synthetic'
   | 'customers'
@@ -42,7 +41,6 @@ export const PROJECT_PAGE_ACCESS_OPTIONS: ProjectPageAccessOption[] = [
   { key: 'performance', label: 'Performance', group: 'Operational Surface', path: '/performance' },
   { key: 'rum', label: 'Frontend RUM', group: 'Operational Surface', path: '/rum' },
   { key: 'observability/backend', label: 'Backend API', group: 'Operational Surface', path: '/observability/backend' },
-  { key: 'observability/failures', label: 'Failure Intel', group: 'Operational Surface', path: '/observability/failures' },
   { key: 'observability/journeys', label: 'Journey Intel', group: 'Operational Surface', path: '/observability/journeys' },
   { key: 'observability/synthetic', label: 'Synthetic', group: 'Operational Surface', path: '/observability/synthetic' },
   { key: 'customers', label: 'Customers', group: 'Operational Surface', path: '/customers' },

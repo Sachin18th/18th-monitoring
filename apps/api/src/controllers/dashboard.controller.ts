@@ -425,6 +425,16 @@ export const savePaymentGatewayConfig = async (req: any, res: any) => {
     }
 };
 
+export const getPaymentGatewayStatuses = async (req: any, res: any) => {
+    const { siteId } = getFilters(req);
+    try {
+        const data = await DashboardService.getPaymentGatewayStatuses(getFilters(req) as any);
+        return res.code(200).send(successResponse(data));
+    } catch (err) {
+        return respondWithError(res, err, 'getPaymentGatewayStatuses', siteId);
+    }
+};
+
 export const getAuditLogs = async (req: any, res: any) => {
     const { siteId } = getFilters(req);
     try {

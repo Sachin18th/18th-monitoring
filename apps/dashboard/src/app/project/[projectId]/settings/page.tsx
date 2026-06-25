@@ -2,30 +2,21 @@
 'use client';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import { 
+import {
    Settings as SettingsIcon,
-   ShieldCheck as ShieldCheckIcon,
-   Shield as ShieldIcon,
    Database as DatabaseIcon,
    Users as UsersIcon,
    Layers as LayersIcon,
    Plug as PlugIcon,
-   Bell as BellIcon,
-   KeyRound as KeyIcon,
-   SlidersHorizontal as SlidersIcon,
+   Shield as ShieldIcon,
   AlertCircle,
   CheckCircle2,
-  Lock,
    ArrowRight as ArrowRightIcon,
   Info,
-   Clock as ClockIcon,
-   RotateCcw as RotateIcon,
    Plus as PlusIcon,
-   Activity as HealthIcon,
-   RefreshCw as SyncIcon,
    Inbox as InboxIcon
 } from 'lucide-react';
-import { 
+import {
   DiagnosticDrawer
 } from '@kpi-platform/ui';
 import { useAuth } from '../../../../context/AuthContext';
@@ -48,11 +39,20 @@ const sectionSpacingStyle: React.CSSProperties = {
    overflow: 'visible'
 };
 
+const labelStyle: React.CSSProperties = {
+   fontSize: '10px',
+   textTransform: 'uppercase',
+   letterSpacing: '0.08em',
+   color: 'var(--text-label)',
+   margin: 0,
+   fontWeight: 500
+};
+
 export default function AdministrationPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { token, apiFetch } = useAuth();
-  
+
   // Governance State
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState('integrations');
@@ -111,6 +111,12 @@ export default function AdministrationPage() {
     setIsDrawerOpen(true);
   };
 
+  const projectName = config?.project?.name || projectId;
+  const projectEnvironments: string[] = Array.isArray(config?.project?.environments)
+     ? config.project.environments
+     : [];
+  const primaryEnvironment = projectEnvironments[0] || 'production';
+
    const navCards = [
       {
          id: 'integrations',
@@ -127,26 +133,8 @@ export default function AdministrationPage() {
       {
          id: 'projects',
          title: 'Project Environments',
-         subtitle: 'MANAGE PROD, STAGING AND QA SETUPS.',
+         subtitle: 'ENVIRONMENT, RESIDENCY AND RETENTION.',
          Icon: LayersIcon
-      },
-      {
-         id: 'alerts',
-         title: 'Alerting Rules',
-         subtitle: 'THRESHOLDS, ROUTING AND SLAS.',
-         Icon: BellIcon
-      },
-      {
-         id: 'api',
-         title: 'API & Security Keys',
-         subtitle: 'ACCESS KEYS AND SECURITY POLICIES.',
-         Icon: KeyIcon
-      },
-      {
-         id: 'preferences',
-         title: 'System Preferences',
-         subtitle: 'GLOBAL DEFAULTS AND VISUAL BRANDING.',
-         Icon: SlidersIcon
       }
    ];
 
@@ -222,7 +210,7 @@ export default function AdministrationPage() {
                      </div>
                   </div>
                   <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 0 52px' }}>
-                     Manage the platform&apos;s central control plane: integrations, identity policies, and project environments.
+                     Manage <strong style={{ color: 'var(--text-secondary)' }}>{projectName}</strong>: integrations, identity policies, and project environments.
                   </p>
                </div>
 
@@ -282,33 +270,14 @@ export default function AdministrationPage() {
 
                         <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>{title}</p>
 
-                        <p
-                           style={{
-                              fontSize: '10px',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.08em',
-                              color: 'rgba(255,255,255,0.3)',
-                              margin: 0,
-                              fontWeight: 500
-                           }}
-                        >
-                           {subtitle}
-                        </p>
+                        <p style={labelStyle}>{subtitle}</p>
                      </div>
                   ))}
                </div>
             </div>
 
             {activeSection === 'integrations' && (
-               <div
-                  style={{
-                     display: 'grid',
-                     gridTemplateColumns: '1fr 300px',
-                     gap: '24px',
-                     overflow: 'visible',
-                     alignItems: 'start'
-                  }}
-               >
+               <div style={{ overflow: 'visible' }}>
                   <div
                      style={{
                         borderRadius: '12px',
@@ -339,7 +308,7 @@ export default function AdministrationPage() {
                                  fontWeight: 500
                               }}
                            >
-                              SYSTEM CONNECTORS & AUTH
+                              SYSTEM CONNECTORS &amp; AUTH
                            </span>
                         </div>
                         <button
@@ -362,128 +331,6 @@ export default function AdministrationPage() {
                            <PlusIcon style={{ width: '12px', height: '12px' }} />
                            New Connector
                         </button>
-                     </div>
-
-                     <div
-                        style={{
-                           display: 'grid',
-                           gridTemplateColumns: '1fr 1fr',
-                           gap: '0',
-                           borderBottom: '1px solid var(--border-card)'
-                        }}
-                     >
-                        <div
-                           style={{
-                              padding: '16px 24px',
-                              borderRight: '1px solid var(--border-card)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px'
-                           }}
-                        >
-                           <div
-                              style={{
-                                 width: '32px',
-                                 height: '32px',
-                                 borderRadius: '8px',
-                                 background: 'rgba(74,222,128,0.1)',
-                                 display: 'flex',
-                                 alignItems: 'center',
-                                 justifyContent: 'center',
-                                 flexShrink: 0
-                              }}
-                           >
-                              <HealthIcon style={{ width: '14px', height: '14px', color: '#4ade80' }} />
-                           </div>
-                           <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 2px 0' }}>
-                                 Health Governance
-                              </p>
-                              <p
-                                 style={{
-                                    fontSize: '10px',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.06em',
-                                    color: 'rgba(255,255,255,0.3)',
-                                    margin: 0
-                                 }}
-                              >
-                                 AUTO-DISABLE CONNECTORS FAILING FOR &gt;10M.
-                              </p>
-                           </div>
-                           <span
-                              style={{
-                                 padding: '3px 8px',
-                                 borderRadius: '999px',
-                                 fontSize: '10px',
-                                 textTransform: 'uppercase',
-                                 letterSpacing: '0.06em',
-                                 whiteSpace: 'nowrap',
-                                 flexShrink: 0,
-                                 background: '#9ed3b1',
-                                 color: '#000000',
-                                 border: '1px solid rgba(74,222,128,0.2)'
-                              }}
-                           >
-                              ENABLED
-                           </span>
-                        </div>
-
-                        <div
-                           style={{
-                              padding: '16px 24px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px'
-                           }}
-                        >
-                           <div
-                              style={{
-                                 width: '32px',
-                                 height: '32px',
-                                 borderRadius: '8px',
-                                 background: 'rgba(99,102,241,0.1)',
-                                 display: 'flex',
-                                 alignItems: 'center',
-                                 justifyContent: 'center',
-                                 flexShrink: 0
-                              }}
-                           >
-                              <SyncIcon style={{ width: '14px', height: '14px', color: '#818cf8' }} />
-                           </div>
-                           <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 2px 0' }}>
-                                 Sync Policy
-                              </p>
-                              <p
-                                 style={{
-                                    fontSize: '10px',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.06em',
-                                    color: 'rgba(255,255,255,0.3)',
-                                    margin: 0
-                                 }}
-                              >
-                                 AGGRESSIVE DIFFING: 1M INTERVAL.
-                              </p>
-                           </div>
-                           <span
-                              style={{
-                                 padding: '3px 8px',
-                                 borderRadius: '999px',
-                                 fontSize: '10px',
-                                 textTransform: 'uppercase',
-                                 letterSpacing: '0.06em',
-                                 whiteSpace: 'nowrap',
-                                 flexShrink: 0,
-                                 background: 'rgba(172, 174, 244, 0.77)',
-                                 color: '#000108',
-                                 border: '1px solid rgba(99,102,241,0.2)'
-                              }}
-                           >
-                              OPTIMO
-                           </span>
-                        </div>
                      </div>
 
                      <div style={{ padding: 0, minHeight: '200px' }}>
@@ -512,10 +359,10 @@ export default function AdministrationPage() {
                                  <InboxIcon style={{ width: '20px', height: '20px', color: 'var(--text-label)' }} />
                               </div>
                               <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-muted)', margin: 0 }}>
-                                 No data found
+                                 No connectors found
                               </p>
                               <p style={{ fontSize: '12px', color: 'var(--text-label)', margin: 0 }}>
-                                 There are no records available at this time.
+                                 Connect a store from the Integrations page to see it here.
                               </p>
                            </div>
                         ) : (
@@ -539,14 +386,14 @@ export default function AdministrationPage() {
                                              width: '32px',
                                              height: '32px',
                                              borderRadius: '8px',
-                                             background: 'rgba(255,255,255,0.05)',
+                                             background: 'var(--bg-input)',
                                              display: 'flex',
                                              alignItems: 'center',
                                              justifyContent: 'center',
                                              flexShrink: 0
                                           }}
                                        >
-                                          <DatabaseIcon style={{ width: '16px', height: '16px', color: 'rgba(255,255,255,0.6)' }} />
+                                          <DatabaseIcon style={{ width: '16px', height: '16px', color: 'var(--text-secondary)' }} />
                                        </div>
                                        <div style={{ minWidth: 0 }}>
                                           <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>{c.name}</p>
@@ -554,7 +401,7 @@ export default function AdministrationPage() {
                                        </div>
                                     </div>
 
-                                    <p style={{ margin: 0, fontSize: '11px', color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase' }}>
+                                    <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>
                                        {c.type}
                                     </p>
 
@@ -580,144 +427,6 @@ export default function AdministrationPage() {
                               );
                            })
                         )}
-                     </div>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                     <div
-                        style={{
-                           borderRadius: '12px',
-                           border: '1px solid var(--border-card)',
-                           background: 'var(--bg-card)',
-                           overflow: 'hidden'
-                        }}
-                     >
-                        <div
-                           style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              padding: '16px 20px',
-                              borderBottom: '1px solid var(--border-card)'
-                           }}
-                        >
-                           <ClockIcon style={{ width: '14px', height: '14px', color: 'rgba(255,255,255,0.3)' }} />
-                           <span
-                              style={{
-                                 fontSize: '10px',
-                                 textTransform: 'uppercase',
-                                 letterSpacing: '0.1em',
-                                 color: 'var(--text-muted)',
-                                 fontWeight: 500
-                              }}
-                           >
-                              CONFIGURATION HISTORY
-                           </span>
-                        </div>
-
-                        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-card)' }}>
-                           <p
-                              style={{
-                                 fontSize: '10px',
-                                 textTransform: 'uppercase',
-                                 letterSpacing: '0.08em',
-                                 color: 'rgba(255,255,255,0.3)',
-                                 margin: '0 0 10px 0',
-                                 fontWeight: 500
-                              }}
-                           >
-                              Current Version
-                           </p>
-
-                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                              <span
-                                 style={{
-                                    width: '20px',
-                                    height: '20px',
-                                    borderRadius: '6px',
-                                    background: 'rgba(99,102,241,0.2)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    fontSize: '10px',
-                                    color: '#818cf8',
-                                    fontWeight: 700,
-                                    flexShrink: 0
-                                 }}
-                              >
-                                 v
-                              </span>
-                              <span style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                                 {config?.versioning?.currentVersion || 'v2.4.0'}
-                              </span>
-                           </div>
-
-                           <p
-                              style={{
-                                 fontSize: '11px',
-                                 color: 'var(--text-label)',
-                                 textTransform: 'uppercase',
-                                 letterSpacing: '0.06em',
-                                 margin: 0
-                              }}
-                           >
-                              {(config?.versioning?.lastChange?.change || 'Major environment mapping update for Q2.').toUpperCase()}
-                           </p>
-                        </div>
-
-                        <div style={{ padding: '12px 20px' }}>
-                           <button
-                              type="button"
-                              style={{
-                                 display: 'flex',
-                                 alignItems: 'center',
-                                 justifyContent: 'center',
-                                 gap: '6px',
-                                 width: '100%',
-                                 padding: '8px 16px',
-                                 borderRadius: '8px',
-                                 border: '1px solid var(--border-card)',
-                                 background: 'var(--bg-input)',
-                                 color: 'rgba(255,255,255,0.6)',
-                                 fontSize: '12px',
-                                 fontWeight: 500,
-                                 cursor: 'pointer'
-                              }}
-                           >
-                              <RotateIcon style={{ width: '12px', height: '12px' }} />
-                              ROLLBACK PLANE
-                           </button>
-                        </div>
-                     </div>
-
-                     <div
-                        style={{
-                           borderRadius: '12px',
-                           border: '1px solid rgba(74,222,128,0.15)',
-                           background: 'rgba(74,222,128,0.04)',
-                           padding: '20px'
-                        }}
-                     >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                           <ShieldCheckIcon style={{ width: '14px', height: '14px', color: '#4ade80' }} />
-                           <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Compliance Active</span>
-                        </div>
-                        <p
-                           style={{
-                              fontSize: '10px',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.07em',
-                              color: 'var(--text-label)',
-                              margin: 0,
-                              lineHeight: 1.7
-                           }}
-                        >
-                           THIS ENVIRONMENT IS CURRENTLY GOVERNED BY{' '}
-                           <span style={{ color: '#4ade80' }}>ISO-27001</span>
-                           {' '}AND{' '}
-                           <span style={{ color: '#4ade80' }}>SOC2</span>
-                           {' '}SECURITY POLICIES.
-                        </p>
                      </div>
                   </div>
                </div>
@@ -748,147 +457,72 @@ export default function AdministrationPage() {
                   <p style={{ margin: 0, fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Project Metadata</p>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                      <div>
-                        <p
-                           style={{
-                              margin: '0 0 8px 0',
-                              fontSize: '10px',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.08em',
-                              color: 'rgba(255,255,255,0.3)'
-                           }}
-                        >
-                           ENVIRONMENT TYPE
-                        </p>
-                        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>Enterprise Production</p>
+                        <p style={{ ...labelStyle, marginBottom: '8px' }}>PROJECT NAME</p>
+                        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>{projectName}</p>
                      </div>
                      <div>
-                        <p
-                           style={{
-                              margin: '0 0 8px 0',
-                              fontSize: '10px',
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.08em',
-                              color: 'rgba(255,255,255,0.3)'
-                           }}
-                        >
-                           DATA RESIDENCY
+                        <p style={{ ...labelStyle, marginBottom: '8px' }}>ENVIRONMENT</p>
+                        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600, textTransform: 'capitalize' }}>
+                           {primaryEnvironment}
                         </p>
-                        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>{config?.project?.region}</p>
+                     </div>
+                     <div>
+                        <p style={{ ...labelStyle, marginBottom: '8px' }}>DATA RESIDENCY</p>
+                        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                           {config?.project?.region || '—'}
+                        </p>
+                     </div>
+                     <div>
+                        <p style={{ ...labelStyle, marginBottom: '8px' }}>DATA RETENTION</p>
+                        <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>
+                           {config?.project?.retentionDays ? `${config.project.retentionDays} days` : '—'}
+                        </p>
                      </div>
                   </div>
                   <div>
-                     <p
-                        style={{
-                           margin: '0 0 8px 0',
-                           fontSize: '10px',
-                           textTransform: 'uppercase',
-                           letterSpacing: '0.08em',
-                           color: 'rgba(255,255,255,0.3)'
-                        }}
-                     >
-                        ENVIRONMENTAL GUARDRAILS
-                     </p>
+                     <p style={{ ...labelStyle, marginBottom: '8px' }}>ENVIRONMENTAL GUARDRAILS</p>
                      <div style={{ display: 'grid', gap: '8px' }}>
-                        {(config?.project?.environments || []).map((env: string) => (
-                           <div
-                              key={env}
-                              style={{
-                                 display: 'flex',
-                                 alignItems: 'center',
-                                 justifyContent: 'space-between',
-                                 padding: '10px 12px',
-                                 borderRadius: '8px',
-                                 border: '1px solid var(--border-card)',
-                                 background: 'var(--bg-input)'
-                              }}
-                           >
-                              <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-primary)', textTransform: 'capitalize' }}>{env}</p>
-                              <span
+                        {projectEnvironments.length === 0 ? (
+                           <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-label)' }}>No environments configured.</p>
+                        ) : (
+                           projectEnvironments.map((env: string) => (
+                              <div
+                                 key={env}
                                  style={{
-                                    padding: '3px 8px',
-                                    borderRadius: '999px',
-                                    fontSize: '10px',
-                                    textTransform: 'uppercase',
-                                    letterSpacing: '0.06em',
-                                    whiteSpace: 'nowrap',
-                                    flexShrink: 0,
-                                    background: env === 'production' ? '#0f2a1a' : 'var(--bg-input)',
-                                    color: env === 'production' ? '#4ade80' : 'var(--text-secondary)',
-                                    border:
-                                       env === 'production'
-                                          ? '1px solid rgba(74,222,128,0.2)'
-                                          : '1px solid var(--border-input)'
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    padding: '10px 12px',
+                                    borderRadius: '8px',
+                                    border: '1px solid var(--border-card)',
+                                    background: 'var(--bg-input)'
                                  }}
                               >
-                                 ISOLATED
-                              </span>
-                           </div>
-                        ))}
+                                 <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-primary)', textTransform: 'capitalize' }}>{env}</p>
+                                 <span
+                                    style={{
+                                       padding: '3px 8px',
+                                       borderRadius: '999px',
+                                       fontSize: '10px',
+                                       textTransform: 'uppercase',
+                                       letterSpacing: '0.06em',
+                                       whiteSpace: 'nowrap',
+                                       flexShrink: 0,
+                                       background: env === 'production' ? '#0f2a1a' : 'var(--bg-input)',
+                                       color: env === 'production' ? '#4ade80' : 'var(--text-secondary)',
+                                       border:
+                                          env === 'production'
+                                             ? '1px solid rgba(74,222,128,0.2)'
+                                             : '1px solid var(--border-input)'
+                                    }}
+                                 >
+                                    ISOLATED
+                                 </span>
+                              </div>
+                           ))
+                        )}
                      </div>
                   </div>
-               </div>
-            )}
-
-            {['api', 'alerts', 'preferences'].includes(activeSection) && (
-               <div
-                  style={{
-                     borderRadius: '12px',
-                     border: '1px dashed var(--border-input)',
-                     background: 'var(--bg-card)',
-                     padding: '48px 24px',
-                     display: 'flex',
-                     flexDirection: 'column',
-                     alignItems: 'center',
-                     textAlign: 'center'
-                  }}
-               >
-                  <div
-                     style={{
-                        width: '56px',
-                        height: '56px',
-                        borderRadius: '999px',
-                        background: 'var(--bg-input)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        marginBottom: '14px'
-                     }}
-                  >
-                     <Lock style={{ width: '24px', height: '24px', color: 'rgba(255,255,255,0.55)' }} />
-                  </div>
-                  <p style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>Module under Governance</p>
-                  <p
-                     style={{
-                        margin: '10px 0 0 0',
-                        maxWidth: '520px',
-                        fontSize: '13px',
-                        lineHeight: 1.6,
-                        color: 'var(--text-muted)'
-                     }}
-                  >
-                     This configuration section is currently locked following the{' '}
-                     {config?.versioning?.currentVersion || 'latest'} security hardening policy. Contact your Security Lead for
-                     override access.
-                  </p>
-                  <button
-                     type="button"
-                     style={{
-                        marginTop: '16px',
-                        border: 'none',
-                        background: 'transparent',
-                        color: '#818cf8',
-                        fontWeight: 600,
-                        fontSize: '12px',
-                        letterSpacing: '0.02em',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        cursor: 'pointer'
-                     }}
-                  >
-                     Request Temporary Escalation
-                     <ArrowRightIcon style={{ width: '14px', height: '14px' }} />
-                  </button>
                </div>
             )}
          </div>
@@ -898,7 +532,7 @@ export default function AdministrationPage() {
             isOpen={isDrawerOpen}
             onClose={() => setIsDrawerOpen(false)}
             title={pendingAction?.title || 'Governance Confirmation'}
-            subtitle={`Action Request: ${pendingAction?.type.toUpperCase()} • System Scope: ${projectId}`}
+            subtitle={`Action Request: ${pendingAction?.type?.toUpperCase?.() || ''} • System Scope: ${projectName}`}
             width="600px"
          >
             {pendingAction && (
@@ -928,9 +562,9 @@ export default function AdministrationPage() {
                               <AlertCircle style={{ width: '20px', height: '20px', color: '#f59e0b' }} />
                            </div>
                            <div>
-                              <p style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#fbbf24' }}>Privileged Action Required</p>
-                              <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.75)', lineHeight: 1.6 }}>
-                                 You are about to perform a configuration update that affects the stability and visibility of the {projectId} environment.
+                              <p style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#d97706' }}>Privileged Action Required</p>
+                              <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                                 You are about to perform a configuration update that affects the stability and visibility of the {projectName} environment.
                               </p>
                            </div>
                         </div>
@@ -960,16 +594,12 @@ export default function AdministrationPage() {
                               }}
                            >
                               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                 <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.65)' }}>Actor</p>
-                                 <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>System Admin</p>
+                                 <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)' }}>Project</p>
+                                 <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>{projectName}</p>
                               </div>
                               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                 <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.65)' }}>Region Impact</p>
-                                 <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>Global (Multi-Environment)</p>
-                              </div>
-                              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                 <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.65)' }}>Audit Persistence</p>
-                                 <p style={{ margin: 0, fontSize: '13px', color: '#4ade80', fontWeight: 600 }}>Immutable Log (365d)</p>
+                                 <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary)' }}>Environment</p>
+                                 <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600, textTransform: 'capitalize' }}>{primaryEnvironment}</p>
                               </div>
                            </div>
                         </section>
@@ -977,7 +607,7 @@ export default function AdministrationPage() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <Info style={{ width: '14px', height: '14px', color: 'var(--text-muted)' }} />
-                              <p style={{ margin: 0, fontSize: '11px', color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>
+                              <p style={{ margin: 0, fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>
                                  Confirmation will create a new configuration version.
                               </p>
                            </div>
@@ -990,7 +620,7 @@ export default function AdministrationPage() {
                                     borderRadius: '8px',
                                     border: 'none',
                                     background: '#3b82f6',
-                                    color: 'var(--text-primary)',
+                                    color: '#fff',
                                     fontSize: '13px',
                                     fontWeight: 600,
                                     display: 'flex',
@@ -1010,7 +640,7 @@ export default function AdministrationPage() {
                                     flex: 1,
                                     padding: '12px 16px',
                                     borderRadius: '8px',
-                                    border: '1px solid rgba(255,255,255,0.15)',
+                                    border: '1px solid var(--border-input)',
                                     background: 'transparent',
                                     color: 'var(--text-secondary)',
                                     fontSize: '13px',

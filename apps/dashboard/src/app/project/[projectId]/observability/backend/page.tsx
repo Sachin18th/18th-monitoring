@@ -7,15 +7,18 @@ import {
   Server,
   Zap,
   ShieldAlert,
-  BarChart3,
   Clock,
-  Filter,
   AlertCircle,
   RefreshCw,
+  CheckCircle2,
+  XCircle,
+  KeyRound,
+  CreditCard,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { PageRestricted } from '@/components/PageRestricted';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
+import { PaymentGatewayPanel } from '@/components/observability/PaymentGatewayPanel';
 import {
   CartesianGrid,
   Line,
@@ -40,17 +43,77 @@ const pageStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 };
 
-function statusBadgeStyle(status: 'HEALTHY' | 'SUCCESS' | 'WARNING' | 'CRITICAL') {
-  if (status === 'WARNING') {
-    return { background: 'var(--warning-bg)', color: 'var(--warning-text)' };
-  }
-  if (status === 'CRITICAL') {
-    return { background: 'var(--error-bg)', color: 'var(--error-text)' };
-  }
-  return { background: 'var(--success-bg)', color: 'var(--success-text)' };
+type HealthState = 'healthy' | 'auth_failed' | 'degraded' | 'unreachable' | 'unknown';
+
+// Visual treatment per interpreted store-API state.
+const STATE_META: Record<HealthState, { label: string; color: string; bg: string; Icon: any }> = {
+  healthy: { label: 'Healthy', color: '#22c55e', bg: 'rgba(34,197,94,0.12)', Icon: CheckCircle2 },
+  auth_failed: { label: 'Auth Failed', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', Icon: KeyRound },
+  degraded: { label: 'Degraded', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', Icon: ShieldAlert },
+  unreachable: { label: 'Unreachable', color: '#ef4444', bg: 'rgba(239,68,68,0.12)', Icon: XCircle },
+  unknown: { label: 'No Data', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', Icon: AlertCircle },
+};
+
+const STATUS_CODE_COLORS: Record<string, string> = {
+  '2xx': '#22c55e',
+  '3xx': '#818cf8',
+  '4xx': '#f59e0b',
+  '5xx': '#ef4444',
+  err: '#94a3b8',
+};
+
+const PROVIDER_LABEL: Record<string, string> = {
+  shopify: 'Shopify',
+  bigcommerce: 'BigCommerce',
+  adobe_commerce: 'Adobe Commerce',
+  adobe: 'Adobe Commerce',
+  magento: 'Adobe Commerce',
+};
+
+interface ConnectorHealth {
+  connectorInstanceId: string;
+  label: string;
+  provider: string;
+  state: HealthState;
+  ok: boolean | null;
+  statusCode: number | null;
+  latencyMs: number | null;
+  p95: number | null;
+  uptime: number | null;
+  checks: number;
+  lastError: string | null;
+  lastCheckedAt: string | null;
 }
 
-const donutColors = ['#22c55e', '#818cf8', '#f59e0b', '#ef4444'];
+interface OverviewPayload {
+  summary?: {
+    totalChecks: number;
+    storesMonitored: number;
+    storesHealthy: number;
+    storesDown: number;
+    errorRate: number;
+    uptime: number;
+    p50: number;
+    p95: number;
+    p99: number;
+  };
+  connectors?: ConnectorHealth[];
+  statusCodes?: { name: string; value: number }[];
+  latencyTrend?: { timestamp: string; p50: number; p95: number; p99: number }[];
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return 'never';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'never';
+  const diff = Math.max(0, Date.now() - then);
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 
 export default function BackendObservabilityPage() {
   const { projectId } = useParams();
@@ -58,12 +121,25 @@ export default function BackendObservabilityPage() {
   const { connectorInstanceId } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [latencyTrend, setLatencyTrend] = useState<any[]>([]);
-  const [statusCodes, setStatusCodes] = useState<any[]>([]);
-  const [slowEndpoints, setSlowEndpoints] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>(null);
+  const [data, setData] = useState<OverviewPayload | null>(null);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
+  // Which check group is on screen — Store APIs and Payment Gateways are
+  // distinct health checks, shown one at a time via the segmented control.
+  const [view, setView] = useState<'stores' | 'gateways'>('stores');
+
+  // Call the scoped path directly with the URL projectId (like the Integrations
+  // page) rather than /api/v1/dashboard, so we never depend on a possibly-stale
+  // currentProject in AuthContext. The query siteId is a belt-and-braces backup.
+  const basePath = () => `/api/v1/tenants/current/projects/${projectId}/api-health`;
+  const query = () => {
+    const params = new URLSearchParams({ siteId: String(projectId) });
+    if (connectorInstanceId && connectorInstanceId !== 'all') {
+      params.set('connector_instance_id', String(connectorInstanceId));
+    }
+    return params.toString();
+  };
 
   const loadData = useCallback(async () => {
     if (!token || !projectId) return;
@@ -78,54 +154,48 @@ export default function BackendObservabilityPage() {
 
       if (!nextAllowedPageKeys.includes('observability/backend')) return;
 
-      const [trendData, summaryData, slowData] = await Promise.all([
-        apiFetch(`/api/v1/dashboard/performance/trends?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/performance/summary?siteId=${projectId}`),
-        apiFetch(`/api/v1/dashboard/performance/slowest-pages?siteId=${projectId}`),
-      ]);
-
-      setLatencyTrend(Array.isArray(trendData) ? trendData : []);
-      setSummary(summaryData);
-      setSlowEndpoints(Array.isArray(slowData) ? slowData : []);
-      setStatusCodes([
-        { name: '2xx', value: 98 },
-        { name: '3xx', value: 1 },
-        { name: '4xx', value: 0.5 },
-        { name: '5xx', value: 0.5 },
-      ]);
+      const overview = await apiFetch(`${basePath()}/overview?${query()}`);
+      setData(overview || {});
     } catch (err: any) {
       console.error('[BackendObs] Load failed', err);
-      setError('Failed to synchronize backend telemetry. Please check integration health.');
+      setError('Failed to load store API health. Please check integration configuration.');
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiFetch, projectId, token, connectorInstanceId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('observability/backend');
+  // On-demand: probe every store right now, then show fresh numbers.
+  const runProbeNow = useCallback(async () => {
+    if (!token || !projectId) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      // Live probe hits every store API (up to ~8s each); allow ample time so
+      // the request isn't aborted by the default 10s client timeout.
+      const overview = await apiFetch(`${basePath()}/run?${query()}`, { method: 'POST', timeout: 60000 });
+      if (overview) setData(overview);
+    } catch (err: any) {
+      console.error('[BackendObs] Probe run failed', err);
+      setError('Failed to run the live probe. The store APIs may be slow to respond — try again.');
+    } finally {
+      setRefreshing(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiFetch, projectId, token, connectorInstanceId]);
 
+  const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('observability/backend');
   if (isPageRestricted) {
     return <PageRestricted pageKey="observability/backend" />;
   }
 
-  const chartData = latencyTrend.length > 0 ? latencyTrend : [];
-  const topEndpoints = slowEndpoints.slice(0, 4);
-  const slowEndpointRows = slowEndpoints.slice(0, 6);
-
-  if (loading && !summary) {
+  if (loading && !data) {
     return (
-      <div
-        style={{
-          ...pageStyle,
-          minHeight: '100vh',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: 'var(--text-muted)',
-        }}
-      >
+      <div style={{ ...pageStyle, minHeight: '100vh', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <div
             style={{
@@ -140,23 +210,16 @@ export default function BackendObservabilityPage() {
             }}
           />
           <span style={{ fontSize: '10px', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.2em' }}>
-            Analyzing Backend API Patterns...
+            Probing Store APIs...
           </span>
         </div>
       </div>
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div
-        style={{
-          ...pageStyle,
-          minHeight: '100vh',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
+      <div style={{ ...pageStyle, minHeight: '100vh', alignItems: 'center', justifyContent: 'center' }}>
         <div
           style={{
             width: '100%',
@@ -185,9 +248,7 @@ export default function BackendObservabilityPage() {
           >
             <AlertCircle style={{ width: '32px', height: '32px', color: '#f43f5e' }} />
           </div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>
-            Telemetry Desync
-          </h2>
+          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px' }}>Telemetry Desync</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '14px', maxWidth: '448px', margin: '0 auto 32px' }}>{error}</p>
           <button
             onClick={loadData}
@@ -206,483 +267,417 @@ export default function BackendObservabilityPage() {
             }}
           >
             <RefreshCw style={{ width: '14px', height: '14px', flexShrink: 0 }} />
-            Retry Sync
+            Retry
           </button>
         </div>
       </div>
     );
   }
 
+  const summary = data?.summary;
+  const connectors = data?.connectors || [];
+  const statusCodes = data?.statusCodes || [];
+  const latencyTrend = data?.latencyTrend || [];
+
   const metricItems = [
     {
-      label: 'Total Requests',
-      value: Number(summary?.totalRequests ?? summary?.requestsPerMinute ?? 0),
-      unit: 'rpm',
-      icon: Zap,
-      contextLabel: 'Total Requests',
-      status: 'HEALTHY' as const,
+      label: 'Stores Healthy',
+      value: `${summary?.storesHealthy ?? 0}/${summary?.storesMonitored ?? 0}`,
+      unit: '',
+      icon: Server,
+      status: (summary?.storesDown ?? 0) > 0 ? ('CRITICAL' as const) : ('HEALTHY' as const),
+      context: 'Reachable + token valid',
     },
     {
       label: 'Error Rate',
-      value: Number(summary?.errorRate || 0),
+      value: `${summary?.errorRate ?? 0}`,
       unit: '%',
       icon: ShieldAlert,
-      contextLabel: 'Error Rate',
-      status: Number(summary?.errorRate || 0) > 2 ? 'CRITICAL' as const : 'HEALTHY' as const,
+      status: (summary?.errorRate ?? 0) > 2 ? ('CRITICAL' as const) : ('HEALTHY' as const),
+      context: 'Failed probes (24h)',
     },
     {
       label: 'P95 Latency',
-      value: Number(summary?.p95 || 0),
+      value: `${summary?.p95 ?? 0}`,
       unit: 'ms',
       icon: Clock,
-      contextLabel: 'P95 Latency',
-      status: Number(summary?.p95 || 0) > 2500 ? 'WARNING' as const : 'SUCCESS' as const,
+      status: (summary?.p95 ?? 0) > 2500 ? ('WARNING' as const) : ('SUCCESS' as const),
+      context: '95th percentile (24h)',
     },
     {
-      label: 'Uptime / Availability',
-      value: Number(summary?.uptime || 0),
+      label: 'Uptime',
+      value: `${summary?.uptime ?? 0}`,
       unit: '%',
       icon: Activity,
-      contextLabel: 'Availability',
-      status: 'SUCCESS' as const,
+      status: (summary?.uptime ?? 100) < 99 ? ('WARNING' as const) : ('SUCCESS' as const),
+      context: 'Availability (24h)',
     },
   ];
 
-  const journeys = [
-    { name: 'SEARCH', value: '85ms' },
-    { name: 'PDP', value: '120ms' },
-    { name: 'CART', value: '150ms' },
-    { name: 'CHECKOUT', value: '450ms' },
-    { name: 'ORDERS', value: '240ms' },
-    { name: 'AUTH', value: '95ms' },
-  ];
+  const statusBadge = (status: 'HEALTHY' | 'SUCCESS' | 'WARNING' | 'CRITICAL') => {
+    if (status === 'WARNING') return { background: 'var(--warning-bg)', color: 'var(--warning-text)' };
+    if (status === 'CRITICAL') return { background: 'var(--error-bg)', color: 'var(--error-text)' };
+    return { background: 'var(--success-bg)', color: 'var(--success-text)' };
+  };
+
+  const cardStyle: React.CSSProperties = {
+    borderRadius: '12px',
+    border: '1px solid var(--border-card)',
+    background: 'var(--bg-card)',
+    padding: '20px 22px',
+    boxSizing: 'border-box',
+  };
 
   return (
     <div style={pageStyle}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
-            <div
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '8px',
-                background: 'rgba(59,130,246,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxSizing: 'border-box',
-              }}
-            >
-              <Server style={{ width: '18px', height: '18px', color: '#3b82f6' }} />
-            </div>
-            <h1 style={{ fontSize: '22px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>
-              Backend API Observability
-            </h1>
-          </div>
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 16px' }}>
-            Deep diagnostics and performance trends for {projectId as string}
-          </p>
-
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button
-              type="button"
-              style={{
-                padding: '7px 14px',
-                borderRadius: '8px',
-                border: '1px solid var(--border-card)',
-                background: 'transparent',
-                fontSize: '13px',
-                color: 'var(--text-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                cursor: 'pointer',
-                boxSizing: 'border-box',
-              }}
-            >
-              <Filter style={{ width: '14px', height: '14px', flexShrink: 0 }} />
-              Filters
-            </button>
-            <button
-              type="button"
-              onClick={loadData}
-              style={{
-                padding: '7px 14px',
-                borderRadius: '8px',
-                border: '1px solid var(--border-card)',
-                background: 'transparent',
-                fontSize: '13px',
-                color: 'var(--text-primary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                cursor: 'pointer',
-                boxSizing: 'border-box',
-              }}
-            >
-              <RefreshCw
-                style={{
-                  width: '14px',
-                  height: '14px',
-                  flexShrink: 0,
-                  animation: loading ? 'spin 1s linear infinite' : 'none',
-                }}
-              />
-              Refresh
-            </button>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: '16px',
-            overflow: 'visible',
-          }}
-        >
-          {metricItems.map((item) => {
-            const Icon = item.icon;
-            const badgeStyle = statusBadgeStyle(item.status);
-
-            return (
-              <div
-                key={item.label}
-                style={{
-                  borderRadius: '12px',
-                  border: '1px solid var(--border-card)',
-                  background: 'var(--bg-card)',
-                  padding: '20px 22px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  minHeight: '130px',
-                  overflow: 'visible',
-                  boxSizing: 'border-box',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500 }}>
-                    {item.label}
-                  </span>
-                  <Icon style={{ width: '16px', height: '16px', color: 'var(--text-muted)', flexShrink: 0 }} />
-                </div>
-
-                <div style={{ fontSize: '32px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '6px 0' }}>
-                  {item.value}
-                  <span style={{ fontSize: '14px', color: 'var(--text-muted)', marginLeft: '4px' }}>{item.unit}</span>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
-                  <span
-                    style={{
-                      padding: '3px 10px',
-                      borderRadius: '999px',
-                      fontSize: '10px',
-                      textTransform: 'uppercase',
-                      fontWeight: 500,
-                      whiteSpace: 'nowrap',
-                      flexShrink: 0,
-                      background: badgeStyle.background,
-                      color: badgeStyle.color,
-                    }}
-                  >
-                    {item.status}
-                  </span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.contextLabel}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '16px', alignItems: 'start' }}>
+      {/* Header */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
           <div
             style={{
-              borderRadius: '12px',
-              border: '1px solid var(--border-card)',
-              background: 'var(--bg-card)',
-              padding: '22px 24px',
+              width: '36px',
+              height: '36px',
+              borderRadius: '8px',
+              background: 'rgba(59,130,246,0.1)',
               display: 'flex',
-              flexDirection: 'column',
-              gap: '20px',
+              alignItems: 'center',
+              justifyContent: 'center',
               boxSizing: 'border-box',
-              overflow: 'visible',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <p style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', margin: 0 }}>
-                  Request Throughput
-                </p>
-              </div>
-            </div>
+            <Server style={{ width: '18px', height: '18px', color: '#3b82f6' }} />
+          </div>
+          <h1 style={{ fontSize: '22px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>Backend API Observability</h1>
+        </div>
+        <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 16px' }}>
+          Live health of each connected store&apos;s API — reachability, token validity, and latency for {projectId as string}
+        </p>
 
-            <div
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            type="button"
+            onClick={runProbeNow}
+            disabled={refreshing}
+            style={{
+              padding: '7px 14px',
+              borderRadius: '8px',
+              border: '1px solid var(--border-card)',
+              background: 'transparent',
+              fontSize: '13px',
+              color: 'var(--text-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: refreshing ? 'default' : 'pointer',
+              opacity: refreshing ? 0.6 : 1,
+              boxSizing: 'border-box',
+            }}
+          >
+            <Zap style={{ width: '14px', height: '14px', flexShrink: 0 }} />
+            {refreshing ? 'Probing…' : 'Probe Now'}
+          </button>
+        </div>
+      </div>
+
+      {/* Inline error (shown when a refresh/probe fails but stale data is still on screen) */}
+      {error && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            borderRadius: '8px',
+            border: '1px solid rgba(244,63,94,0.2)',
+            background: 'rgba(244,63,94,0.1)',
+            padding: '12px 16px',
+            color: '#fb7185',
+            fontSize: '13px',
+          }}
+        >
+          <AlertCircle style={{ width: '16px', height: '16px', flexShrink: 0 }} />
+          {error}
+        </div>
+      )}
+
+      {/* Check selector — Store APIs vs Payment Gateways are separate checks. */}
+      <div
+        style={{
+          display: 'inline-flex',
+          gap: '4px',
+          padding: '4px',
+          borderRadius: '10px',
+          border: '1px solid var(--border-card)',
+          background: 'var(--bg-card)',
+          width: 'fit-content',
+          boxSizing: 'border-box',
+        }}
+      >
+        {([
+          { key: 'stores' as const, label: 'Store API Health', Icon: Server },
+          { key: 'gateways' as const, label: 'Payment Gateways', Icon: CreditCard },
+        ]).map((tab) => {
+          const active = view === tab.key;
+          const TabIcon = tab.Icon;
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setView(tab.key)}
               style={{
-                borderRadius: '10px',
-                border: '1px solid var(--border-card)',
-                background: 'var(--bg-page)',
-                padding: '16px',
-                minHeight: '260px',
-                overflow: 'visible',
-                display: 'flex',
-                flexDirection: 'column',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+                background: active ? 'rgba(59,130,246,0.12)' : 'transparent',
+                color: active ? '#3b82f6' : 'var(--text-muted)',
                 boxSizing: 'border-box',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '12px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>
-                  Latency Distribution (ms)
-                </span>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                  {[
-                    { label: 'P50', color: '#6366f1' },
-                    { label: 'P95', color: '#a855f7' },
-                    { label: 'P99', color: '#f43f5e' },
-                  ].map((item) => (
-                    <span key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                      <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: item.color, flexShrink: 0 }} />
-                      {item.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div style={{ flex: 1, minHeight: '200px', overflow: 'visible' }}>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-card)" vertical={false} />
-                    <XAxis dataKey="timestamp" stroke="var(--text-secondary)" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="var(--text-secondary)" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}ms`} width={48} />
-                    <Tooltip
-                      contentStyle={{
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-card)',
-                        borderRadius: '8px',
-                        color: 'var(--text-primary)',
-                      }}
-                    />
-                    <Line type="monotone" dataKey="ttfb" stroke="#6366f1" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="pageLoadTime" stroke="#a855f7" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="lcp" stroke="#f43f5e" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+              <TabIcon style={{ width: '15px', height: '15px', flexShrink: 0 }} />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
+      {view === 'stores' && (
+      <>
+      {/* KPI tiles */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', overflow: 'visible' }}>
+        {metricItems.map((item) => {
+          const Icon = item.icon;
+          const badge = statusBadge(item.status);
+          return (
             <div
+              key={item.label}
               style={{
-                borderRadius: '10px',
-                border: '1px solid var(--border-card)',
-                background: 'var(--bg-page)',
-                padding: '16px',
-                minHeight: '180px',
-                overflow: 'visible',
+                ...cardStyle,
+                padding: '20px 22px',
                 display: 'flex',
                 flexDirection: 'column',
-                boxSizing: 'border-box',
+                justifyContent: 'space-between',
+                minHeight: '130px',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '12px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>
-                  Throughput Profile
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 500 }}>
+                  {item.label}
                 </span>
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Live request pattern</span>
+                <Icon style={{ width: '16px', height: '16px', color: 'var(--text-muted)', flexShrink: 0 }} />
               </div>
-              <div style={{ flex: 1, minHeight: '120px', overflow: 'visible' }}>
-                <ResponsiveContainer width="100%" height={140}>
-                  <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-card)" vertical={false} />
-                    <XAxis dataKey="timestamp" stroke="var(--text-secondary)" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="var(--text-secondary)" fontSize={11} tickLine={false} axisLine={false} width={48} />
-                    <Tooltip
-                      contentStyle={{
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border-card)',
-                        borderRadius: '8px',
-                        color: 'var(--text-primary)',
-                      }}
-                    />
-                    <Line type="monotone" dataKey="fcp" stroke="#22c55e" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="pageLoadTime" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+              <div style={{ fontSize: '32px', fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1, padding: '6px 0' }}>
+                {item.value}
+                {item.unit && <span style={{ fontSize: '14px', color: 'var(--text-muted)', marginLeft: '4px' }}>{item.unit}</span>}
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+                <span
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: '999px',
+                    fontSize: '10px',
+                    textTransform: 'uppercase',
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                    background: badge.background,
+                    color: badge.color,
+                  }}
+                >
+                  {item.status}
+                </span>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.context}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Latency trend + status codes */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '16px', alignItems: 'start' }}>
+        <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <p style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', margin: 0 }}>
+              Latency Distribution (ms)
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              {[
+                { label: 'P50', color: '#6366f1' },
+                { label: 'P95', color: '#a855f7' },
+                { label: 'P99', color: '#f43f5e' },
+              ].map((item) => (
+                <span key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: item.color, flexShrink: 0 }} />
+                  {item.label}
+                </span>
+              ))}
             </div>
           </div>
+          <div style={{ flex: 1, minHeight: '240px', overflow: 'visible' }}>
+            {latencyTrend.length === 0 ? (
+              <div style={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                No probe data yet — run “Probe Now” to populate the trend.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={latencyTrend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-card)" vertical={false} />
+                  <XAxis dataKey="timestamp" stroke="var(--text-secondary)" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="var(--text-secondary)" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}ms`} width={52} />
+                  <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px', color: 'var(--text-primary)' }} />
+                  <Line type="monotone" dataKey="p50" stroke="#6366f1" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="p95" stroke="#a855f7" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="p99" stroke="#f43f5e" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div
-              style={{
-                borderRadius: '12px',
-                border: '1px solid var(--border-card)',
-                background: 'var(--bg-card)',
-                padding: '20px 22px',
-                boxSizing: 'border-box',
-              }}
-            >
-              <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', margin: '0 0 16px' }}>
-                Status Codes
-              </p>
+        <div style={cardStyle}>
+          <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', margin: '0 0 16px' }}>
+            Status Codes
+          </p>
+          {statusCodes.length === 0 ? (
+            <div style={{ height: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+              No data
+            </div>
+          ) : (
+            <>
               <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
                 <div style={{ width: '140px', height: '140px' }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={statusCodes} innerRadius={45} outerRadius={65} dataKey="value" paddingAngle={3}>
-                        {statusCodes.map((entry, index) => (
-                          <Cell key={entry.name} fill={donutColors[index] || '#94a3b8'} />
+                      <Pie data={statusCodes} innerRadius={45} outerRadius={65} dataKey="value" nameKey="name" paddingAngle={3}>
+                        {statusCodes.map((entry) => (
+                          <Cell key={entry.name} fill={STATUS_CODE_COLORS[entry.name] || '#94a3b8'} />
                         ))}
                       </Pie>
-                      <Tooltip
-                        contentStyle={{
-                          background: 'var(--bg-card)',
-                          border: '1px solid var(--border-card)',
-                          borderRadius: '8px',
-                          color: 'var(--text-primary)',
-                        }}
-                      />
+                      <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px', color: 'var(--text-primary)' }} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'center' }}>
-                {['2xx', '3xx', '4xx', '5xx'].map((code, i) => (
-                  <span key={code} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'var(--text-muted)' }}>
-                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: donutColors[i], flexShrink: 0 }} />
-                    {code}
+                {statusCodes.map((entry) => (
+                  <span key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: STATUS_CODE_COLORS[entry.name] || '#94a3b8', flexShrink: 0 }} />
+                    {entry.name === 'err' ? 'no resp' : entry.name} · {entry.value}
                   </span>
                 ))}
               </div>
-            </div>
-
-            <div
-              style={{
-                borderRadius: '12px',
-                border: '1px solid var(--border-card)',
-                background: 'var(--bg-card)',
-                padding: '20px 22px',
-                boxSizing: 'border-box',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)' }}>
-                  Top Endpoints
-                </span>
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Last 60 Mins</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {topEndpoints.map((item: any, index: number) => {
-                  const width = `${Math.max(20, Math.min(100, Number(item.calls || 0) / Math.max(Number(topEndpoints[0]?.calls || 1), 1) * 100))}%`;
-                  return (
-                    <div key={`${item.route}-${index}`} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{item.route}</span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{item.p95}ms</span>
-                      </div>
-                      <div style={{ height: '8px', borderRadius: '999px', background: 'var(--bg-input)', overflow: 'hidden' }}>
-                        <div style={{ width, height: '100%', borderRadius: '999px', background: '#3b82f6' }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div
-              style={{
-                borderRadius: '12px',
-                border: '1px solid var(--border-card)',
-                background: 'var(--bg-card)',
-                padding: '20px 22px',
-                boxSizing: 'border-box',
-              }}
-            >
-              <p style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', margin: '0 0 14px' }}>
-                Top Slow Endpoints
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 80px 60px', gap: '8px', paddingBottom: '8px', borderBottom: '1px solid var(--border-card)', marginBottom: '8px' }}>
-                {['Method Route', 'P95', 'P99ERR', '% Calls'].map((header) => (
-                  <span key={header} style={{ fontSize: '10px', textTransform: 'uppercase', color: 'var(--text-label)', letterSpacing: '0.06em' }}>
-                    {header}
-                  </span>
-                ))}
-              </div>
-
-              {slowEndpointRows.map((item: any, index: number) => (
-                <div
-                  key={`${item.route}-${index}`}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 70px 80px 60px',
-                    gap: '8px',
-                    padding: '10px 0',
-                    borderBottom: index === slowEndpointRows.length - 1 ? 'none' : '1px solid var(--border-card)',
-                  }}
-                >
-                  <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                    {item.method ? `${item.method} ${item.route}` : item.route}
-                  </span>
-                  <span style={{ fontSize: '12px', color: 'var(--text-primary)' }}>{item.p95}ms</span>
-                  <span style={{ fontSize: '12px', color: Number(item.p99 || 0) > 1000 || Number(item.errorRate || 0) > 1 ? '#ef4444' : 'var(--text-primary)' }}>
-                    {Number(item.p99 || 0) > 1000 || Number(item.errorRate || 0) > 1 ? 'high' : 'ok'}
-                  </span>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                    {item.calls ? `${Math.round((Number(item.calls) / Math.max(Number(slowEndpointRows[0]?.calls || 1), 1)) * 100)}%` : '0%'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            borderRadius: '12px',
-            border: '1px solid var(--border-card)',
-            background: 'var(--bg-card)',
-            padding: '22px 24px',
-            boxSizing: 'border-box',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'rgba(99,102,241,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxSizing: 'border-box',
-              }}
-            >
-              <BarChart3 style={{ width: '16px', height: '16px', color: '#6366f1' }} />
-            </div>
-            <div>
-              <p style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', margin: '0 0 2px' }}>
-                Journey Performance Rollup
-              </p>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
-                Aggregated health across commerce flows
-              </p>
-            </div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '16px' }}>
-            {journeys.map((journey) => (
-              <div key={journey.name} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
-                  <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)' }}>{journey.name}</span>
-                </div>
-                <span style={{ fontSize: '20px', fontWeight: 500, color: 'var(--text-primary)' }}>{journey.value}</span>
-              </div>
-            ))}
-          </div>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Per-store health table — the core "which API is working / which isn't" */}
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <p style={{ fontSize: '13px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-primary)', margin: '0 0 2px' }}>
+              Store API Health
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>Each connected store&apos;s API, probed with its stored token</p>
+          </div>
+        </div>
+
+        {connectors.length === 0 ? (
+          <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+            No connected stores to monitor. Connect a store on the Integrations page.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.4fr 1fr 110px 90px 90px 90px 1fr',
+                gap: '8px',
+                paddingBottom: '10px',
+                borderBottom: '1px solid var(--border-card)',
+                marginBottom: '4px',
+                minWidth: '760px',
+              }}
+            >
+              {['Store', 'Status', 'HTTP', 'Latency', 'P95', 'Uptime', 'Last Check'].map((h) => (
+                <span key={h} style={{ fontSize: '10px', textTransform: 'uppercase', color: 'var(--text-label)', letterSpacing: '0.06em' }}>
+                  {h}
+                </span>
+              ))}
+            </div>
+
+            {connectors.map((c, index) => {
+              const meta = STATE_META[c.state] || STATE_META.unknown;
+              const StateIcon = meta.Icon;
+              return (
+                <div
+                  key={c.connectorInstanceId}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1.4fr 1fr 110px 90px 90px 90px 1fr',
+                    gap: '8px',
+                    padding: '12px 0',
+                    alignItems: 'center',
+                    borderBottom: index === connectors.length - 1 ? 'none' : '1px solid var(--border-card)',
+                    minWidth: '760px',
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.label}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{PROVIDER_LABEL[c.provider] || c.provider}</span>
+                  </div>
+
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '4px 10px',
+                      borderRadius: '999px',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      background: meta.bg,
+                      color: meta.color,
+                      width: 'fit-content',
+                    }}
+                  >
+                    <StateIcon style={{ width: '13px', height: '13px', flexShrink: 0 }} />
+                    {meta.label}
+                  </span>
+
+                  <span style={{ fontSize: '12px', fontFamily: 'monospace', color: c.statusCode && c.statusCode >= 200 && c.statusCode < 300 ? 'var(--text-primary)' : '#ef4444' }}>
+                    {c.statusCode === 0 ? '—' : c.statusCode ?? '—'}
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-primary)' }}>{c.latencyMs != null ? `${c.latencyMs}ms` : '—'}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-primary)' }}>{c.p95 != null && c.p95 > 0 ? `${c.p95}ms` : '—'}</span>
+                  <span style={{ fontSize: '12px', color: c.uptime != null && c.uptime < 99 ? '#f59e0b' : 'var(--text-primary)' }}>
+                    {c.uptime != null ? `${c.uptime}%` : '—'}
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.lastError || ''}>
+                    {relativeTime(c.lastCheckedAt)}
+                    {c.lastError ? ` · ${c.lastError}` : ''}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+      </>
+      )}
+
+      {view === 'gateways' && (
+        /* Payment gateway health + configuration — probes each configured gateway's
+           API (Razorpay / Stripe / PayU) for live status and scheduled maintenance. */
+        <PaymentGatewayPanel projectId={String(projectId)} />
+      )}
     </div>
   );
 }

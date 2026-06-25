@@ -2773,9 +2773,10 @@ export default function CustomersPage() {
                   icon: Calendar,
                   label: "Customer Since",
                   value: formatDateLabel(
-                    selectedCustomer?.lastSeenAt ||
-                      selectedCustomer?.createdAt ||
-                      selectedCustomer?.metadata?.lastSeenAt,
+                    selectedCustomer?.createdAt ||
+                      selectedCustomer?.firstSeenAt ||
+                      selectedCustomer?.metadata?.dateCreated ||
+                      selectedCustomer?.metadata?.createdAt,
                   ),
                 },
                 {

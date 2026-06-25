@@ -11,6 +11,8 @@ import { AdobeCommerceCustomerSyncService } from '../services/adobe-commerce-cus
 import { BigCommerceOrderSyncService } from '../services/bigcommerce-order-sync.service';
 import { BigCommerceCustomerSyncService } from '../services/bigcommerce-customer-sync.service';
 import { ConnectorResyncService } from '../services/connector-resync.service';
+import { registerShopifyPixel } from '../../../../packages/connectors/src/commerce/shopify-pixel.service';
+import { StoreHealthService } from '../services/store-health.service';
 
 export class IntegrationController {
 
@@ -255,6 +257,75 @@ export class IntegrationController {
             }
         }
 
+        // ─── Shopify Web Pixel registration ──────────────────────────────────
+        // Best-effort: register a Web Pixel on the connected store so checkout
+        // events flow into POST /api/track. A failure here must NEVER fail the
+        // overall connector activation, so everything is wrapped in try/catch.
+        if (type === 'shopify') {
+            try {
+                // Mirror the sync-service credential resolution, but using the raw
+                // request values already in scope (config/credentials).
+                const rawDomain = String((config || {}).shopDomain || '').trim();
+                const shopDomain = rawDomain
+                    .replace(/^https?:\/\//i, '')
+                    .split('/')[0]
+                    .replace(/\/+$/, '')
+                    .trim();
+                const creds = (credentials || {}) as Record<string, any>;
+                const accessToken = String(
+                    creds.adminApiAccessToken ||
+                    creds.accessToken ||
+                    creds.access_token ||
+                    creds.token ||
+                    creds.apiKey ||
+                    creds.password ||
+                    ''
+                ).trim();
+
+                const base = process.env.PUBLIC_BASE_URL || process.env.TRACKER_PUBLIC_BASE_URL;
+
+                if (!base) {
+                    console.warn('[ShopifyPixel] PUBLIC_BASE_URL/TRACKER_PUBLIC_BASE_URL not set — skipping pixel registration.');
+                } else if (!shopDomain || !accessToken) {
+                    console.warn('[ShopifyPixel] Missing shopDomain or accessToken — skipping pixel registration.');
+                } else {
+                    const ingestUrl = `${base.replace(/\/+$/, '')}/api/track`;
+                    const result = await registerShopifyPixel(shopDomain, accessToken, siteId, id, ingestUrl);
+
+                    if (result.success) {
+                        await prisma.connectorInstance.update({
+                            where: { id },
+                            data: {
+                                pixelConfig: {
+                                    pixel_id: result.pixelId,
+                                    status: 'active',
+                                    flow: 'programmatic',
+                                    registered_at: new Date().toISOString(),
+                                    error: null
+                                }
+                            }
+                        });
+                    } else {
+                        await prisma.connectorInstance.update({
+                            where: { id },
+                            data: {
+                                pixelConfig: {
+                                    pixel_id: null,
+                                    status: 'failed',
+                                    flow: 'programmatic',
+                                    registered_at: null,
+                                    error: result.error
+                                }
+                            }
+                        });
+                    }
+                }
+            } catch (pixelErr: any) {
+                // Swallow — pixel registration must not break activation.
+                console.error('[ShopifyPixel] registration step errored (non-fatal):', pixelErr?.message || pixelErr);
+            }
+        }
+
         const refreshedInstance = await prisma.connectorInstance.findUnique({
             where: { id }
         });
@@ -267,6 +338,113 @@ export class IntegrationController {
         };
 
         return reply.code(201).send(ResponseUtil.success(mappedInstance, {}, req.id as string));
+    }
+
+    /**
+     * Rotates the stored credentials for an existing connector (e.g. after the
+     * store's access token expires/is revoked). Validates the new token against
+     * the live provider before persisting, then clears the failed-auth state.
+     *
+     * PATCH /integrations/:connectorInstanceId/credentials
+     * Body: { credentials: {...}, config?: {...} }
+     */
+    public static async updateCredentials(req: FastifyRequest, reply: FastifyReply) {
+        const { tenantId, siteId, connectorInstanceId } = req.params as any;
+        const { config, credentials } = (req.body as any) || {};
+
+        if (!credentials || typeof credentials !== 'object') {
+            return reply.code(400).send(ResponseUtil.error('credentials are required', 'MISSING_CREDENTIALS', null, req.id as string));
+        }
+
+        const instance = await prisma.connectorInstance.findFirst({
+            where: { id: connectorInstanceId, siteId, tenantId }
+        });
+        if (!instance) {
+            return reply.code(404).send(ResponseUtil.error('Connector not found', 'CONNECTOR_NOT_FOUND', null, req.id as string));
+        }
+
+        const connector = ConnectorRegistry.get(instance.providerId);
+        if (!connector) {
+            return reply.code(404).send(ResponseUtil.error(`Connector type '${instance.providerId}' is not registered.`, 'CONNECTOR_NOT_FOUND', null, req.id as string));
+        }
+
+        // Merge incoming config over the stored syncConfig, so a domain/store can
+        // be corrected alongside the token (or omitted to keep current config).
+        const mergedConfig = { ...((instance.syncConfig as any) || {}), ...(config || {}) };
+
+        // Validate the new token against the live provider BEFORE persisting —
+        // same gate the create flow uses. Reject if it doesn't authenticate.
+        try {
+            const result: any = await connector.validateCredentials(mergedConfig, credentials);
+            if (result && result.success === false) {
+                return reply.code(400).send(ResponseUtil.error(
+                    result.message || 'Credential validation failed',
+                    'CREDENTIAL_VALIDATION_FAILED',
+                    { reAuthRequired: result.reAuthRequired, missingScopes: result.missingScopes },
+                    req.id as string
+                ));
+            }
+        } catch (err: any) {
+            return reply.code(400).send(ResponseUtil.error(err?.message || 'Credential validation failed', 'CREDENTIAL_VALIDATION_FAILED', null, req.id as string));
+        }
+
+        // Rotate the active credential (or create one if somehow missing).
+        const existing = await prisma.connectorCredential.findFirst({
+            where: { connectorInstanceId },
+            orderBy: { createdAt: 'desc' }
+        });
+        const encryptedSecret = encryptSecret(credentials);
+        if (existing) {
+            await prisma.connectorCredential.update({
+                where: { id: existing.id },
+                data: { encryptedSecret, lastRotatedAt: new Date(), isActive: true }
+            });
+        } else {
+            await prisma.connectorCredential.create({
+                data: {
+                    id: crypto.randomUUID(),
+                    connectorInstanceId,
+                    tenantId,
+                    authType: 'API_KEY',
+                    encryptedSecret,
+                    lastRotatedAt: new Date(),
+                    vaultKey: `vault/${tenantId}/${connectorInstanceId}/secret`
+                }
+            });
+        }
+
+        // Token just validated — clear the failed-auth state.
+        const updated = await prisma.connectorInstance.update({
+            where: { id: connectorInstanceId },
+            data: {
+                ...(config ? { syncConfig: mergedConfig } : {}),
+                status: 'ACTIVE',
+                healthStatus: 'HEALTHY',
+                healthScore: 100
+            }
+        });
+
+        await prisma.connectorLifecycleEvent.create({
+            data: {
+                id: crypto.randomUUID(),
+                tenantId,
+                projectId: siteId,
+                connectorInstanceId,
+                eventType: 'CREDENTIALS_ROTATED',
+                severity: 'INFO',
+                payload: { providerId: instance.providerId, configUpdated: Boolean(config) },
+                triggeredBy: 'USER'
+            }
+        });
+
+        // Refresh the health-check table so observability/backend + system-health
+        // reflect the recovery immediately. Fire-and-forget — must not block the
+        // response or fail the rotation.
+        StoreHealthService.checkProject(String(siteId)).catch((err) => {
+            console.warn('[Integration] post-reauth health probe failed', err?.message || err);
+        });
+
+        return reply.send(ResponseUtil.success(updated, {}, req.id as string));
     }
 
     /**

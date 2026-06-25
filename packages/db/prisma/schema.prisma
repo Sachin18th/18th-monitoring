@@ -387,6 +387,7 @@ model ConnectorInstance {
   lastError      Json?     @map("last_error")
   healthScore    Int?      @default(100) @map("health_score")
   recordsByType  Json      @default("{}") @map("records_by_type")
+  pixelConfig    Json?     @default("{}") @map("pixel_config")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @default(now()) @map("updated_at")
   disconnectedAt DateTime? @map("disconnected_at")
@@ -418,6 +419,7 @@ model ConnectorInstance {
   storefrontSessions StorefrontSession[]
   storefrontEvents   StorefrontEvent[]
   storefrontErrors   StorefrontError[]
+  apiHealthChecks    ConnectorHealthCheck[]
 
   @@index([siteId], map: "idx_connector_site")
   @@index([tenantId], map: "idx_connector_tenant")
@@ -656,6 +658,34 @@ model ConnectorHealthSnapshot {
   @@index([connectorInstanceId, timestamp], map: "idx_health_shot_connector_ts")
   @@index([projectId, timestamp], map: "idx_health_shot_project_ts")
   @@map("connector_health_snapshots")
+}
+
+// One row per store-API health probe (Backend API Observability). The
+// ScheduledMonitor pings each connected store's cheapest authenticated
+// endpoint and records reachability + auth validity + latency here, so the
+// dashboard can show per-store up/down state, uptime %, and p95 latency over
+// time. `state` is the interpreted result: healthy | auth_failed |
+// unreachable | degraded. `statusCode` is the raw HTTP status (0 = no
+// response: timeout / DNS / refused).
+model ConnectorHealthCheck {
+  id                  Int      @id @default(autoincrement())
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  providerId          String   @map("provider_id") @db.VarChar(255)
+  ok                  Boolean
+  state               String   @db.VarChar(32)
+  statusCode          Int      @map("status_code")
+  latencyMs           Int      @map("latency_ms")
+  endpoint            String?  @db.VarChar(512)
+  error               String?  @db.Text
+  checkedAt           DateTime @default(now()) @map("checked_at")
+
+  connectorInstance ConnectorInstance @relation(fields: [connectorInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, checkedAt], map: "idx_apihealth_site_ts")
+  @@index([connectorInstanceId, checkedAt], map: "idx_apihealth_connector_ts")
+  @@map("connector_health_checks")
 }
 
 model PerformanceMetric {

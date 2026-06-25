@@ -693,6 +693,17 @@ export class DashboardService {
         return PaymentGatewayService.upsertGatewayConfig(siteId, tenantId, input);
     }
 
+    static async getPaymentGatewayStatuses(filters: MetricFilterDto) {
+        const { siteId } = filters;
+        const tenantId = (filters as any).tenantId;
+
+        if (!siteId || !tenantId) {
+            return [];
+        }
+
+        return PaymentGatewayService.syncConfiguredGateways(siteId, tenantId);
+    }
+
     static async getUserTrends(filters: MetricFilterDto) {
         const { siteId } = filters;
         

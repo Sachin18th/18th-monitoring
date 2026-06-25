@@ -210,7 +210,7 @@ export class BigCommerceCustomerSyncService {
           equals: customerId
         }
       },
-      select: { id: true }
+      select: { id: true, firstSeenAt: true }
     });
 
     const emailHash = hashEmail(email);
@@ -246,6 +246,9 @@ export class BigCommerceCustomerSyncService {
         addresses: rawCustomer?.addresses || [],
         connectorInstanceId: instance.id,
         connectorLabel: instance.label,
+        // Actual customer registration date in BigCommerce — distinct from
+        // lastSyncedAt (the sync/resync time). Used as "Customer Since".
+        dateCreated: rawCustomer?.date_created || rawCustomer?.created_at || null,
         lastSyncedAt: new Date().toISOString()
       }) as Prisma.InputJsonValue
     };
@@ -254,6 +257,9 @@ export class BigCommerceCustomerSyncService {
       await prisma.customerProfile.update({
         where: { id: existing.id },
         data: {
+          // Re-assert the real registration date so records synced before this
+          // fix (whose firstSeenAt held a sync time) get corrected on resync.
+          firstSeenAt: new Date(rawCustomer?.date_created || rawCustomer?.created_at || existing.firstSeenAt),
           lastSeenAt: new Date(rawCustomer?.date_modified || rawCustomer?.updated_at || new Date()),
           totalLtv: rawCustomer?.store_credit_amount ? Number(rawCustomer.store_credit_amount) : undefined,
           emailHash: emailHash || undefined,

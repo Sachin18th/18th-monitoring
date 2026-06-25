@@ -2,6 +2,8 @@ import fs from 'fs';
 import crypto from 'crypto';
 import path from 'path';
 import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
+import { prisma, decryptSecret } from '@kpi-platform/db';
+import { deregisterShopifyPixel } from '../../../../packages/connectors/src/commerce/shopify-pixel.service';
 
 export interface IntegrationInstance {
     id: string;
@@ -106,10 +108,100 @@ export class IntegrationConfigService {
     }
 
     public async deleteInstance(siteId: string, instanceId: string) {
+        // ─── Shopify Web Pixel cleanup + DB soft delete (best-effort) ─────────
+        // Runs BEFORE the in-memory deletion below. Must never block disconnect:
+        // any failure is recorded on pixel_config and swallowed.
+        try {
+            const dbInstance = await prisma.connectorInstance.findUnique({
+                where: { id: instanceId },
+                select: {
+                    id: true,
+                    providerId: true,
+                    syncConfig: true,
+                    pixelConfig: true,
+                    credentials: {
+                        orderBy: { lastRotatedAt: 'desc' },
+                        take: 1,
+                        select: { encryptedSecret: true }
+                    }
+                }
+            });
+
+            if (dbInstance) {
+                const pixelConfig = (dbInstance.pixelConfig || {}) as Record<string, any>;
+
+                if (pixelConfig.status === 'active' && pixelConfig.pixel_id) {
+                    const config = (dbInstance.syncConfig || {}) as Record<string, any>;
+                    const shopDomain = String(config.shopDomain || '')
+                        .trim()
+                        .replace(/^https?:\/\//i, '')
+                        .split('/')[0]
+                        .replace(/\/+$/, '')
+                        .trim();
+                    const creds = this.resolveCredentials(dbInstance.credentials?.[0]?.encryptedSecret);
+                    const accessToken = String(creds.adminApiAccessToken || '').trim();
+
+                    const result = await deregisterShopifyPixel(shopDomain, accessToken, String(pixelConfig.pixel_id));
+
+                    if (result.success) {
+                        await prisma.connectorInstance.update({
+                            where: { id: instanceId },
+                            data: {
+                                pixelConfig: {
+                                    ...pixelConfig,
+                                    status: 'removed',
+                                    removed_at: new Date().toISOString(),
+                                    error: null
+                                }
+                            }
+                        });
+                    } else {
+                        await prisma.connectorInstance.update({
+                            where: { id: instanceId },
+                            data: {
+                                pixelConfig: {
+                                    ...pixelConfig,
+                                    status: 'removal_failed',
+                                    error: result.error
+                                }
+                            }
+                        });
+                    }
+                }
+                // If pixel_config is empty or status is not "active", skip cleanup silently.
+
+                // DB soft delete (schema supports disconnected_at).
+                await prisma.connectorInstance.update({
+                    where: { id: instanceId },
+                    data: { disconnectedAt: new Date() }
+                });
+            }
+        } catch (err: any) {
+            console.error('[ShopifyPixel] deleteInstance pixel cleanup errored (non-fatal):', err?.message || err);
+        }
+
         const instances = GlobalMemoryStore.projectIntegrations.get(siteId) || [];
         const filtered = instances.filter(i => i.id !== instanceId);
         GlobalMemoryStore.projectIntegrations.set(siteId, filtered);
         return { success: true };
+    }
+
+    /**
+     * Decrypt a connector credential envelope and normalize the Shopify admin
+     * token field. Mirrors the sync services' credential resolution.
+     */
+    private resolveCredentials(serialized: string | null | undefined): Record<string, any> {
+        if (!serialized) return {};
+        try {
+            const parsed = decryptSecret(serialized);
+            if (!parsed || typeof parsed !== 'object') return {};
+            if (parsed.adminApiAccessToken) return parsed;
+            const altToken = parsed.accessToken || parsed.access_token || parsed.token || parsed.apiKey || parsed.password;
+            if (altToken) return { ...parsed, adminApiAccessToken: String(altToken) };
+            return parsed;
+        } catch {
+            return {};
+        }
     }
 
     public async testConnection(siteId: string, instanceId: string, env: 'prod' | 'staging') {

@@ -8,6 +8,7 @@ import { rateLimiter } from '../middlewares/rate-limiter.middleware';
 import { ResponseUtil } from '../utils/response';
 import { StorefrontTrackingService } from '../services/storefront-tracking.service';
 import { StorefrontScriptInstallService } from '../services/storefront-script-install.service';
+import { prisma } from '@kpi-platform/db';
 
 /**
  * Storefront session/event tracking (mounted at /api/track):
@@ -68,6 +69,46 @@ function installHttpCode(status: string): number {
   return 200; // installed | already_installed | manual_required
 }
 
+/**
+ * Web Pixel activation detection. When a `source: "web_pixel"` event arrives, a
+ * pixel is provably live on the store — so if its connector's pixel_config was
+ * never confirmed (empty / failed / pending_manual), flip it to active via the
+ * "manual" flow. Runs detached (after the 200 is sent) so it never delays the
+ * public ingest response. Best-effort: swallows all errors.
+ */
+async function detectPixelActivation(connectorInstanceId: string | null, body: any): Promise<void> {
+  try {
+    if (!connectorInstanceId || body?.source !== 'web_pixel') return;
+
+    const instance = await prisma.connectorInstance.findUnique({
+      where: { id: String(connectorInstanceId) },
+      select: { id: true, pixelConfig: true },
+    });
+    if (!instance) return;
+
+    const pixelConfig = (instance.pixelConfig || {}) as Record<string, any>;
+    const isEmpty = Object.keys(pixelConfig).length === 0;
+    const status = pixelConfig.status;
+
+    if (status === 'failed' || status === 'pending_manual' || isEmpty) {
+      await prisma.connectorInstance.update({
+        where: { id: instance.id },
+        data: {
+          pixelConfig: {
+            ...pixelConfig,
+            status: 'active',
+            flow: 'manual',
+            first_event_at: new Date().toISOString(),
+            first_event_type: body?.type || body?.event_type || null,
+          },
+        },
+      });
+    }
+  } catch (err) {
+    console.error('[TRACK] pixel activation detection failed', err);
+  }
+}
+
 export const trackRoutes = async (fastify: FastifyInstance) => {
   // ── Storefront capture script (CDN-servable) ──────────────────────────────
   let cachedScript: string | null = null;
@@ -115,6 +156,14 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
       types,
       ip,
     });
+
+    // Pixel activation detection: detached so it runs AFTER the 200 response is
+    // flushed and never delays the public ingest path.
+    if (body.source === 'web_pixel') {
+      setImmediate(() => {
+        void detectPixelActivation(connectorInstanceId ? String(connectorInstanceId) : null, body);
+      });
+    }
 
     try {
       const result = await StorefrontTrackingService.ingestBatch({

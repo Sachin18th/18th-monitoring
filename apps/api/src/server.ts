@@ -1,4 +1,4 @@
-
+//apps/api/src/server.ts
 import fastify from 'fastify';
 import cors from '@fastify/cors';
 import { env } from './config/env';
@@ -9,6 +9,7 @@ import { ConfigResolver } from '../../../packages/config/src/resolver';
 import { KafkaStreamConsumer } from '../../../services/processor/src/consumer/kafka-consumer';
 import { TOPICS } from './config/topics';
 import { dashboardRoutes } from './routes/dashboard';
+import { storeHealthRoutes } from './routes/store-health';
 import { login, getMe, getProjects } from './controllers/auth.controller';
 import { requestOtp, verifyOtp } from './controllers/otp.controller';
 import { createProject, updateProject, CreateProjectSchema } from './controllers/project.controller';
@@ -166,9 +167,21 @@ export const bootstrapApi = async () => {
     });
 
     // Compatibility Alias (to be deprecated)
-    await server.register(dashboardRoutes, { 
+    await server.register(dashboardRoutes, {
         prefix: '/api/v1/dashboard',
-        preHandler: [tenantAuthHandler, tenantIsolationGuard, viewOnlyGuard] 
+        preHandler: [tenantAuthHandler, tenantIsolationGuard, viewOnlyGuard]
+    });
+
+    // Backend API Observability — store-API health probes. Mounted at the same
+    // two prefixes as the dashboard routes so the dashboard's apiFetch resolves
+    // either the scoped or the /dashboard form.
+    await server.register(storeHealthRoutes, {
+        prefix: '/api/v1/tenants/:tenantId/projects/:siteId',
+        preHandler: [tenantAuthHandler, tenantIsolationGuard, viewOnlyGuard]
+    });
+    await server.register(storeHealthRoutes, {
+        prefix: '/api/v1/dashboard',
+        preHandler: [tenantAuthHandler, tenantIsolationGuard, viewOnlyGuard]
     });
 
     // Scoped Integration Routes

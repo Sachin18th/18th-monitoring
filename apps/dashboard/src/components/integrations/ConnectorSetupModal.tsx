@@ -34,9 +34,11 @@ const sectionStyle: React.CSSProperties = {
 };
 
 export const ConnectorSetupModal: React.FC = () => {
-  const { connectorSetup, connectorCatalog, closeConnectorSetup, testConnectorConnection, saveConnectorConnection, beginConnectorSetup, isSetupModalOpen, openCsvUpload } = useConnectorPlatform();
+  const { connectorSetup, connectorCatalog, closeConnectorSetup, testConnectorConnection, saveConnectorConnection, reauthConnector, beginConnectorSetup, isSetupModalOpen, openCsvUpload } = useConnectorPlatform();
   const platform = connectorSetup.platform;
   const config = platform ? connectorCatalog[platform] : null;
+  const reauthConnectorId = connectorSetup.reauthConnectorId;
+  const isReauth = Boolean(reauthConnectorId);
 
   const [values, setValues] = useState<Record<string, string>>({});
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
@@ -192,16 +194,23 @@ export const ConnectorSetupModal: React.FC = () => {
     setIsSaving(true);
     setSaveResult(null);
     try {
-      const store = await saveConnectorConnection(platform, values);
-      setSyncStage('syncing');
-      setSyncProgress(store.syncProgress);
-      const message = 'Integration details saved successfully. Initial sync has started.';
-      setSaveResult({ ok: true, message });
-      success(message, `${config.name} saved`);
+      if (isReauth && reauthConnectorId) {
+        await reauthConnector(reauthConnectorId, platform, values);
+        const message = 'Access token updated. The connector is re-authenticated.';
+        setSaveResult({ ok: true, message });
+        success(message, `${config.name} re-authenticated`);
+      } else {
+        const store = await saveConnectorConnection(platform, values);
+        setSyncStage('syncing');
+        setSyncProgress(store.syncProgress);
+        const message = 'Integration details saved successfully. Initial sync has started.';
+        setSaveResult({ ok: true, message });
+        success(message, `${config.name} saved`);
+      }
     } catch (error: any) {
       const message = error?.message || 'Save failed.';
       setSaveResult({ ok: false, error: message });
-      showError(message, `${config.name} save failed`);
+      showError(message, isReauth ? `${config.name} re-auth failed` : `${config.name} save failed`);
     } finally {
       setIsSaving(false);
     }
@@ -229,7 +238,7 @@ export const ConnectorSetupModal: React.FC = () => {
             </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-primary)' }}>{config.name}</div>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>Connect your store</div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>{isReauth ? 'Re-authenticate · update the expired access token' : 'Connect your store'}</div>
             </div>
           </div>
           <button type="button" onClick={closeConnectorSetup} style={{ border: '1px solid var(--border-card)', background: 'transparent', color: 'var(--text-primary)', borderRadius: '8px', padding: '8px 12px', cursor: 'pointer' }}>
@@ -324,7 +333,7 @@ export const ConnectorSetupModal: React.FC = () => {
               disabled={isSaving || !(testResult && testResult.ok)}
               style={{ borderRadius: '10px', border: '1px solid #6366f1', background: '#4f46e5', color: 'white', padding: '10px 16px', cursor: isSaving || !(testResult && testResult.ok) ? 'not-allowed' : 'pointer', opacity: isSaving || !(testResult && testResult.ok) ? 0.6 : 1 }}
             >
-              {isSaving ? 'Saving...' : 'Save & Connect'}
+              {isSaving ? 'Saving...' : isReauth ? 'Update Token' : 'Save & Connect'}
             </button>
           </div>
 

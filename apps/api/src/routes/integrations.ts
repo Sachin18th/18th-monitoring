@@ -26,6 +26,9 @@ export const integrationRoutes = async (fastify: FastifyInstance) => {
     // Instance Lifecycle Actions
     fastify.post('/:id/sync', IntegrationController.sync);
 
+    // Credential rotation / re-authenticate (update an expired store token)
+    fastify.patch('/:connectorInstanceId/credentials', IntegrationController.updateCredentials);
+
     // Manual Re-Sync Actions
     fastify.post('/:connectorInstanceId/resync', IntegrationController.resync);
     fastify.get('/:connectorInstanceId/resync/status', IntegrationController.resyncStatus);
