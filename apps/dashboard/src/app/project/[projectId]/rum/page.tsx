@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { DeviceDistribution } from '@/components/rum/DeviceDistribution';
-import { Globe, Users, AlertCircle, RefreshCw, Smartphone, Image as ImageIcon, MousePointerClick, Move, Server, CheckCircle2 } from 'lucide-react';
+import RumMetricsPanel from '@/components/RumMetricsPanel';
+import { Globe, AlertCircle, Smartphone, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PageRestricted } from '@/components/PageRestricted';
@@ -21,43 +22,6 @@ const sectionSpacingStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: '24px',
-  overflow: 'visible',
-};
-
-const actionButtonStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  padding: '8px 16px',
-  borderRadius: '8px',
-  border: '1px solid var(--border-input)',
-  background: 'var(--bg-input)',
-  color: 'var(--text-primary)',
-  fontSize: '14px',
-  fontWeight: 500,
-  cursor: 'pointer',
-  flexShrink: 0,
-};
-
-const metricGridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-  gap: '24px',
-  marginBottom: '24px',
-  width: '100%',
-  overflow: 'visible',
-};
-
-const metricCardStyle: React.CSSProperties = {
-  borderRadius: '12px',
-  border: '1px solid var(--border-card)',
-  background: 'var(--bg-card)',
-  padding: '24px',
-  paddingTop: '24px',
-  display: 'flex',
-  flexDirection: 'column',
-  justifyContent: 'space-between',
-  minHeight: '140px',
   overflow: 'visible',
 };
 
@@ -151,22 +115,6 @@ const severityBadge = (severity: string): { bg: string; color: string } => {
 
 const formatErrorType = (type: string) => String(type || '').replace(/_/g, ' ');
 
-// Compact "time ago" used to show how fresh a metric sample is, so cached values
-// read as dated rather than static/stale.
-const formatRelativeTime = (iso?: string | null): string => {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '';
-  const diffMs = Date.now() - then;
-  if (diffMs < 60_000) return 'just now';
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-};
-
 // Category buckets — mirror the backend grouping (storefront-error.service.ts).
 // "js" spans uncaught exceptions and promise rejections.
 type ErrorCategoryKey = 'all' | 'js' | 'network' | 'resource' | 'checkout' | 'console';
@@ -185,18 +133,6 @@ const categoryOfErrorType = (errorType: string): ErrorCategoryKey => {
   return match ? match.key : 'console';
 };
 
-type PagespeedMetricKey = 'lcp' | 'fid' | 'cls' | 'ttfb';
-type DeviceType = 'mobile' | 'desktop';
-type MetricStatus = 'good' | 'needs-improvement' | 'poor';
-
-type PagespeedMetricEntry = {
-  value?: number;
-  unit?: string;
-  status?: MetricStatus;
-  timestamp?: string | null;
-};
-
-type PagespeedLatestPayload = Partial<Record<DeviceType, Partial<Record<PagespeedMetricKey, PagespeedMetricEntry>>>>;
 
 const normalizeLookupValue = (value?: string | null) => {
   if (typeof value !== 'string') return '';
@@ -248,42 +184,6 @@ const rowMatchesActiveConnector = (row: any, connectorInstanceId: string | null)
   return connectorCandidates.includes(normalizeLookupValue(connectorInstanceId));
 };
 
-const buildPagespeedPayloadForConnector = (
-  payload: PagespeedLatestPayload | null,
-  connectorInstanceId: string | null,
-) => {
-  if (!payload || !connectorInstanceId) return payload;
-
-  const scopedPayload: PagespeedLatestPayload = {};
-  const activeConnectorKey = normalizeLookupValue(connectorInstanceId);
-
-  (['mobile', 'desktop'] as DeviceType[]).forEach((deviceType) => {
-    const devicePayload = payload[deviceType] || {};
-    const scopedDevicePayload: Partial<Record<PagespeedMetricKey, PagespeedMetricEntry>> = {};
-
-    (['lcp', 'fid', 'cls', 'ttfb'] as PagespeedMetricKey[]).forEach((metricKey) => {
-      const entry = devicePayload[metricKey];
-      if (!entry) return;
-
-      const entryConnector = normalizeLookupValue(
-        (entry as any)?.connectorInstanceId ||
-          (entry as any)?.connectorId ||
-          (entry as any)?.metadata?.connectorInstanceId ||
-          (entry as any)?.metadata?.connectorId ||
-          (entry as any)?.metadata?.connectorLabel,
-      );
-
-      if (!entryConnector || entryConnector === activeConnectorKey) {
-        scopedDevicePayload[metricKey] = entry;
-      }
-    });
-
-    scopedPayload[deviceType] = scopedDevicePayload;
-  });
-
-  return scopedPayload;
-};
-
 export default function RumDashboardPage() {
   const { projectId } = useParams();
   const { apiFetch, token, user } = useAuth();
@@ -292,10 +192,7 @@ export default function RumDashboardPage() {
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [device, setDevice] = useState<DeviceType>('mobile');
-  const [refreshing, setRefreshing] = useState(false);
 
-  const [pagespeedMetrics, setPagespeedMetrics] = useState<PagespeedLatestPayload | null>(null);
   const [devices, setDevices] = useState<any[]>([]);
   const [storefrontErrors, setStorefrontErrors] = useState<StorefrontErrorRow[]>([]);
   const [errorsTotal, setErrorsTotal] = useState(0);
@@ -326,17 +223,6 @@ export default function RumDashboardPage() {
       ]);
 
       console.log('[RUM] Performance summary response', { projectId, perfSummary });
-
-      if (tenantId) {
-        try {
-          const latest = await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/latest`);
-          const payload = latest?.data ? latest.data : latest;
-          setPagespeedMetrics(buildPagespeedPayloadForConnector(payload || null, connectorInstanceId));
-        } catch (psErr) {
-          console.warn('[RUM] Failed to load latest PageSpeed metrics', psErr);
-          setPagespeedMetrics(null);
-        }
-      }
 
       const scopedDevices = Array.isArray(deviceData) ? deviceData.filter((row) => rowMatchesActiveConnector(row, connectorInstanceId)) : [];
 
@@ -370,56 +256,11 @@ export default function RumDashboardPage() {
     if (!token || !projectId) return;
     setLoading(true);
     setError(null);
-    setPagespeedMetrics(null);
     setDevices([]);
     setStorefrontErrors([]);
     setErrorsTotal(0);
     setAnalytics(null);
   }, [connectorSelectionTick, projectId, token]);
-
-  const webVitals = useMemo(() => {
-    const byDevice = (pagespeedMetrics?.[device] || {}) as Partial<Record<PagespeedMetricKey, PagespeedMetricEntry>>;
-    const row = (key: PagespeedMetricKey) => byDevice[key] || {};
-
-    return [
-      {
-        name: 'LCP',
-        Icon: ImageIcon,
-        value: row('lcp').value,
-        unit: row('lcp').unit || 'ms',
-        status: row('lcp').status,
-        timestamp: row('lcp').timestamp,
-        description: `Largest Contentful Paint (${device}).`,
-      },
-      {
-        name: 'FID',
-        Icon: MousePointerClick,
-        value: row('fid').value,
-        unit: row('fid').unit || 'ms',
-        status: row('fid').status,
-        timestamp: row('fid').timestamp,
-        description: `First Input Delay (${device}).`,
-      },
-      {
-        name: 'CLS',
-        Icon: Move,
-        value: row('cls').value,
-        unit: '',
-        status: row('cls').status,
-        timestamp: row('cls').timestamp,
-        description: `Cumulative Layout Shift (${device}).`,
-      },
-      {
-        name: 'TTFB',
-        Icon: Server,
-        value: row('ttfb').value,
-        unit: row('ttfb').unit || 'ms',
-        status: row('ttfb').status,
-        timestamp: row('ttfb').timestamp,
-        description: `Time to First Byte (${device}).`,
-      },
-    ];
-  }, [device, pagespeedMetrics]);
 
   // Per-category counts for the filter pills (derived from the fetched rows so the
   // badge counts always match what the list shows).
@@ -436,27 +277,6 @@ export default function RumDashboardPage() {
     if (errorCategory === 'all') return storefrontErrors;
     return storefrontErrors.filter((err) => categoryOfErrorType(err.error_type) === errorCategory);
   }, [storefrontErrors, errorCategory]);
-
-  const handleRefresh = useCallback(async () => {
-    if (!token || !projectId || !tenantId) return;
-
-    setRefreshing(true);
-    setError(null);
-    try {
-      await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/sync`, {
-        method: 'POST',
-        body: connectorInstanceId ? JSON.stringify({ connectorInstanceId }) : undefined,
-        timeout: 70000,
-      });
-      // After sync completes (may take 15-30s), reload dashboard data
-      await loadData();
-    } catch (err: any) {
-      console.error('[RUM] pagespeed sync failed', err);
-      setError('PageSpeed calculation failed. API may be rate-limited. Try again in a moment.');
-    } finally {
-      setRefreshing(false);
-    }
-  }, [apiFetch, loadData, projectId, tenantId, token]);
 
   useEffect(() => {
     loadData();
@@ -494,26 +314,6 @@ export default function RumDashboardPage() {
             Real-time user experience monitoring for {projectId as string}
           </p>
         </div>
-        
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-          {/* <div style={actionButtonStyle}>
-            <Users style={{ width: '16px', height: '16px', color: '#818cf8', flexShrink: 0 }} />
-            <span>{analytics?.activeUsers || 0} Active Sessions</span>
-          </div> */}
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <div style={{ display: 'inline-flex', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-input)' }}>
-              <button type="button" onClick={() => setDevice('mobile')} style={{ padding: '8px 12px', background: device === 'mobile' ? 'var(--bg-input)' : 'transparent', border: 'none', cursor: 'pointer', fontWeight: device === 'mobile' ? 700 : 500 }}>Mobile</button>
-              <button type="button" onClick={() => setDevice('desktop')} style={{ padding: '8px 12px', background: device === 'desktop' ? 'var(--bg-input)' : 'transparent', border: 'none', cursor: 'pointer', fontWeight: device === 'desktop' ? 700 : 500 }}>Desktop</button>
-            </div>
-            <button
-              onClick={handleRefresh}
-              style={actionButtonStyle}
-            >
-              <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0 }} className={refreshing ? 'animate-spin' : ''} />
-              Refresh
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Error banner */}
@@ -527,59 +327,8 @@ export default function RumDashboardPage() {
         </div>
       )}
 
-      {/* Core Web Vitals Grid */}
-      <div style={metricGridStyle}>
-        {webVitals.map((vital) => {
-          const status = (vital.status || 'poor') as MetricStatus;
-          const badgeBg = status === 'good' ? 'var(--success-bg)' : status === 'needs-improvement' ? 'var(--warning-bg)' : 'var(--error-bg)';
-          const badgeColor = status === 'good' ? 'var(--success-text)' : status === 'needs-improvement' ? 'var(--warning-text)' : 'var(--error-text)';
-          const hasValue = typeof vital.value === 'number' && Number.isFinite(vital.value);
-          const displayValue = loading ? 'Loading...' : hasValue ? (vital.name === 'CLS' ? Number(vital.value).toFixed(2) : Math.round(Number(vital.value))) : '—';
-          const statusLabel = status === 'needs-improvement' ? 'NEEDS IMPROVEMENT' : status.toUpperCase();
-          const Icon = vital.Icon;
-          const freshness = hasValue ? formatRelativeTime(vital.timestamp) : '';
-          return (
-            <div key={vital.name} style={metricCardStyle}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-muted)', fontWeight: 500 }}>
-                  {vital.name}
-                </span>
-                <Icon style={{ width: '16px', height: '16px', flexShrink: 0, color: 'var(--text-label)' }} />
-              </div>
-
-              <div style={{ fontSize: '38px', fontWeight: 500, color: loading ? 'var(--text-muted)' : 'var(--text-primary)', lineHeight: 1, padding: '8px 0' }}>
-                {displayValue}
-                {vital.unit && !loading && hasValue ? <span style={{ fontSize: '14px', color: 'var(--text-muted)', marginLeft: '4px' }}>{vital.unit}</span> : null}
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', gap: '8px', minWidth: 0 }}>
-                <span
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: '999px',
-                    fontSize: '10px',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    whiteSpace: 'nowrap',
-                    flexShrink: 0,
-                    background: loading ? 'var(--warning-bg)' : badgeBg,
-                    color: loading ? 'var(--warning-text)' : badgeColor,
-                  }}
-                >
-                  {loading ? 'CALCULATING' : hasValue ? statusLabel : 'NO DATA'}
-                </span>
-                <span title={vital.description} style={{ fontSize: '11px', color: 'var(--text-label)', marginLeft: '8px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {loading
-                    ? `Computing ${device} PageSpeed metrics from your store (may take 15-30s)...`
-                    : hasValue
-                      ? (freshness ? `Updated ${freshness}` : vital.description)
-                      : `No ${device} metric cached yet. Click Refresh to compute.`}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {/* Core Web Vitals — real PageSpeed (PSI) data, shared with the Performance Lab page */}
+      <RumMetricsPanel />
 
       {/* Storefront Errors — full width */}
       <div style={{ ...sectionCardStyle, minHeight: '400px', display: 'flex', flexDirection: 'column' }}>

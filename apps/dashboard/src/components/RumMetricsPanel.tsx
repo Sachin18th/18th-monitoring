@@ -1,25 +1,17 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { Activity, Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-react';
+import { Clock3, Gauge, RefreshCw, Timer, Zap } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useConnectorFilter } from '../hooks/useConnectorFilter';
 
 type MetricKey = 'lcp' | 'fid' | 'tbt' | 'cls' | 'ttfb';
 type MetricStatus = 'good' | 'needs-improvement' | 'poor';
 
-type MetricRow = {
-  metricName?: MetricKey;
-  value?: number;
-  metricValue?: number;
-  timestamp?: string | null;
-  unit?: string;
-  status?: MetricStatus;
-};
-
 const metricMeta: Record<MetricKey, { label: string; unit: string; icon: React.ComponentType<any>; thresholds: [number, number]; formatter: (value: number) => string }> = {
-  lcp: { label: 'LCP', unit: 'ms', icon: Gauge, thresholds: [2500, 4000], formatter: (value) => `${Math.round(value)}` },
+  // LCP is stored in ms (thresholds stay in ms for status), but displayed in seconds.
+  lcp: { label: 'LCP', unit: 's', icon: Gauge, thresholds: [2500, 4000], formatter: (value) => (value / 1000).toFixed(2) },
   fid: { label: 'FID', unit: 'ms', icon: Zap, thresholds: [200, 500], formatter: (value) => `${Math.round(value)}` },
   tbt: { label: 'TBT', unit: 'ms', icon: Zap, thresholds: [200, 600], formatter: (value) => `${Math.round(value)}` },
   cls: { label: 'CLS', unit: '', icon: Timer, thresholds: [0.1, 0.25], formatter: (value) => value.toFixed(2) },
@@ -83,34 +75,21 @@ function VitalCard({
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
-        <span style={{ padding: '4px 10px', borderRadius: '999px', background: statusStyle.background, color: statusStyle.color, border: `1px solid ${statusStyle.border}`, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
-          {status.replace('-', ' ')}
-        </span>
+        {/* No measurement → neutral "No data" chip instead of a misleading green "GOOD". */}
+        {hasData ? (
+          <span style={{ padding: '4px 10px', borderRadius: '999px', background: statusStyle.background, color: statusStyle.color, border: `1px solid ${statusStyle.border}`, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+            {status.replace('-', ' ')}
+          </span>
+        ) : (
+          <span style={{ padding: '4px 10px', borderRadius: '999px', background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-input)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+            No data
+          </span>
+        )}
         <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
           {timestamp ? `Last fetched ${new Date(timestamp).toLocaleString()}` : 'Not fetched yet'}
         </span>
       </div>
     </article>
-  );
-}
-
-// Circular 0–100 performance score badge (green ≥ 90, orange ≥ 50, red < 50).
-function ScoreBadge({ score }: { score: number | null }) {
-  if (score === null || score === undefined || !Number.isFinite(score)) return null;
-  const color = score >= 90 ? '#22c55e' : score >= 50 ? '#f59e0b' : '#ef4444';
-  const deg = Math.max(0, Math.min(100, score)) * 3.6;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-      <div style={{ width: '64px', height: '64px', borderRadius: '999px', background: `conic-gradient(${color} ${deg}deg, var(--border-card) ${deg}deg)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: '50px', height: '50px', borderRadius: '999px', background: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ fontSize: '18px', fontWeight: 700, color }}>{Math.round(score)}</span>
-        </div>
-      </div>
-      <div>
-        <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 700 }}>Performance</p>
-        <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>Lighthouse score</p>
-      </div>
-    </div>
   );
 }
 
@@ -122,6 +101,7 @@ type PageResult = {
   reason?: string;
   note?: string;
   measuredAgainstHomepage?: boolean;
+  measurementError?: string;
   score: number | null;
   scoreStatus: MetricStatus | null;
   metrics: { lcp: PageMetric; tbt: PageMetric; cls: PageMetric; ttfb: PageMetric };
@@ -130,11 +110,13 @@ type PageResult = {
 type PageType = 'homepage' | 'pdp' | 'plp' | 'checkout';
 type PagesResponse = Record<PageType, PageResult>;
 
-const PAGE_TABS: Array<{ key: PageType; label: string }> = [
+// Stacked sections, in display order: Homepage → PLP → PDP → Checkout.
+const PAGE_SECTIONS: Array<{ key: PageType; label: string }> = [
   { key: 'homepage', label: 'Homepage' },
-  { key: 'pdp', label: 'PDP' },
-  { key: 'plp', label: 'PLP' },
-  { key: 'checkout', label: 'Checkout' },
+  // PLP/PDP/Checkout PageSpeed calculation disabled — only the homepage is measured for now.
+  // { key: 'plp', label: 'PLP — Category Page' },
+  // { key: 'pdp', label: 'PDP — Product Page' },
+  // { key: 'checkout', label: 'Checkout' },
 ];
 const PAGE_VITALS: MetricKey[] = ['lcp', 'tbt', 'cls', 'ttfb'];
 
@@ -147,44 +129,72 @@ export default function RumMetricsPanel() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [device, setDevice] = useState<'mobile' | 'desktop'>('mobile');
-  const [error, setError] = useState<string | null>(null);
+  // Error text is captured but intentionally not rendered (PageSpeed errors are hidden in the UI).
+  const [, setError] = useState<string | null>(null);
 
   // Page-type breakdown state (cached client-side per strategy). This is also the
   // single source of truth for the site-wide "Core Web Vitals" panel above, which
   // reads its numbers from the `homepage` entry — so the two panels can never show
   // conflicting values for the same page.
   const [pageData, setPageData] = useState<Record<'mobile' | 'desktop', PagesResponse | null>>({ mobile: null, desktop: null });
-  const [activePage, setActivePage] = useState<PageType>('homepage');
   const [pagesLoading, setPagesLoading] = useState(false);
-  const [pagesError, setPagesError] = useState<string | null>(null);
+  const [, setPagesError] = useState<string | null>(null);
 
   const fetchPages = useCallback(async (strategy: 'mobile' | 'desktop', force = false) => {
     if (!token || !projectId || !tenantId) return;
     setPagesLoading(true);
     setPagesError(null);
-    try {
-      const response = await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/pages`, {
-        params: { strategy, ...(force ? { refresh: 'true' } : {}) },
-        // Exceed the server's worst-case PageSpeed time (mobile = 2 retries × 120s).
-        // If the client times out first, apiFetch serves STALE cached data, which is
-        // exactly the "refresh shows old numbers" symptom we are fixing.
-        timeout: 250000,
-      });
-      const payload = response?.data ? response.data : response;
-      setPageData((prev) => ({ ...prev, [strategy]: payload || null }));
-    } catch (err) {
-      console.error('[RumMetricsPanel] fetchPages failed', err);
-      setPagesError(err instanceof Error ? err.message : 'Failed to load page-type metrics');
-    } finally {
-      setPagesLoading(false);
+
+    // A 5xx here is almost always a transient upstream blip — the API proxy can't
+    // reach the backend for a moment (e.g. the API is restarting/redeploying), NOT a
+    // real PageSpeed failure. Retry once after a short delay before surfacing an error
+    // so a brief restart doesn't flash a scary red banner on the panel.
+    const isTransient = (err: any) => {
+      const status = err?.status;
+      return !status || status >= 500;
+    };
+
+    let lastErr: any = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/pages`, {
+          params: { strategy, ...(force ? { refresh: 'true' } : {}) },
+          // Exceed the server's worst-case PageSpeed time (mobile = 2 retries × 120s).
+          // If the client times out first, apiFetch serves STALE cached data, which is
+          // exactly the "refresh shows old numbers" symptom we are fixing.
+          timeout: 250000,
+        });
+        const payload = response?.data ? response.data : response;
+        setPageData((prev) => ({ ...prev, [strategy]: payload || null }));
+        setPagesLoading(false);
+        return;
+      } catch (err) {
+        lastErr = err;
+        if (attempt === 0 && isTransient(err)) {
+          console.warn('[RumMetricsPanel] fetchPages transient failure — retrying once', err);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          continue;
+        }
+        break;
+      }
     }
+
+    console.error('[RumMetricsPanel] fetchPages failed', lastErr);
+    setPagesError(lastErr instanceof Error ? lastErr.message : 'Failed to load page-type metrics');
+    setPagesLoading(false);
   }, [apiFetch, projectId, tenantId, token]);
+
+  // Tracks devices we've already auto-measured this session so the auto-run effect
+  // below fires at most once per device (and never loops if PSI keeps returning
+  // "not measured"). Reset whenever the connector changes.
+  const autoMeasuredRef = React.useRef<Record<'mobile' | 'desktop', boolean>>({ mobile: false, desktop: false });
 
   // Reset all cached state when the active connector changes.
   useEffect(() => {
     if (!token || !projectId) return;
     setError(null);
     setPageData({ mobile: null, desktop: null });
+    autoMeasuredRef.current = { mobile: false, desktop: false };
   }, [connectorSelectionTick, projectId, token]);
 
   // Lazily load the page-type breakdown for the currently-selected device.
@@ -194,6 +204,26 @@ export default function RumMetricsPanel() {
       void fetchPages(device, false);
     }
   }, [device, pageData, pagesLoading, fetchPages, token, projectId, tenantId]);
+
+  // First time a device has never been measured, the cheap load above returns a
+  // "not measured yet" state. Rather than make the user click Refresh, kick off one
+  // live PageSpeed run automatically (force=true). Guarded so it runs once per device
+  // and only for the genuine "not measured" state — a real PSI failure (which reports
+  // a different reason) is left alone so we don't hammer the API.
+  useEffect(() => {
+    if (!token || !projectId || !tenantId) return;
+    const data = pageData[device];
+    if (!data || pagesLoading || refreshing) return;
+    const home = data.homepage;
+    const notMeasured = Boolean(
+      home && !home.available && !home.measurementError &&
+      (home.reason || '').toLowerCase().includes('not measured'),
+    );
+    if (notMeasured && !autoMeasuredRef.current[device]) {
+      autoMeasuredRef.current[device] = true;
+      void fetchPages(device, true);
+    }
+  }, [pageData, device, pagesLoading, refreshing, fetchPages, token, projectId, tenantId]);
 
   const handleRefresh = useCallback(async () => {
     if (!token || !projectId || !tenantId) return;
@@ -226,26 +256,95 @@ export default function RumMetricsPanel() {
   }, [apiFetch, connectorInstanceId, device, fetchPages, projectId, tenantId, token]);
 
   const pages = pageData[device];
-  const activeResult: PageResult | null = pages ? pages[activePage] : null;
-  const pagesLoadingActive = pagesLoading && !pages;
+  // One unified loading state for the whole stack — never 4 independent spinners.
+  const isLoading = !pages && (pagesLoading || refreshing);
 
-  // The site-wide "Core Web Vitals" panel and the page-type "Homepage" tab both
-  // describe the same homepage URL. Drive them from a SINGLE measurement so they
-  // can never contradict each other (previously they ran two independent PageSpeed
-  // scans at different moments and showed different LCP/TBT for the same page).
-  const homepageResult: PageResult | null = pages ? pages.homepage : null;
-  const vitalsLoading = pagesLoading && !pages;
-  const vitalsNoData = !pagesLoading && !homepageResult;
-  // PageSpeed reports TBT (lab), not FID, for the mobile/desktop Lighthouse run.
-  const SITE_VITALS: MetricKey[] = ['lcp', 'tbt', 'cls', 'ttfb'];
+  // Optional status badge for a section header.
+  const sectionBadge = (result: PageResult | null): { tone: 'muted' | 'warning'; text: string } | null => {
+    if (!result) return null;
+    if (result.measuredAgainstHomepage) {
+      return { tone: 'muted', text: 'Proxied from homepage — no dedicated URL discovered' };
+    }
+    if (result.measurementError === 'discovered_url_unreachable') {
+      return { tone: 'warning', text: 'Discovered URL unreachable — check URL suffix config' };
+    }
+    return null;
+  };
+
+  const renderSection = ({ key, label }: { key: PageType; label: string }) => {
+    const result = pages ? pages[key] : null;
+    const badge = sectionBadge(result);
+    const available = Boolean(result && result.available);
+
+    return (
+      <section key={key} style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>{label}</h3>
+            {result?.url ? (
+              <a href={result.url} target="_blank" rel="noreferrer" title={result.url} style={{ display: 'block', marginTop: '4px', fontSize: '12px', color: 'var(--text-muted)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '460px' }}>
+                {result.url}
+              </a>
+            ) : null}
+          </div>
+          {badge ? (
+            <span style={{
+              padding: '5px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 600, lineHeight: 1.4,
+              background: badge.tone === 'warning' ? 'var(--warning-bg)' : 'var(--bg-input)',
+              color: badge.tone === 'warning' ? 'var(--warning-text)' : 'var(--text-muted)',
+              border: `1px solid ${badge.tone === 'warning' ? 'rgba(245,158,11,0.2)' : 'var(--border-input)'}`,
+            }}>
+              {badge.text}
+            </span>
+          ) : null}
+        </div>
+
+        {isLoading ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
+            {PAGE_VITALS.map((metricName) => (
+              <VitalCard key={metricName} metricKey={metricName} device={device} value={undefined} status="good" loading />
+            ))}
+          </div>
+        ) : available && result ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
+            {PAGE_VITALS.map((metricName) => {
+              const m = result.metrics[metricName as 'lcp' | 'tbt' | 'cls' | 'ttfb'];
+              const value = m?.value;
+              const status = (m?.status as MetricStatus) || getMetricStatus(metricName, Number(value || 0));
+              return (
+                <VitalCard key={metricName} metricKey={metricName} device={device} value={value} status={status} timestamp={m?.timestamp ?? result.timestamp} />
+              );
+            })}
+          </div>
+        ) : (
+          // No measurement yet (or it failed). Keep the 4-card layout intact —
+          // render empty "—" cards rather than collapsing the whole section into a
+          // single message — and surface the reason as a small note above the grid.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '12px 16px', color: 'var(--text-muted)', fontSize: '13px' }}>
+              {result?.measurementError === 'discovered_url_unreachable'
+                ? (result.reason || 'The discovered URL could not be measured. Check the store’s URL suffix configuration.')
+                : (result?.reason || 'Not measured yet — click “Refresh all” to run PageSpeed for this page.')}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
+              {PAGE_VITALS.map((metricName) => (
+                <VitalCard key={metricName} metricKey={metricName} device={device} value={undefined} status="good" timestamp={result?.timestamp ?? null} />
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  };
 
   return (
-    <>
-      <section style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Shared header: title, single device toggle, single "Refresh all". */}
+      <section style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
           <div>
             <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>PageSpeed Metrics</p>
-            <h2 style={{ margin: '6px 0 0', fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>Core Web Vitals from the storefront</h2>
+            <h2 style={{ margin: '6px 0 0', fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>Core Web Vitals by page type</h2>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <div style={{ display: 'inline-flex', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-input)' }}>
@@ -255,132 +354,19 @@ export default function RumMetricsPanel() {
             <button
               type="button"
               onClick={handleRefresh}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderRadius: '999px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }}
+              disabled={isLoading}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '8px 14px', borderRadius: '999px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: '14px', fontWeight: 500, cursor: isLoading ? 'default' : 'pointer', opacity: isLoading ? 0.7 : 1 }}
             >
-              <RefreshCw size={16} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
-              Refresh
+              <RefreshCw size={16} style={{ animation: (refreshing || pagesLoading) ? 'spin 1s linear infinite' : 'none' }} />
+              {isLoading ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
         </div>
 
-        {vitalsLoading ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--text-muted)', fontSize: '14px' }}>
-            <div style={{ width: '18px', height: '18px', borderRadius: '999px', border: '2px solid var(--border-card)', borderTopColor: 'var(--text-primary)', animation: 'spin 0.8s linear infinite' }} />
-            Loading PageSpeed data...
-          </div>
-        ) : vitalsNoData ? (
-          <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '20px', color: 'var(--text-muted)', fontSize: '14px' }}>
-            No metrics yet — click <strong>Refresh</strong> to compute PageSpeed metrics from your store (first run may take 15–30 seconds).
-          </div>
-        ) : null}
-
-        {error ? (
-          <div style={{ borderRadius: '12px', border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.08)', padding: '14px 16px', color: 'var(--error-text)', fontSize: '14px' }}>{error}</div>
-        ) : null}
-
-        {homepageResult && homepageResult.available ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
-            {SITE_VITALS.map((metricName) => {
-              const m = homepageResult.metrics[metricName as 'lcp' | 'tbt' | 'cls' | 'ttfb'];
-              const value = m?.value;
-              const status = (m?.status as MetricStatus) || getMetricStatus(metricName, Number(value || 0));
-              return (
-                <VitalCard
-                  key={metricName}
-                  metricKey={metricName}
-                  device={device}
-                  value={value}
-                  status={status}
-                  timestamp={m?.timestamp ?? homepageResult.timestamp}
-                />
-              );
-            })}
-          </div>
-        ) : homepageResult && !homepageResult.available ? (
-          <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '20px', color: 'var(--text-muted)', fontSize: '14px' }}>
-            {homepageResult.reason || 'Unavailable – PageSpeed could not analyze your storefront.'}
-          </div>
-        ) : null}
+        {/* PageSpeed fetch/refresh errors are intentionally not surfaced in the UI. */}
       </section>
 
-      {/* ── Page-Type Performance Breakdown ─────────────────────────────────── */}
-      {/* <section style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-          <div>
-            <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>PageSpeed Metrics</p>
-            <h2 style={{ margin: '6px 0 0', fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>Page-Type Performance Breakdown</h2>
-          </div>
-          <ScoreBadge score={activeResult?.available ? activeResult.score : null} />
-        </div>
-
-       
-        <div style={{ display: 'inline-flex', borderRadius: '999px', overflow: 'hidden', border: '1px solid var(--border-input)', alignSelf: 'flex-start' }}>
-          {PAGE_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActivePage(tab.key)}
-              style={{ padding: '8px 16px', background: activePage === tab.key ? 'var(--bg-input)' : 'transparent', border: 'none', cursor: 'pointer', fontWeight: activePage === tab.key ? 700 : 500, color: 'var(--text-primary)' }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-       
-        {activeResult?.url ? (
-          <a href={activeResult.url} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: 'var(--text-muted)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }} title={activeResult.url}>
-            Testing: {activeResult.url}
-          </a>
-        ) : null}
-
-        {pagesError ? (
-          <div style={{ borderRadius: '12px', border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.08)', padding: '14px 16px', color: 'var(--error-text)', fontSize: '14px' }}>{pagesError}</div>
-        ) : null}
-
-        {pagesLoadingActive ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
-            {PAGE_VITALS.map((metricName) => (
-              <VitalCard key={metricName} metricKey={metricName} device={device} value={undefined} status="good" loading />
-            ))}
-          </div>
-        ) : activeResult && !activeResult.available ? (
-          <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '24px', color: 'var(--text-muted)', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Activity size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-            {activeResult.reason || 'Unavailable – PageSpeed could not analyze this page.'}
-          </div>
-        ) : activeResult ? (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>
-              {PAGE_VITALS.map((metricName) => {
-                const m = activeResult.metrics[metricName as 'lcp' | 'tbt' | 'cls' | 'ttfb'];
-                const value = m?.value;
-                const status = (m?.status as MetricStatus) || getMetricStatus(metricName, Number(value || 0));
-                return (
-                  <VitalCard
-                    key={metricName}
-                    metricKey={metricName}
-                    device={device}
-                    value={value}
-                    status={status}
-                    timestamp={m?.timestamp ?? activeResult.timestamp}
-                  />
-                );
-              })}
-            </div>
-            {activePage !== 'homepage' && activeResult.measuredAgainstHomepage ? (
-              <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Activity size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                Measured against store homepage — no dedicated {activePage.toUpperCase()} URL is configured yet.
-              </p>
-            ) : null}
-          </>
-        ) : (
-          <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '20px', color: 'var(--text-muted)', fontSize: '14px' }}>
-            No page-type metrics yet — click <strong>Refresh</strong> to analyze your storefront's key pages.
-          </div>
-        )}
-      </section> */}
-    </>
+      {PAGE_SECTIONS.map((section) => renderSection(section))}
+    </div>
   );
 }

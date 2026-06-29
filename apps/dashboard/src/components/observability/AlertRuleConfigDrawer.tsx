@@ -34,7 +34,7 @@ interface Template {
 
 interface Category { id: string; label: string; icon: React.ComponentType<{ size?: number }>; }
 
-const CATEGORIES: Category[] = [
+export const CATEGORIES: Category[] = [
   { id: 'performance', label: 'Site speed', icon: Gauge },
   { id: 'orders', label: 'Orders', icon: ShoppingCart },
   { id: 'errors', label: 'Storefront errors', icon: AlertTriangle },
@@ -42,36 +42,36 @@ const CATEGORIES: Category[] = [
   { id: 'sessions', label: 'Visitors', icon: Users },
 ];
 
-const TEMPLATES: Template[] = [
+export const TEMPLATES: Template[] = [
   // ── Site speed ──
-  { id: 'lcp_slow', categoryId: 'performance', title: 'Pages load too slowly', desc: 'Largest Contentful Paint (LCP) goes above your limit.', family: 'pagespeed', metric: 'lcp', dir: 'above', unit: 'ms', subject: 'page load time', defaultThreshold: 2500, defaultWindow: 1440, defaultSeverity: 'HIGH' },
-  { id: 'ttfb_slow', categoryId: 'performance', title: 'Server responds slowly', desc: 'Time To First Byte (TTFB) goes above your limit.', family: 'pagespeed', metric: 'ttfb', dir: 'above', unit: 'ms', subject: 'server response time', defaultThreshold: 800, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
-  { id: 'cls_high', categoryId: 'performance', title: 'Page layout jumps around', desc: 'Cumulative Layout Shift (CLS) goes above your limit.', family: 'pagespeed', metric: 'cls', dir: 'above', unit: '', subject: 'layout shift score', defaultThreshold: 0.1, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
-  { id: 'score_low', categoryId: 'performance', title: 'Performance score drops', desc: 'Overall performance score falls below your target (0–100).', family: 'pagespeed', metric: 'score', dir: 'below', unit: '', subject: 'performance score', defaultThreshold: 70, defaultWindow: 1440, defaultSeverity: 'HIGH' },
+  { id: 'lcp_slow', categoryId: 'performance', title: 'LCP Threshold Exceeded', desc: 'Largest Contentful Paint (LCP) crosses your target — pages are loading too slowly for shoppers.', family: 'pagespeed', metric: 'lcp', dir: 'above', unit: 'ms', subject: 'page load time (LCP)', defaultThreshold: 2500, defaultWindow: 1440, defaultSeverity: 'HIGH' },
+  { id: 'ttfb_slow', categoryId: 'performance', title: 'TTFB Latency Alert', desc: 'Time To First Byte (TTFB) exceeds your limit — server response is degraded.', family: 'pagespeed', metric: 'ttfb', dir: 'above', unit: 'ms', subject: 'server response time (TTFB)', defaultThreshold: 800, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
+  { id: 'cls_high', categoryId: 'performance', title: 'Layout Stability Degraded (CLS)', desc: 'Cumulative Layout Shift (CLS) exceeds your threshold — visual instability detected.', family: 'pagespeed', metric: 'cls', dir: 'above', unit: '', subject: 'layout shift score (CLS)', defaultThreshold: 0.1, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
+  { id: 'score_low', categoryId: 'performance', title: 'Core Web Vitals Score Below Target', desc: 'Overall performance score drops below your target — Core Web Vitals are degraded.', family: 'pagespeed', metric: 'score', dir: 'below', unit: '', subject: 'performance score', defaultThreshold: 70, defaultWindow: 1440, defaultSeverity: 'HIGH' },
 
   // ── Orders ──
-  { id: 'delayed_orders', categoryId: 'orders', title: 'Too many delayed orders', desc: 'Orders stuck waiting to be fulfilled pile up.', family: 'orders', metric: 'delayed_orders', dir: 'above', unit: 'orders', subject: 'delayed orders', defaultThreshold: 10, defaultWindow: 1440, defaultSeverity: 'HIGH' },
-  { id: 'failed_orders', categoryId: 'orders', title: 'Too many failed / cancelled orders', desc: 'Cancelled, failed, returned or refunded orders spike.', family: 'orders', metric: 'failed_orders', dir: 'above', unit: 'orders', subject: 'failed or cancelled orders', defaultThreshold: 5, defaultWindow: 1440, defaultSeverity: 'CRITICAL' },
-  { id: 'no_orders', categoryId: 'orders', title: 'No orders coming in', desc: 'Order volume drops below your floor — possible outage.', family: 'orders', metric: 'order_count', dir: 'below', unit: 'orders', subject: 'orders received', defaultThreshold: 1, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
-  { id: 'revenue_drop', categoryId: 'orders', title: 'Revenue drops', desc: 'Revenue falls below your expected floor.', family: 'orders', metric: 'revenue', dir: 'below', unit: '', subject: 'revenue', defaultThreshold: 1000, defaultWindow: 1440, defaultSeverity: 'HIGH' },
+  { id: 'delayed_orders', categoryId: 'orders', title: 'Fulfillment Delay Threshold Exceeded', desc: 'Unprocessed orders awaiting fulfillment have exceeded your acceptable backlog limit.', family: 'orders', metric: 'delayed_orders', dir: 'above', unit: 'orders', subject: 'delayed orders', defaultThreshold: 10, defaultWindow: 1440, defaultSeverity: 'HIGH' },
+  { id: 'failed_orders', categoryId: 'orders', title: 'Order Failure Rate Spike', desc: 'Cancelled, failed, returned or refunded orders have exceeded your failure-rate threshold.', family: 'orders', metric: 'failed_orders', dir: 'above', unit: 'orders', subject: 'failed or cancelled orders', defaultThreshold: 5, defaultWindow: 1440, defaultSeverity: 'CRITICAL' },
+  { id: 'no_orders', categoryId: 'orders', title: 'Order Volume Dropout', desc: 'Incoming order count has dropped below your minimum floor — possible platform or payment outage.', family: 'orders', metric: 'order_count', dir: 'below', unit: 'orders', subject: 'orders received', defaultThreshold: 1, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
+  { id: 'revenue_drop', categoryId: 'orders', title: 'Revenue Floor Breach', desc: 'Revenue has fallen below your expected minimum — investigate order or payment issues.', family: 'orders', metric: 'revenue', dir: 'below', unit: '', subject: 'revenue', defaultThreshold: 1000, defaultWindow: 1440, defaultSeverity: 'HIGH' },
 
   // ── Storefront errors ──
-  { id: 'js_errors', categoryId: 'errors', title: 'Too many JavaScript errors', desc: 'Script errors in shoppers’ browsers spike.', family: 'rum_errors', metric: 'js_errors', dir: 'above', unit: 'errors', subject: 'JavaScript errors', defaultThreshold: 20, defaultWindow: 60, defaultSeverity: 'HIGH' },
-  { id: 'network_errors', categoryId: 'errors', title: 'Too many network errors', desc: 'Failed network/API requests in the storefront spike.', family: 'rum_errors', metric: 'network_errors', dir: 'above', unit: 'errors', subject: 'network errors', defaultThreshold: 20, defaultWindow: 60, defaultSeverity: 'HIGH' },
-  { id: 'checkout_errors', categoryId: 'errors', title: 'Errors on the checkout page', desc: 'Any error happening on the checkout page.', family: 'rum_errors', metric: 'checkout_errors', dir: 'above', unit: 'errors', subject: 'checkout-page errors', defaultThreshold: 1, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
-  { id: 'all_errors', categoryId: 'errors', title: 'Too many storefront errors (any kind)', desc: 'Total storefront errors across all types spike.', family: 'rum_errors', metric: 'error_count', dir: 'above', unit: 'errors', subject: 'storefront errors', defaultThreshold: 50, defaultWindow: 60, defaultSeverity: 'MEDIUM' },
+  { id: 'js_errors', categoryId: 'errors', title: 'JS Error Rate Spike', desc: 'JavaScript runtime errors in shopper browsers have exceeded your acceptable rate.', family: 'rum_errors', metric: 'js_errors', dir: 'above', unit: 'errors', subject: 'JavaScript errors', defaultThreshold: 20, defaultWindow: 60, defaultSeverity: 'HIGH' },
+  { id: 'network_errors', categoryId: 'errors', title: 'Network Request Failure Alert', desc: 'Failed API or network requests from the storefront have exceeded your threshold.', family: 'rum_errors', metric: 'network_errors', dir: 'above', unit: 'errors', subject: 'network errors', defaultThreshold: 20, defaultWindow: 60, defaultSeverity: 'HIGH' },
+  { id: 'checkout_errors', categoryId: 'errors', title: 'Checkout Flow Disruption', desc: 'Errors detected on the checkout page — immediate risk to purchase completion.', family: 'rum_errors', metric: 'checkout_errors', dir: 'above', unit: 'errors', subject: 'checkout-page errors', defaultThreshold: 1, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
+  { id: 'all_errors', categoryId: 'errors', title: 'Global Storefront Error Threshold', desc: 'Total storefront errors across all error types have breached your global limit.', family: 'rum_errors', metric: 'error_count', dir: 'above', unit: 'errors', subject: 'storefront errors', defaultThreshold: 50, defaultWindow: 60, defaultSeverity: 'MEDIUM' },
 
   // ── Customer journey ──
-  { id: 'completion_drop', categoryId: 'journey', title: 'Completion rate drops', desc: 'End-to-end completion (visits that finish a purchase) falls below your target.', family: 'journey', metric: 'completion_rate', dir: 'below', unit: '%', subject: 'completion rate', defaultThreshold: 50, defaultWindow: 1440, defaultSeverity: 'HIGH' },
-  { id: 'abandon_high', categoryId: 'journey', title: 'Checkout abandonment too high', desc: 'Share of shoppers leaving checkout climbs.', family: 'journey', metric: 'checkout_abandonment', dir: 'above', unit: '%', subject: 'checkout abandonment rate', defaultThreshold: 70, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
+  { id: 'completion_drop', categoryId: 'journey', title: 'Purchase Completion Rate Drop', desc: 'End-to-end journey completion rate (visits that finish a purchase) has fallen below target.', family: 'journey', metric: 'completion_rate', dir: 'below', unit: '%', subject: 'purchase completion rate', defaultThreshold: 50, defaultWindow: 1440, defaultSeverity: 'HIGH' },
+  { id: 'abandon_high', categoryId: 'journey', title: 'Checkout Abandonment Rate Alert', desc: 'The share of shoppers exiting before completing checkout has exceeded your threshold.', family: 'journey', metric: 'checkout_abandonment', dir: 'above', unit: '%', subject: 'checkout abandonment rate', defaultThreshold: 70, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
 
   // ── Visitors ──
-  { id: 'conversion_drop', categoryId: 'sessions', title: 'Conversion rate drops', desc: 'Share of visits that convert falls below target.', family: 'customer_session', metric: 'conversion_rate', dir: 'below', unit: '%', subject: 'visitor conversion rate', defaultThreshold: 2, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
-  { id: 'traffic_drop', categoryId: 'sessions', title: 'Visitor traffic drops', desc: 'Number of sessions falls below your floor.', family: 'customer_session', metric: 'session_count', dir: 'below', unit: 'sessions', subject: 'visitor sessions', defaultThreshold: 10, defaultWindow: 60, defaultSeverity: 'MEDIUM' },
+  { id: 'conversion_drop', categoryId: 'sessions', title: 'Session Conversion Rate Alert', desc: 'The share of sessions converting to a purchase has dropped below your target.', family: 'customer_session', metric: 'conversion_rate', dir: 'below', unit: '%', subject: 'session conversion rate', defaultThreshold: 2, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
+  { id: 'traffic_drop', categoryId: 'sessions', title: 'Visitor Session Volume Drop', desc: 'Incoming session count has fallen below your floor — possible acquisition or infrastructure issue.', family: 'customer_session', metric: 'session_count', dir: 'below', unit: 'sessions', subject: 'visitor sessions', defaultThreshold: 10, defaultWindow: 60, defaultSeverity: 'MEDIUM' },
 ];
 
 const findTemplate = (id: string) => TEMPLATES.find((t) => t.id === id);
-const matchTemplate = (family?: string, metric?: string) =>
+export const matchTemplate = (family?: string, metric?: string) =>
   TEMPLATES.find((t) => t.family === family && t.metric === metric);
 
 // Friendly "check over the last …" choices.
@@ -450,7 +450,7 @@ export function AlertRuleConfigDrawer({
                 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{rule.name}</span>
+                      <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>{tpl?.title || rule.name}</span>
                       <span style={{ padding: '1px 8px', borderRadius: '999px', fontSize: '10px', fontWeight: 600, background: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>{rule.severity}</span>
                     </div>
                     <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
@@ -488,7 +488,7 @@ export function AlertRuleConfigDrawer({
             What should we watch for?
           </h3>
           <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 20px' }}>
-            Pick a situation. You’ll set the number and who to notify next.
+            Pick a situation. You'll set the number and who to notify next.
           </p>
 
           {CATEGORIES.map((cat) => {
@@ -602,7 +602,7 @@ export function AlertRuleConfigDrawer({
           {/* Recipients are project-level now — point the user to that screen. */}
           <div style={{ ...fieldStyle, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-input)', border: '1px solid var(--border-input)' }}>
             <span style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              Emails go to your shared recipient list. Manage who’s notified in Notification settings.
+              Emails go to your shared recipient list. Manage who's notified in Notification settings.
             </span>
             <button type="button" onClick={openSettings} style={{ ...ghostBtn, flexShrink: 0 }}>
               <Mail style={{ width: '14px', height: '14px' }} /> Notifications
@@ -611,11 +611,11 @@ export function AlertRuleConfigDrawer({
 
           {/* Advanced: don't re-alert too often */}
           <div style={fieldStyle}>
-            <label style={labelStyle}>Don’t re-alert for (minutes)</label>
+            <label style={labelStyle}>Don't re-alert for (minutes)</label>
             <input type="number" min={0} style={inputStyle} value={form.cooldownMinutes}
               onChange={(e) => setForm({ ...form, cooldownMinutes: Number(e.target.value) })} />
             <p style={{ fontSize: '11px', color: 'var(--text-muted)', margin: '6px 0 0' }}>
-              After it fires, stay quiet for this long so you’re not spammed about the same problem.
+              After it fires, stay quiet for this long so you're not spammed about the same problem.
             </p>
           </div>
 

@@ -6,7 +6,6 @@ import crypto from 'crypto';
 import { ShopifyOrderSyncService } from '../services/shopify-order-sync.service';
 import { AdobeCommerceOrderSyncService } from '../services/adobe-commerce-order-sync.service';
 import { ShopifyCustomerSyncService } from '../services/shopify-customer-sync.service';
-import { CheckoutSyncService } from '../services/checkout-sync.service';
 import { AdobeCommerceCustomerSyncService } from '../services/adobe-commerce-customer-sync.service';
 import { BigCommerceOrderSyncService } from '../services/bigcommerce-order-sync.service';
 import { BigCommerceCustomerSyncService } from '../services/bigcommerce-customer-sync.service';
@@ -99,6 +98,97 @@ export class IntegrationController {
                 integration.lastSyncAt?.toISOString() ||
                 null
         }));
+        return reply.send(ResponseUtil.success(mapped, { siteId }, req.id as string));
+    }
+
+    /**
+     * Fetches a single connector instance by id, scoped to the project/tenant.
+     * Backs the deep-link / page-refresh path where the selected connector
+     * isn't present in the already-loaded list. Returns 404 when not found.
+     */
+    public static async getConnector(req: FastifyRequest, reply: FastifyReply) {
+        const { id, siteId } = req.params as any;
+        // The path segment is `tenants/current`, so params.tenantId is the literal
+        // "current" — use the tenant resolved by the auth handler instead. siteId
+        // is already verified against the user's tenant by tenantIsolationGuard.
+        const tenantId = (req as any).tenantId;
+
+        const integration = await prisma.connectorInstance.findFirst({
+            where: { id, siteId, ...(tenantId ? { tenantId } : {}) },
+            select: {
+                id: true,
+                label: true,
+                providerId: true,
+                category: true,
+                family: true,
+                status: true,
+                healthStatus: true,
+                healthScore: true,
+                recordsByType: true,
+                lastSyncAt: true,
+                lastAttemptAt: true,
+                lastWebhookAt: true,
+                lastError: true,
+                createdAt: true,
+                updatedAt: true,
+                resyncJobs: {
+                    where: {
+                        status: {
+                            in: ['queued', 'running']
+                        }
+                    },
+                    orderBy: {
+                        initiatedAt: 'desc'
+                    },
+                    take: 1,
+                    select: {
+                        jobId: true,
+                        status: true,
+                        syncTargets: true,
+                        initiatedAt: true,
+                        completedAt: true,
+                        error: true
+                    }
+                }
+            }
+        });
+
+        if (!integration) {
+            return reply.code(404).send(
+                ResponseUtil.error('Connector instance not found', 'NOT_FOUND', null, req.id as string)
+            );
+        }
+
+        const latestResyncJob = await prisma.connectorResyncJob.findFirst({
+            where: {
+                projectId: siteId,
+                connectorInstanceId: integration.id
+            },
+            orderBy: {
+                initiatedAt: 'desc'
+            },
+            select: {
+                jobId: true,
+                connectorInstanceId: true,
+                status: true,
+                syncTargets: true,
+                initiatedAt: true,
+                completedAt: true,
+                error: true
+            }
+        });
+
+        const mapped = {
+            ...integration,
+            activeResyncJob: (integration as any).resyncJobs?.[0] || null,
+            latestResyncJob: latestResyncJob || null,
+            lastResyncAt:
+                latestResyncJob?.completedAt?.toISOString() ||
+                latestResyncJob?.initiatedAt?.toISOString() ||
+                integration.lastSyncAt?.toISOString() ||
+                null
+        };
+
         return reply.send(ResponseUtil.success(mapped, { siteId }, req.id as string));
     }
 
@@ -208,13 +298,7 @@ export class IntegrationController {
             try {
                 const orderSync = await ShopifyOrderSyncService.syncConnectorInstance(id);
                 const customerSync = await ShopifyCustomerSyncService.syncConnectorInstance(id);
-                let checkoutSync: any = null;
-                try {
-                    checkoutSync = await CheckoutSyncService.syncConnectorInstance(id);
-                } catch (checkoutErr: any) {
-                    checkoutSync = { ok: false, message: checkoutErr?.message };
-                }
-                initialSync = { orders: orderSync, customers: customerSync, checkouts: checkoutSync };
+                initialSync = { orders: orderSync, customers: customerSync };
             } catch (err: any) {
                 initialSync = {
                     ok: false,
@@ -225,13 +309,7 @@ export class IntegrationController {
             try {
                 const orderSync = await AdobeCommerceOrderSyncService.syncConnectorInstance(id);
                 const customerSync = await AdobeCommerceCustomerSyncService.syncConnectorInstance(id);
-                let checkoutSync: any = null;
-                try {
-                    checkoutSync = await CheckoutSyncService.syncConnectorInstance(id);
-                } catch (checkoutErr: any) {
-                    checkoutSync = { ok: false, message: checkoutErr?.message };
-                }
-                initialSync = { orders: orderSync, customers: customerSync, checkouts: checkoutSync };
+                initialSync = { orders: orderSync, customers: customerSync };
             } catch (err: any) {
                 initialSync = {
                     ok: false,
@@ -242,13 +320,7 @@ export class IntegrationController {
             try {
                 const orderSync = await BigCommerceOrderSyncService.syncConnectorInstance(id);
                 const customerSync = await BigCommerceCustomerSyncService.syncConnectorInstance(id);
-                let checkoutSync: any = null;
-                try {
-                    checkoutSync = await CheckoutSyncService.syncConnectorInstance(id);
-                } catch (checkoutErr: any) {
-                    checkoutSync = { ok: false, message: checkoutErr?.message };
-                }
-                initialSync = { orders: orderSync, customers: customerSync, checkouts: checkoutSync };
+                initialSync = { orders: orderSync, customers: customerSync };
             } catch (err: any) {
                 initialSync = {
                     ok: false,
@@ -473,47 +545,26 @@ export class IntegrationController {
             if (instance.providerId === 'shopify') {
                 const orderResult = await ShopifyOrderSyncService.syncConnectorInstance(instance.id);
                 const customerResult = await ShopifyCustomerSyncService.syncConnectorInstance(instance.id);
-                let checkoutResult: any = null;
-                try {
-                    checkoutResult = await CheckoutSyncService.syncConnectorInstance(instance.id);
-                } catch (checkoutErr: any) {
-                    checkoutResult = { ok: false, message: checkoutErr?.message };
-                }
                 return reply.send(ResponseUtil.success({
                     status: 'SYNC_COMPLETED',
                     orders: orderResult,
-                    customers: customerResult,
-                    checkouts: checkoutResult
+                    customers: customerResult
                 }, {}, req.id as string));
             } else if (instance.providerId === 'adobe_commerce') {
                 const orderResult = await AdobeCommerceOrderSyncService.syncConnectorInstance(instance.id);
                 const customerResult = await AdobeCommerceCustomerSyncService.syncConnectorInstance(instance.id);
-                let checkoutResult: any = null;
-                try {
-                    checkoutResult = await CheckoutSyncService.syncConnectorInstance(instance.id);
-                } catch (checkoutErr: any) {
-                    checkoutResult = { ok: false, message: checkoutErr?.message };
-                }
                 return reply.send(ResponseUtil.success({
                     status: 'SYNC_COMPLETED',
                     orders: orderResult,
-                    customers: customerResult,
-                    checkouts: checkoutResult
+                    customers: customerResult
                 }, {}, req.id as string));
             } else if (instance.providerId === 'bigcommerce') {
                 const orderResult = await BigCommerceOrderSyncService.syncConnectorInstance(instance.id);
                 const customerResult = await BigCommerceCustomerSyncService.syncConnectorInstance(instance.id);
-                let checkoutResult: any = null;
-                try {
-                    checkoutResult = await CheckoutSyncService.syncConnectorInstance(instance.id);
-                } catch (checkoutErr: any) {
-                    checkoutResult = { ok: false, message: checkoutErr?.message };
-                }
                 return reply.send(ResponseUtil.success({
                     status: 'SYNC_COMPLETED',
                     orders: orderResult,
-                    checkouts: checkoutResult,
-                    customers: customerResult 
+                    customers: customerResult
                 }, {}, req.id as string));
             }
 

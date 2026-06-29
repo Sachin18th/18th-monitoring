@@ -63,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="logo-badge">{logo || "18"}</div>
           </div>
           <div className="brand-copy">
-            <div className="brand-title">GRAVITY</div>
+            {/* <div className="brand-title">GRAVITY</div> */}
             <div className="brand-subtitle">18th Digitech</div>
           </div>
         </div>

@@ -17,8 +17,6 @@ import {
   Search,
   Sun,
   Moon,
-  Users,
-  X,
 } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartTooltip } from "recharts";
 import { PerformanceChart } from "../../components/ui/PerformanceChart";
@@ -295,7 +293,6 @@ export default function ProjectsPage() {
     "24h",
   );
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
-  const [showAttentionAlert, setShowAttentionAlert] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -883,45 +880,8 @@ export default function ProjectsPage() {
             </div>
           </section>
 
-          {showAttentionAlert && metrics.projectsAtRisk > 0 && (
-            <section
-              className="flex min-h-[44px] w-full items-center justify-between gap-3 rounded-lg px-4 py-2.5"
-              style={{
-                marginBottom: 24,
-                border: isDark ? "1px solid #3A2A00" : "1px solid #FCD34D",
-                background: isDark ? "#1C1500" : "#FFFBEB",
-              }}
-            >
-              <div
-                className="inline-flex items-center gap-2 text-[12px] font-normal"
-                style={{ color: isDark ? "#F59E0B" : "#92400E" }}
-              >
-                <AlertTriangle size={16} />
-                <span>
-                  {metrics.projectsAtRisk}{" "}
-                  {metrics.projectsAtRisk === 1
-                    ? "project needs"
-                    : "projects need"}{" "}
-                  attention
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAttentionAlert(false)}
-                aria-label="Dismiss alert"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors duration-150"
-                style={{
-                  color: isDark ? "#F59E0B" : "#92400E",
-                  background: "transparent",
-                }}
-              >
-                <X size={16} />
-              </button>
-            </section>
-          )}
-
           <section
-            className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4"
+            className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
             style={{ gap: 16, marginBottom: 4 }}
           >
             <MetricCard
@@ -944,15 +904,6 @@ export default function ProjectsPage() {
                 Number(metrics.avgHealth) < 95 ? "critical" : "healthy"
               }
               secondaryTag="Avg quality"
-              isDark={isDark}
-            />
-            <MetricCard
-              title="Active operators"
-              value={formatValue(metrics.totalUsers)}
-              icon={Users}
-              statusLabel="Live sessions"
-              statusTone="live"
-              secondaryTag="Connected"
               isDark={isDark}
             />
             <MetricCard

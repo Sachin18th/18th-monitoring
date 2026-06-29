@@ -394,6 +394,14 @@ const isLongRunningMutationRequest = (url: string, method?: string) => {
     return /\/(?:re)?sync(?:\/|\?|$)/.test(url) || /\/integrations(?:\/|$)/.test(url);
 };
 
+// Endpoints whose failures are feature-specific and must NOT flip the whole app into
+// the global "Real-time Feed Interrupted" outage banner. PageSpeed in particular is
+// slow and frequently 502s / times out when Google's API is rate-limited — that is a
+// local PageSpeed problem, not a platform connectivity outage.
+const isOutageExemptRequest = (url: string) => {
+    return /\/pagespeed(?:\/|\?|$)/.test(url);
+};
+
 interface User {
     id: string;
     email: string;
@@ -422,6 +430,12 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const SESSION_STORAGE_KEYS = ['session-token', 'session-user', 'current-project'] as const;
 
+// Once a request detects an expired session and triggers the redirect to /login,
+// any other in-flight or subsequent requests would otherwise be aborted by the
+// navigation and surface as uncaught errors (the red error indicator). This flag
+// lets every apiFetch call quietly hang during the redirect instead of throwing.
+let isRedirectingToLogin = false;
+
 const clearStoredSession = () => {
     if (typeof window === 'undefined') return;
 
@@ -442,7 +456,7 @@ const syncSessionCookie = (token: string | null) => {
         return;
     }
 
-    document.cookie = `session-token=${encodeURIComponent(token)}; Path=/; Max-Age=3600; SameSite=Lax`;
+    document.cookie = `session-token=${encodeURIComponent(token)}; Path=/; Max-Age=28800; SameSite=Lax`;
 };
 
 const parseStoredUser = (storedUser: string | null): User | null => {
@@ -656,6 +670,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }, [clearSessionState, router]);
 
     const apiFetch = React.useCallback(async (url: string, options: any = {}) => {
+        // A session-expiry redirect is already in progress; don't fire more requests
+        // or surface errors — just hang until the navigation unmounts this consumer.
+        if (isRedirectingToLogin) {
+            return new Promise(() => {});
+        }
+
         const connectorBridgeResponse = getConnectorBridgeResponse(url);
         if (connectorBridgeResponse !== undefined) {
             return connectorBridgeResponse;
@@ -752,7 +772,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const suppressUnauthorizedRedirect = options?.suppressUnauthorizedRedirect === true;
             const shouldWarnInsteadOfError = requestTimedOut || isRateLimited || !status || isConflict || (status === 403 && suppressUnauthorizedRedirect);
 
+            // Once a redirect is underway, every other failing request (including ones
+            // aborted by the navigation itself) should hang silently rather than throw.
+            if (isRedirectingToLogin) {
+                return new Promise(() => {});
+            }
+
             if (isSessionExpired) {
+                isRedirectingToLogin = true;
                 clearSessionStateRef.current();
                 if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
                     routerRef.current.replace('/login');
@@ -830,7 +857,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (cached && (options.method === 'GET' || !options.method)) {
                     const { data, timestamp } = JSON.parse(cached);
                     console.warn(`[AuthContext] API 500/Outage. Serving STALE data from ${timestamp}`);
-                    setOutageStatus('stale');
+                    // Only flip the global outage banner for genuine platform failures.
+                    // Feature-specific slow endpoints (e.g. PageSpeed) and expected
+                    // long-running sync timeouts must not masquerade as a connectivity outage.
+                    if (!isOutageExemptRequest(url) && !isExpectedSyncDelay) {
+                        setOutageStatus('stale');
+                    }
                     return data;
                 }
             }
@@ -880,6 +912,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // the same { token, user } shape through here so persistence (localStorage +
     // cookie) and the post-auth redirect are identical regardless of method.
     const establishSession = React.useCallback((newToken: string, newUser: User) => {
+        // Fresh session — clear any stale "redirecting to login" guard so requests resume.
+        isRedirectingToLogin = false;
         setToken(newToken);
         setUser(newUser);
         localStorage.setItem('session-token', newToken);

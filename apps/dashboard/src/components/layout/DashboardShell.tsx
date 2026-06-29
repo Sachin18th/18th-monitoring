@@ -18,8 +18,7 @@ import {
   Bell,
   UserCircle,
   ShieldCheck,
-  GitMerge,
-  Database,
+  Workflow,
   ShieldAlert,
   BarChart3,
   Monitor,
@@ -123,7 +122,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   const isProjectRoute = pathname.startsWith('/project/') && !!projectId;
   const isDark = mounted ? theme === 'dark' : false;
 
-  const [selectedEnv, setSelectedEnv] = React.useState('Production');
   const [availableProjects, setAvailableProjects] = React.useState<any[]>([]);
   const [hoveredHref, setHoveredHref] = React.useState<string | null>(null);
   const [showUserDropdown, setShowUserDropdown] = React.useState(false);
@@ -284,17 +282,17 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         items: [
           { label: 'Overview', href: `${prefix}/overview`, icon: LayoutDashboard, pageKey: 'overview' },
           { label: 'Alert Center', href: `${prefix}/observability/alerts`, icon: Bell, pageKey: 'observability/alerts' },
-          { label: 'Incident Center', href: `${prefix}/observability/incidents`, icon: Flame, pageKey: 'observability/incidents' }
+          // { label: 'Incident Center', href: `${prefix}/observability/incidents`, icon: Flame, pageKey: 'observability/incidents' }
         ]
       },
       {
         name: 'Operational Surface',
         items: [
-          { label: 'Performance', href: `${prefix}/performance`, icon: Activity, pageKey: 'performance' },
+          // { label: 'Performance', href: `${prefix}/performance`, icon: Activity, pageKey: 'performance' },
           { label: 'Frontend RUM', href: `${prefix}/rum`, icon: Monitor, pageKey: 'rum' },
           { label: 'Backend API', href: `${prefix}/observability/backend`, icon: Server, pageKey: 'observability/backend' },
           { label: 'Journey Intel', href: `${prefix}/observability/journeys`, icon: Map, pageKey: 'observability/journeys' },
-          { label: 'Synthetic', href: `${prefix}/observability/synthetic`, icon: Activity, pageKey: 'observability/synthetic' },
+          // { label: 'Synthetic', href: `${prefix}/observability/synthetic`, icon: Activity, pageKey: 'observability/synthetic' },
           { label: 'Customers', href: `${prefix}/customers`, icon: Users, pageKey: 'customers' },
           { label: 'Orders', href: `${prefix}/orders`, icon: Package, pageKey: 'orders' }
         ]
@@ -311,8 +309,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
       {
         name: 'Data Platform',
         items: [
-          { label: 'Ingestion', href: `${prefix}/management/ingestion`, icon: Database, pageKey: 'management/ingestion' },
-          { label: 'Pipeline', href: `${prefix}/management/pipeline`, icon: GitMerge, pageKey: 'management/pipeline' },
+          { label: 'Data Flow', href: `${prefix}/management/data-flow`, icon: Workflow, pageKey: 'management/data-flow' },
           { label: 'KPI Engine', href: `${prefix}/management/kpi`, icon: BarChart3, pageKey: 'management/kpi' },
           { label: 'Monitoring', href: `${prefix}/management/monitoring`, icon: ShieldAlert, pageKey: 'management/monitoring' }
         ]
@@ -321,7 +318,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         name: 'Governance',
         items: [
           { label: 'Audit & Activity', href: `${prefix}/management/audit`, icon: ShieldCheck, pageKey: 'management/audit' },
-          { label: 'Configuration', href: `${prefix}/settings`, icon: Settings, pageKey: 'settings' },
+          // { label: 'Configuration', href: `${prefix}/settings`, icon: Settings, pageKey: 'settings' },
           { label: 'Administration', href: `${prefix}/management/users`, icon: UserCircle, pageKey: 'management/users' }
         ]
       }
@@ -520,10 +517,10 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
   const healthTone =
     healthLevel === 'critical'
-      ? { dot: '#ef4444', text: '#f87171' }
+      ? { dot: '#ef4444', text: '#f87171', bg: 'rgba(239, 68, 68, 0.16)' }
       : healthLevel === 'warning'
-        ? { dot: '#f59e0b', text: '#f59e0b' }
-        : { dot: '#22c55e', text: '#22c55e' };
+        ? { dot: '#f59e0b', text: '#f59e0b', bg: 'rgba(245, 158, 11, 0.16)' }
+        : { dot: '#22c55e', text: '#22c55e', bg: 'rgba(34, 197, 94, 0.16)' };
   const isStoreSelectorDisabled = storeOptions.length === 0;
   const healthBadgeLabel = String(healthLabel || 'Healthy').toUpperCase();
 
@@ -880,14 +877,10 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
             <span className="project-header-project-name" title={selectedProjectName}>{selectedProjectName}</span>
 
-            <button
-              type="button"
-              className="project-header-env-badge"
-              onClick={() => setSelectedEnv(selectedEnv === 'Production' ? 'Staging' : 'Production')}
-              title={selectedEnv}
-            >
-              {selectedEnv}
-            </button>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '2px 8px', borderRadius: '999px', background: healthTone.bg, color: healthTone.text, fontSize: '10px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }} title={`Store health: ${healthBadgeLabel}`}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: healthTone.dot, flexShrink: 0 }} />
+              {healthBadgeLabel}
+            </span>
           </div>
 
           <div style={{ width: '1px', height: '20px', background: shellColors.borderTertiary, flexShrink: 0 }} />
@@ -962,10 +955,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
                 </span>
               </div>
             </div>
-
-            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '2px 8px', borderRadius: '999px', background: 'rgba(34, 197, 94, 0.16)', color: '#22c55e', fontSize: '10px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
-              {healthBadgeLabel}
-            </span>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
               <span className="project-header-hide-below-960" style={{ fontSize: '10px', color: shellColors.pillText, textTransform: 'uppercase', letterSpacing: '0.08em', lineHeight: 1, fontWeight: 400 }}>

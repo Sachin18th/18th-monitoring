@@ -9,6 +9,7 @@ import { ConfigResolver } from '../../../packages/config/src/resolver';
 import { KafkaStreamConsumer } from '../../../services/processor/src/consumer/kafka-consumer';
 import { TOPICS } from './config/topics';
 import { dashboardRoutes } from './routes/dashboard';
+import { sessionJourneyRoutes } from './routes/storefront/session-journeys';
 import { storeHealthRoutes } from './routes/store-health';
 import { login, getMe, getProjects } from './controllers/auth.controller';
 import { requestOtp, verifyOtp } from './controllers/otp.controller';
@@ -184,8 +185,14 @@ export const bootstrapApi = async () => {
         preHandler: [tenantAuthHandler, tenantIsolationGuard, viewOnlyGuard]
     });
 
+    // Storefront Session Journey Timeline routes (read-only, raw SQL).
+    // Auth + per-connector tenant/project authorization handled inside the plugin.
+    await server.register(sessionJourneyRoutes, {
+        prefix: '/api/storefront'
+    });
+
     // Scoped Integration Routes
-    await server.register(integrationRoutes, { 
+    await server.register(integrationRoutes, {
         prefix: '/api/v1/tenants/:tenantId/projects/:siteId/integrations' 
     });
 

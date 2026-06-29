@@ -215,6 +215,29 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     }
   });
 
+  // Live users — distinct visitors active within the trailing window (default
+  // 5 min), i.e. sessions whose last_active_at matches "now".
+  fastify.get('/live', authed, async (req, reply) => {
+    const q = (req.query as any) || {};
+    const connectorInstanceId = q.connector_instance_id || q.connectorInstanceId || q.connectorId;
+    if (!connectorInstanceId) {
+      return reply
+        .code(400)
+        .send(ResponseUtil.error('connector_instance_id query parameter is required', 'MISSING_CONNECTOR_ID'));
+    }
+    try {
+      const data = await StorefrontTrackingService.liveUsers({
+        tenantId: String((req as any).tenantId ?? req.user.tenantId),
+        connectorInstanceId: String(connectorInstanceId),
+        windowMinutes: q.window_minutes || q.windowMinutes ? Number(q.window_minutes ?? q.windowMinutes) : null,
+      });
+      return reply.code(200).send(ResponseUtil.success(data, {}, req.id as string));
+    } catch (err) {
+      console.error('[TRACK] live users query failed', err);
+      return reply.code(500).send(ResponseUtil.error('Failed to query live users', 'TRACK_LIVE_FAILED'));
+    }
+  });
+
   fastify.get('/events', authed, async (req, reply) => {
     const q = (req.query as any) || {};
     const connectorInstanceId = q.connector_instance_id || q.connectorInstanceId || q.connectorId;

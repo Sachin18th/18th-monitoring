@@ -16,7 +16,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { useConnectorPlatform } from '@/context/ConnectorPlatformContext';
 import { PageRestricted } from '@/components/PageRestricted';
-import { AlertRuleConfigDrawer } from '@/components/observability/AlertRuleConfigDrawer';
+import { AlertRuleConfigDrawer, matchTemplate, CATEGORIES } from '@/components/observability/AlertRuleConfigDrawer';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -281,17 +281,20 @@ export default function AlertCenterPage() {
   // Map backend alert shape → AlertList component shape
   const mappedAlerts = useMemo(() => alerts.map(a => {
     const ruleId = alertRuleId(a);
+    const rule = rulesById[ruleId];
+    const tpl = matchTemplate(rule?.criteria?.metricFamily, rule?.criteria?.metric);
+    const categoryLabel = CATEGORIES.find(c => c.id === tpl?.categoryId)?.label;
     return {
       id: a.alertId || a.id,
       ruleId,
-      title: a.message || a.kpiName || 'Alert',
+      title: tpl?.title || a.message || a.kpiName || 'Alert',
       severity: (a.severity?.toUpperCase() as any) || 'HIGH',
       status: a.status === 'active' ? ('ACTIVE' as const) : ('RESOLVED' as const),
       timestamp: a.triggeredAt ? new Date(a.triggeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
-      source: rulesById[ruleId]?.name || a.module || a.affectedEntity || 'System',
+      source: categoryLabel || a.module || a.affectedEntity || 'System',
       // Metric family drives where "Investigate" navigates. Prefer the alert's
       // own context, fall back to the rule's criteria, then the module column.
-      metricFamily: a.context?.metricFamily || rulesById[ruleId]?.criteria?.metricFamily || a.module || '',
+      metricFamily: a.context?.metricFamily || rule?.criteria?.metricFamily || a.module || '',
     };
   }), [alerts, rulesById]);
 
@@ -476,7 +479,9 @@ export default function AlertCenterPage() {
                         style={{ width: '14px', height: '14px', flexShrink: 0, accentColor: '#3b82f6' }}
                       />
                       <span title={r.enabled ? 'Enabled' : 'Disabled'} style={{ width: '6px', height: '6px', borderRadius: '50%', flexShrink: 0, background: r.enabled ? '#10b981' : 'var(--text-muted)' }} />
-                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {matchTemplate(r.criteria?.metricFamily, r.criteria?.metric)?.title || r.name}
+                      </span>
                     </label>
                 ))
               )}

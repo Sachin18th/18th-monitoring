@@ -243,7 +243,9 @@ export default function IntegrationsPage() {
             timeout: 10000,
           });
 
-          integration = resp?.data ?? null;
+          // Direct axios call returns the full API envelope ({ success, data });
+          // unwrap to the connector object, tolerating a raw (unwrapped) body too.
+          integration = resp?.data?.data ?? resp?.data ?? null;
         } catch (fetchErr: any) {
           const status = fetchErr?.response?.status ?? fetchErr?.status;
           if (status === 404) {

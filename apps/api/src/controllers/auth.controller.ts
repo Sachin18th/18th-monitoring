@@ -27,16 +27,42 @@ export const getProjects = async (req: any, reply: any) => {
         where: { tenantId }
     });
 
-    if (userRole === 'SUPER_ADMIN') {
-        return reply.code(200).send(successResponse(tenantProjects));
+    // Restrict to assigned projects for roles other than SUPER_ADMIN / TENANT_ADMIN
+    let result = tenantProjects;
+    if (userRole !== 'SUPER_ADMIN' && userRole !== 'TENANT_ADMIN') {
+        result = tenantProjects.filter(p => assignedIds.includes(p.id));
     }
-    
-    // For roles other than TENANT_ADMIN, restrict to assigned projects only
-    let filtered = tenantProjects;
 
-    if (userRole !== 'TENANT_ADMIN') {
-        filtered = tenantProjects.filter(p => assignedIds.includes(p.id));
+    // Attach a live health summary per project. errorRate = % of connector
+    // lifecycle events with ERROR severity over the last 30 days — the same
+    // signal that drives the KPI engine's pipeline success rate, so the
+    // projects overview and the per-project KPI page stay consistent.
+    const projectIds = result.map(p => p.id);
+    const errorRateByProject: Record<string, number> = {};
+    if (projectIds.length > 0) {
+        const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const groups = await prisma.connectorLifecycleEvent.groupBy({
+            by: ['projectId', 'severity'],
+            where: { projectId: { in: projectIds }, createdAt: { gte: since } },
+            _count: { _all: true },
+        });
+        const totals: Record<string, { total: number; errors: number }> = {};
+        for (const g of groups as any[]) {
+            const t = totals[g.projectId] ?? (totals[g.projectId] = { total: 0, errors: 0 });
+            t.total += g._count._all;
+            if (g.severity === 'ERROR') t.errors += g._count._all;
+        }
+        for (const [pid, t] of Object.entries(totals)) {
+            errorRateByProject[pid] = t.total > 0
+                ? Math.round((t.errors / t.total) * 10000) / 100
+                : 0;
+        }
     }
-    
-    return reply.code(200).send(successResponse(filtered));
+
+    const withMetrics = result.map(p => ({
+        ...p,
+        metricsSummary: { errorRate: errorRateByProject[p.id] ?? 0 },
+    }));
+
+    return reply.code(200).send(successResponse(withMetrics));
 };

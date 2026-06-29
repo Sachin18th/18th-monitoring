@@ -14,11 +14,13 @@ import {
   XCircle,
   KeyRound,
   CreditCard,
+  MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { PageRestricted } from '@/components/PageRestricted';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PaymentGatewayPanel } from '@/components/observability/PaymentGatewayPanel';
+import { SmsGatewayPanel } from '@/components/observability/SmsGatewayPanel';
 import {
   CartesianGrid,
   Line,
@@ -127,7 +129,7 @@ export default function BackendObservabilityPage() {
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
   // Which check group is on screen — Store APIs and Payment Gateways are
   // distinct health checks, shown one at a time via the segmented control.
-  const [view, setView] = useState<'stores' | 'gateways'>('stores');
+  const [view, setView] = useState<'stores' | 'gateways' | 'sms'>('stores');
 
   // Call the scoped path directly with the URL projectId (like the Integrations
   // page) rather than /api/v1/dashboard, so we never depend on a possibly-stale
@@ -349,34 +351,9 @@ export default function BackendObservabilityPage() {
           </div>
           <h1 style={{ fontSize: '22px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>Backend API Observability</h1>
         </div>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: '0 0 16px' }}>
+        <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0 }}>
           Live health of each connected store&apos;s API — reachability, token validity, and latency for {projectId as string}
         </p>
-
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            type="button"
-            onClick={runProbeNow}
-            disabled={refreshing}
-            style={{
-              padding: '7px 14px',
-              borderRadius: '8px',
-              border: '1px solid var(--border-card)',
-              background: 'transparent',
-              fontSize: '13px',
-              color: 'var(--text-primary)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: refreshing ? 'default' : 'pointer',
-              opacity: refreshing ? 0.6 : 1,
-              boxSizing: 'border-box',
-            }}
-          >
-            <Zap style={{ width: '14px', height: '14px', flexShrink: 0 }} />
-            {refreshing ? 'Probing…' : 'Probe Now'}
-          </button>
-        </div>
       </div>
 
       {/* Inline error (shown when a refresh/probe fails but stale data is still on screen) */}
@@ -415,6 +392,7 @@ export default function BackendObservabilityPage() {
         {([
           { key: 'stores' as const, label: 'Store API Health', Icon: Server },
           { key: 'gateways' as const, label: 'Payment Gateways', Icon: CreditCard },
+          { key: 'sms' as const, label: 'SMS Gateways', Icon: MessageSquare },
         ]).map((tab) => {
           const active = view === tab.key;
           const TabIcon = tab.Icon;
@@ -585,6 +563,29 @@ export default function BackendObservabilityPage() {
             </p>
             <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>Each connected store&apos;s API, probed with its stored token</p>
           </div>
+          <button
+            type="button"
+            onClick={runProbeNow}
+            disabled={refreshing}
+            style={{
+              padding: '7px 14px',
+              borderRadius: '8px',
+              border: '1px solid var(--border-card)',
+              background: 'transparent',
+              fontSize: '13px',
+              color: 'var(--text-primary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: refreshing ? 'default' : 'pointer',
+              opacity: refreshing ? 0.6 : 1,
+              boxSizing: 'border-box',
+              flexShrink: 0,
+            }}
+          >
+            <Zap style={{ width: '14px', height: '14px', flexShrink: 0 }} />
+            {refreshing ? 'Probing…' : 'Probe Now'}
+          </button>
         </div>
 
         {connectors.length === 0 ? (
@@ -677,6 +678,12 @@ export default function BackendObservabilityPage() {
         /* Payment gateway health + configuration — probes each configured gateway's
            API (Razorpay / Stripe / PayU) for live status and scheduled maintenance. */
         <PaymentGatewayPanel projectId={String(projectId)} />
+      )}
+
+      {view === 'sms' && (
+        /* SMS gateway health — pure live probe of each provider's public status
+           page (Twilio / GupShup / ClickSend / Infobip). No persistence. */
+        <SmsGatewayPanel projectId={String(projectId)} />
       )}
     </div>
   );

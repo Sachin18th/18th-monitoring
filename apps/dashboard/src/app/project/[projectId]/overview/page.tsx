@@ -89,11 +89,6 @@ function formatCount(value?: number | string) {
   return new Intl.NumberFormat('en-US').format(Number.isFinite(numberValue) ? numberValue : 0);
 }
 
-function formatRPM(value?: number | string) {
-  const numberValue = Number(value || 0);
-  return Number.isFinite(numberValue) ? numberValue.toFixed(2) : '0.00';
-}
-
 function formatAPIReliability(value?: number | string) {
   const numberValue = Number(value || 0);
   const safeValue = Number.isFinite(numberValue) ? numberValue : 0;
@@ -186,14 +181,6 @@ const sectionSubtitleStyle: React.CSSProperties = {
   margin: 0,
 };
 
-const timeRangeOptions: Array<{ label: string; value: TimeRangeValue }> = [
-  { label: '24H', value: '24h' },
-  { label: '7D', value: '7d' },
-  { label: '30D', value: '30d' },
-  { label: '90D', value: '90d' },
-  { label: 'ALL', value: 'all' },
-];
-
 export default function ProjectOverviewPage() {
   const params = useParams();
   const router = useRouter();
@@ -209,9 +196,10 @@ export default function ProjectOverviewPage() {
   const [perf, setPerf] = useState<PerfSummary | null>(null);
   const [integration, setIntegration] = useState<IntegrationSummary | null>(null);
   const [userActivity, setUserActivity] = useState<UserActivitySummary | null>(null);
+  const [liveUsers, setLiveUsers] = useState<number | null>(null);
   const [syncTrends, setSyncTrends] = useState<TrendPoint[]>([]);
   const [orderTrends, setOrderTrends] = useState<TrendPoint[]>([]);
-  const [timeRange, setTimeRange] = useState<TimeRangeValue>('24h');
+  const [timeRange] = useState<TimeRangeValue>('24h');
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const activeAlerts = useMemo(() => alerts.filter((alert) => alert.severity && alert.severity !== 'low'), [alerts]);
@@ -267,6 +255,7 @@ export default function ProjectOverviewPage() {
         userData,
         syncTrendData,
         orderTrendData,
+        liveData,
       ] = await Promise.all([
         fetchSection(`/api/v1/dashboard/summaries?siteId=${projectId}&range=${timeRange}`, []),
         canReadAlerts ? fetchSection(`/api/v1/dashboard/alerts?siteId=${projectId}`, []) : [],
@@ -277,6 +266,9 @@ export default function ProjectOverviewPage() {
         canReadCustomers ? fetchSection(`/api/v1/dashboard/customers/summary?siteId=${projectId}&range=${timeRange}`, null) : null,
         canReadIntegrations ? fetchSection(`/api/v1/dashboard/integrations/trends?siteId=${projectId}&range=${timeRange}`, []) : [],
         canReadOrders ? fetchSection(`/api/v1/dashboard/orders/trends?siteId=${projectId}&range=${timeRange}`, []) : [],
+        canReadCustomers && connectorInstanceId
+          ? fetchSection(`/api/track/live?connector_instance_id=${connectorInstanceId}`, null)
+          : null,
       ]);
 
       setMetrics(Array.isArray(summaryData) ? summaryData : []);
@@ -288,6 +280,7 @@ export default function ProjectOverviewPage() {
       setUserActivity(userData || null);
       setSyncTrends(Array.isArray(syncTrendData) ? syncTrendData : []);
       setOrderTrends(Array.isArray(orderTrendData) ? orderTrendData : []);
+      setLiveUsers(typeof liveData?.liveUsers === 'number' ? liveData.liveUsers : null);
     } finally {
       setLoading(false);
     }
@@ -338,16 +331,6 @@ export default function ProjectOverviewPage() {
       pageKey: null,
     },
     {
-      label: 'Order Velocity',
-      value: formatRPM(stats?.ordersPerMinute),
-      unit: 'RPM',
-      status: 'Healthy',
-      contextLabel: 'Throughput',
-      icon: Package,
-      tone: 'success' as const,
-      pageKey: 'orders',
-    },
-    {
       label: 'API Reliability',
       value: formatAPIReliability(apiReliability),
       unit: '',
@@ -368,11 +351,11 @@ export default function ProjectOverviewPage() {
       pageKey: 'performance',
     },
     {
-      label: 'Live Sessions',
-      value: formatLiveSessions(liveSessions),
+      label: 'Live Users',
+      value: formatLiveSessions(liveUsers ?? undefined),
       unit: '',
       status: 'Healthy',
-      contextLabel: 'Active users',
+      contextLabel: 'Active now',
       icon: Users,
       tone: 'success' as const,
       pageKey: 'customers',
@@ -550,55 +533,12 @@ export default function ProjectOverviewPage() {
             </p>
           </div>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          {timeRangeOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setTimeRange(option.value)}
-              style={{
-                padding: '5px 10px',
-                borderRadius: '6px',
-                fontSize: '12px',
-                border: '1px solid var(--border-card)',
-                background: timeRange === option.value ? 'var(--bg-badge-active)' : 'transparent',
-                fontWeight: timeRange === option.value ? 500 : 400,
-                color: 'var(--text-primary)',
-                cursor: 'pointer',
-                boxSizing: 'border-box',
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={loadData}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '5px 10px',
-              borderRadius: '6px',
-              fontSize: '12px',
-              border: '1px solid var(--border-card)',
-              background: 'transparent',
-              color: 'var(--text-primary)',
-              cursor: 'pointer',
-              boxSizing: 'border-box',
-            }}
-          >
-            <RefreshCw style={{ width: '14px', height: '14px', animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-            Sync
-          </button>
-        </div>
       </div>
 
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(5, 1fr)',
+          gridTemplateColumns: `repeat(${Math.max(metricCards.length, 1)}, 1fr)`,
           gap: '16px',
           overflow: 'visible',
         }}

@@ -6,6 +6,7 @@ import {
   Users,
   Search,
   ChevronRight,
+  ChevronDown,
   Mail,
   Calendar,
   Shield,
@@ -1028,6 +1029,7 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
+  const [showRepeatCustomers, setShowRepeatCustomers] = useState(false);
 
   const fetchData = useCallback(async (force = false) => {
     if (!token || !projectId) return;
@@ -1243,6 +1245,57 @@ export default function CustomersPage() {
     [allCustomers, orders],
   );
 
+  // Repeat customers = profiles with more than one completed order. Order counts
+  // are derived the same way the insight cards are: email-match the canonical
+  // orders we fetched, falling back to the stored profile count. Sorted by
+  // order count (then spend) so the most loyal customers surface first.
+  const repeatCustomers = useMemo(() => {
+    const orderStatsByEmail = new Map<
+      string,
+      { count: number; total: number }
+    >();
+    for (const order of orders || []) {
+      const amount = Number(
+        order?.totalAmount ??
+          order?.metadata?.totalAmount ??
+          order?.metadata?.amount ??
+          0,
+      );
+      const emails = Array.from(new Set(extractOrderEmailCandidates(order)));
+      for (const email of emails) {
+        const stats = orderStatsByEmail.get(email) || { count: 0, total: 0 };
+        stats.count += 1;
+        stats.total += Number.isFinite(amount) ? amount : 0;
+        orderStatsByEmail.set(email, stats);
+      }
+    }
+
+    return (allCustomers || [])
+      .map((customer) => {
+        const email = extractCustomerEmail(customer);
+        const matched = email ? orderStatsByEmail.get(email) : undefined;
+        const orderCount = Math.max(
+          matched?.count || 0,
+          getCustomerOrderCount(customer),
+        );
+        const profileLtv = Number(customer?.totalLtv || 0);
+        const spend =
+          (matched?.total || 0) > 0
+            ? matched!.total
+            : Number.isFinite(profileLtv)
+              ? profileLtv
+              : 0;
+        return {
+          record: normalizeCustomerRecord(customer),
+          raw: customer,
+          orderCount,
+          spend,
+        };
+      })
+      .filter((row) => row.orderCount > 1)
+      .sort((a, b) => b.orderCount - a.orderCount || b.spend - a.spend);
+  }, [allCustomers, orders]);
+
   const metricCards = useMemo(
     () => [
       {
@@ -1455,6 +1508,7 @@ export default function CustomersPage() {
       : String(
           selectedCustomer?.metadata?.currency ||
             selectedCustomer?.currency ||
+            customerInsights.dominantCurrency ||
             "USD",
         ).toUpperCase();
   const hasMixedSelectedOrderCurrencies =
@@ -2264,6 +2318,248 @@ export default function CustomersPage() {
           </div>
         </div>
 
+        <div style={panelStyle}>
+          <button
+            type="button"
+            onClick={() => setShowRepeatCustomers((prev) => !prev)}
+            aria-expanded={showRepeatCustomers}
+            style={{
+              width: "100%",
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              textAlign: "left",
+              color: "var(--text-primary)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "4px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "13px",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  color: "var(--text-primary)",
+                }}
+              >
+                <ChevronDown
+                  style={{
+                    width: "16px",
+                    height: "16px",
+                    flexShrink: 0,
+                    color: "var(--text-muted)",
+                    transform: showRepeatCustomers
+                      ? "rotate(0deg)"
+                      : "rotate(-90deg)",
+                    transition: "transform 0.16s ease",
+                  }}
+                />
+                Repeat Customers
+              </div>
+              <span
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: "999px",
+                  fontSize: "10px",
+                  border: "1px solid var(--border-input)",
+                  color: "var(--text-muted)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {repeatCustomers.length.toLocaleString()} with 2+ orders
+              </span>
+            </div>
+            <div
+              style={{
+                fontSize: "12px",
+                color: "var(--text-muted)",
+                paddingLeft: "24px",
+              }}
+            >
+              Customers who placed more than one order, ranked by order count.
+            </div>
+          </button>
+
+          {showRepeatCustomers && (
+          <div
+            style={{
+              borderRadius: "12px",
+              border: "1px solid var(--border-card)",
+              overflow: "hidden",
+              marginTop: "16px",
+            }}
+          >
+            <div
+              style={{
+                padding: "12px 20px",
+                borderBottom: "1px solid var(--border-card)",
+                display: "flex",
+                gap: "16px",
+                alignItems: "center",
+                color: "var(--text-label)",
+                fontSize: "10px",
+                textTransform: "uppercase",
+                letterSpacing: "0.08em",
+              }}
+            >
+              <span style={{ flex: 2 }}>Customer</span>
+              <span style={{ width: "100px", textAlign: "right" }}>Orders</span>
+              <span style={{ width: "140px", textAlign: "right" }}>
+                Total Spend
+              </span>
+              <span style={{ width: "24px" }} />
+            </div>
+
+            {(loading ? [] : repeatCustomers).map((row, idx) => (
+              <button
+                key={row.record.id || `${row.record.email}-${idx}`}
+                type="button"
+                onClick={() => {
+                  setSelectedCustomer(row.record);
+                  setIsDrawerOpen(true);
+                }}
+                style={{
+                  width: "100%",
+                  background: "transparent",
+                  border: "none",
+                  padding: "14px 20px",
+                  borderBottom:
+                    idx === repeatCustomers.length - 1
+                      ? "none"
+                      : "1px solid var(--border-card)",
+                  display: "flex",
+                  gap: "16px",
+                  alignItems: "center",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                }}
+              >
+                <div
+                  style={{
+                    flex: 2,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    minWidth: 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "32px",
+                      height: "32px",
+                      borderRadius: "50%",
+                      background: "rgba(139,92,246,0.12)",
+                      border: "1px solid rgba(139,92,246,0.2)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: ACCENT.violet,
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {row.record.name?.charAt(0) || "?"}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: "13px",
+                        color: "var(--text-primary)",
+                        fontWeight: 500,
+                        marginBottom: "2px",
+                      }}
+                    >
+                      {row.record.name}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "11px",
+                        color: "var(--text-muted)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {row.record.email}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    width: "100px",
+                    textAlign: "right",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    color: "var(--text-primary)",
+                  }}
+                >
+                  {row.orderCount.toLocaleString()}
+                </div>
+                <div
+                  style={{
+                    width: "140px",
+                    textAlign: "right",
+                    fontSize: "13px",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  {formatCurrency(
+                    row.spend,
+                    customerInsights.dominantCurrency ||
+                      row.record.currency,
+                  )}
+                </div>
+                <ChevronRight
+                  style={{
+                    width: "16px",
+                    height: "16px",
+                    color: "var(--text-label)",
+                    flexShrink: 0,
+                  }}
+                />
+              </button>
+            ))}
+            {loading && (
+              <div
+                style={{
+                  padding: "18px 20px",
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                }}
+              >
+                Loading repeat customers...
+              </div>
+            )}
+            {!loading && repeatCustomers.length === 0 && (
+              <div
+                style={{
+                  padding: "18px 20px",
+                  fontSize: "13px",
+                  color: "var(--text-muted)",
+                }}
+              >
+                No repeat customers yet — no profile has more than one order.
+              </div>
+            )}
+          </div>
+          )}
+        </div>
+
         <div style={{ overflow: "visible" }}>
           <div
             style={{
@@ -2860,10 +3156,13 @@ export default function CustomersPage() {
                 {
                   icon: Shield,
                   label: "Lifetime Value",
-                  value: formatCurrency(
-                    selectedCustomerLifetimeValue,
-                    selectedCustomerTotalSpendCurrency,
-                  ),
+                  value:
+                    selectedCustomerLifetimeValue > 0
+                      ? formatCurrency(
+                          selectedCustomerLifetimeValue,
+                          selectedCustomerTotalSpendCurrency,
+                        )
+                      : "—",
                 },
               ].map((item) => {
                 const Icon = item.icon;

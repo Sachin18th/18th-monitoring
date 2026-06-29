@@ -19,7 +19,7 @@ function generateCode(): string {
 function buildOtpEmailHtml(code: string): string {
     return `
     <div style="font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #0f1724;">
-      <p style="font-size: 13px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: #2563eb; margin: 0 0 24px;">Gravity Monitoring Platform</p>
+      <p style="font-size: 13px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: #2563eb; margin: 0 0 24px;">KPI Monitoring Platform</p>
       <h1 style="font-size: 20px; font-weight: 700; margin: 0 0 16px;">Your One-Time Login Code</h1>
       <p style="font-size: 14px; line-height: 1.6; color: #475569; margin: 0 0 24px;">Use the code below to finish signing in. Do not share it with anyone.</p>
       <div style="font-size: 40px; font-weight: 800; letter-spacing: 0.3em; text-align: center; background: #f6f8fa; border: 1px solid rgba(15,23,42,0.06); border-radius: 12px; padding: 20px 0; margin: 0 0 24px;">${code}</div>

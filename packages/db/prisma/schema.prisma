@@ -388,6 +388,7 @@ model ConnectorInstance {
   healthScore    Int?      @default(100) @map("health_score")
   recordsByType  Json      @default("{}") @map("records_by_type")
   pixelConfig    Json?     @default("{}") @map("pixel_config")
+  metadata       Json?     @default("{}") @map("metadata")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @default(now()) @map("updated_at")
   disconnectedAt DateTime? @map("disconnected_at")

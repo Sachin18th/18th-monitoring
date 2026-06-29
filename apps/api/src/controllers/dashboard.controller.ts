@@ -1,4 +1,5 @@
 import { DashboardService } from '../services/dashboard.service';
+import { SmsGatewayService } from '../services/sms-gateway.service';
 import { successResponse, errorResponse } from '../utils/response';
 import { env } from '../config/env';
 
@@ -435,6 +436,25 @@ export const getPaymentGatewayStatuses = async (req: any, res: any) => {
     }
 };
 
+export const getSmsGatewayStatuses = async (req: any, res: any) => {
+    const { siteId } = getFilters(req);
+    try {
+        const requested = req.query.gateway;
+        if (requested) {
+            if (!SmsGatewayService.isValidGateway(requested)) {
+                return res.code(400).send(errorResponse(`Unsupported SMS gateway "${requested}"`, 'INVALID_GATEWAY'));
+            }
+            const data = await SmsGatewayService.getStatus(requested);
+            return res.code(200).send(successResponse(data));
+        }
+
+        const data = await SmsGatewayService.getAllStatuses();
+        return res.code(200).send(successResponse(data));
+    } catch (err) {
+        return respondWithError(res, err, 'getSmsGatewayStatuses', siteId);
+    }
+};
+
 export const getAuditLogs = async (req: any, res: any) => {
     const { siteId } = getFilters(req);
     try {
@@ -483,5 +503,15 @@ export const getIncidents = async (req: any, res: any) => {
         return res.code(200).send(successResponse(data));
     } catch (err) {
         return respondWithError(res, err, 'getIncidents', siteId);
+    }
+};
+
+export const getStorefrontDigest = async (req: any, res: any) => {
+    const { siteId } = getFilters(req);
+    try {
+        const data = await DashboardService.getStorefrontDigest(getFilters(req) as any);
+        return res.code(200).send(successResponse(data));
+    } catch (err) {
+        return respondWithError(res, err, 'getStorefrontDigest', siteId);
     }
 };

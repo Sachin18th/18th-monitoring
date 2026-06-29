@@ -275,35 +275,105 @@ export class DashboardService {
 
     static async getPerformanceSummary(filters: MetricFilterDto) {
         const { siteId } = filters;
-        const systemPerf = await AnalyticsEngine.getSystemPerformance(siteId);
-        
-        const metrics = await prisma.performanceMetric.findMany({
-            where: { siteId },
-            select: { metricValue: true, metricName: true }
-        });
+        const timeRange = (filters as any).timeRange || '30d';
 
-        const getAvg = (metricName: string) => {
-            const filtered = metrics.filter(m => m.metricName === metricName);
-            if (filtered.length === 0) return 0;
-            return Math.round(filtered.reduce((s, m) => s + Number(m.metricValue), 0) / filtered.length);
+        // Time window for the scan timestamp — if the last PageSpeed scan is older
+        // than the selected period the UI shows "No scan in this period".
+        // '24h' has no meaningful PageSpeed history so we show whatever is available.
+        const MS_MAP: Record<string, number | null> = {
+            '24h': null,                           // no floor — show latest regardless
+            '7d':  7  * 24 * 60 * 60 * 1000,
+            '30d': 30 * 24 * 60 * 60 * 1000,
+            '90d': 90 * 24 * 60 * 60 * 1000,
+            'all': null,
+        };
+        const now = new Date();
+        const fromMs: number | null = Object.prototype.hasOwnProperty.call(MS_MAP, timeRange)
+            ? MS_MAP[timeRange]
+            : MS_MAP['30d'];
+        const from: Date | null = fromMs != null ? new Date(now.getTime() - fromMs) : null;
+
+        // Only site-level PageSpeed API records (source = 'pagespeed_api:mobile' / ':desktop').
+        // These are upserted — exactly 1 record per (siteId, metricName, source).
+        // The timestamp filter tells us whether the last scan is fresh enough for this period.
+        const [metrics, systemPerf] = await Promise.all([
+            (prisma.performanceMetric as any).findMany({
+                where: {
+                    siteId,
+                    metricName: { in: ['lcp', 'fcp', 'fid', 'cls', 'ttfb', 'tti'] },
+                    source: { startsWith: 'pagespeed_api:' },
+                    ...(from ? { timestamp: { gte: from, lte: now } } : {}),
+                },
+                select: { metricValue: true, metricName: true, device: true, timestamp: true, source: true },
+                orderBy: { timestamp: 'desc' },
+            }),
+            AnalyticsEngine.getSystemPerformance(siteId),
+        ]);
+
+        // Resolve device from device field or source suffix ('pagespeed_api:mobile' → 'mobile')
+        const resolveDevice = (m: any): string => {
+            const d = String(m.device || '').toLowerCase();
+            if (d === 'mobile' || d === 'desktop') return d;
+            const src = String(m.source || '').toLowerCase();
+            if (src.endsWith(':mobile')) return 'mobile';
+            if (src.endsWith(':desktop')) return 'desktop';
+            return 'desktop';
         };
 
-        const avg = systemPerf.avgLatencyMs || 1200;
-        
+        // Direct value per metric per device — no aggregation needed (1 row per upsert key).
+        // For "all" tab: average the available device values.
+        const val = (name: string, deviceFilter?: string): number | null => {
+            const rows = metrics.filter((m: any) =>
+                m.metricName === name &&
+                (deviceFilter == null || resolveDevice(m) === deviceFilter)
+            );
+            if (rows.length === 0) return null;
+            const sum = rows.reduce((s: number, m: any) => s + Number(m.metricValue), 0);
+            return sum / rows.length;
+        };
+
+        // Timestamp of the most recent scan for this device
+        const lastScan = (deviceFilter?: string): string | null => {
+            const row = metrics.find((m: any) =>
+                deviceFilter == null || resolveDevice(m) === deviceFilter
+            );
+            return row?.timestamp ? new Date(row.timestamp).toISOString() : null;
+        };
+
+        const buildDevice = (deviceFilter?: string) => ({
+            lcp:      val('lcp',  deviceFilter),
+            fcp:      val('fcp',  deviceFilter),
+            fid:      val('fid',  deviceFilter),
+            cls:      val('cls',  deviceFilter),
+            ttfb:     val('ttfb', deviceFilter),
+            tti:      val('tti',  deviceFilter),
+            lastScan: lastScan(deviceFilter),
+            hasData:  metrics.filter((m: any) =>
+                deviceFilter == null || resolveDevice(m) === deviceFilter
+            ).length > 0,
+        });
+
+        const overall = buildDevice();
+        const sysAvg = systemPerf.avgLatencyMs || 1200;
+
         return {
-            p50: avg,
-            p75: avg * 1.15,
-            p90: avg * 1.3,
-            p95: avg * 1.5,
-            p99: avg * 2.2,
-            avg: avg,
-            errorRate: getAvg('errorRate') || 0.42,
+            lcp:      overall.lcp,
+            fcp:      overall.fcp,
+            fid:      overall.fid,
+            cls:      overall.cls,
+            ttfb:     overall.ttfb,
+            // "Load Time" on the overview maps to Time to Interactive (PSI 'interactive').
+            avg:      overall.tti,
+            lastScan: overall.lastScan,
+            hasData:  overall.hasData,
+            effectiveRange: timeRange,
+            byDevice: {
+                mobile:  buildDevice('mobile'),
+                desktop: buildDevice('desktop'),
+            },
+            p50: sysAvg,
+            p95: sysAvg * 1.5,
             uptime: systemPerf.uptime || 99.9,
-            ttfb: getAvg('ttfb') || 0,
-            fid: getAvg('fid') || 0,
-            cls: getAvg('cls') || 0,
-            lcp: getAvg('lcp') || 0,
-            fcp: getAvg('fcp') || 0
         };
     }
 
@@ -645,26 +715,63 @@ export class DashboardService {
         });
         const connectorIds = connectorRows.map((c) => c.id);
 
-        // Journey Intel range: allowlisted 7d/30d/90d, default 30d.
-        const RANGE_DAYS: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
-        const range = RANGE_DAYS[(filters as any).timeRange] ? (filters as any).timeRange : '30d';
+        // Support all time-range values: 24h, 7d, 30d, 90d, all.
+        const timeRange = (filters as any).timeRange || '30d';
+        const MS_MAP: Record<string, number | null> = {
+            '24h':  24 * 60 * 60 * 1000,
+            '7d':   7  * 24 * 60 * 60 * 1000,
+            '30d':  30 * 24 * 60 * 60 * 1000,
+            '90d':  90 * 24 * 60 * 60 * 1000,
+            'all':  null,
+        };
         const to = new Date();
-        const from = new Date(to.getTime() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000);
+        const fromMs: number | null = Object.prototype.hasOwnProperty.call(MS_MAP, timeRange) ? MS_MAP[timeRange] : MS_MAP['30d'];
+        const from: Date | null = fromMs != null ? new Date(to.getTime() - fromMs) : null;
+        const profileDateFilter = from ? { firstSeenAt: { gte: from, lte: to } } : {};
 
-        const [journey, insights] = await Promise.all([
-            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds, from, to }),
-            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds, from, to })
+        const placedAtFilter = from ? { placedAt: { gte: from, lte: to } } : {};
+
+        const [journey, insights, totalProfiles, identifiedCount, ordersForRepeat] = await Promise.all([
+            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds, from: from ?? new Date(0), to }),
+            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds, from: from ?? new Date(0), to }),
+            prisma.customerProfile.count({ where: { siteId, ...profileDateFilter } }),
+            // "Identified" = profiles with a known email hash (non-anonymous)
+            prisma.customerProfile.count({ where: { siteId, emailHash: { not: null }, ...profileDateFilter } }),
+            // Repeated buyers: orders in the time range, grouped by derived customer email
+            prisma.canonicalOrder.findMany({
+                where: { siteId, ...placedAtFilter, ...connectorFilter },
+                select: { metadata: true },
+            }),
         ]);
 
+        const identifiedPct = totalProfiles > 0 ? Math.round((identifiedCount / totalProfiles) * 100) : 0;
+
+        // Count customers who placed more than one order in the selected period
+        const emailOrderCount: Record<string, number> = {};
+        for (const order of ordersForRepeat) {
+            const email = DashboardService.deriveOrderCustomerEmail(order);
+            if (email) emailOrderCount[email] = (emailOrderCount[email] || 0) + 1;
+        }
+        const totalBuyersWithEmail = Object.keys(emailOrderCount).length;
+        const repeatedBuyersCount = Object.values(emailOrderCount).filter(c => c >= 2).length;
+        const repeatBuyerRate = totalBuyersWithEmail > 0
+            ? Math.round((repeatedBuyersCount / totalBuyersWithEmail) * 100)
+            : null;
+
         return {
-            meta: { generatedAt: to.toISOString(), range },
+            meta: { generatedAt: to.toISOString(), range: timeRange },
             generatedAt: to.toISOString(),
-            range,
+            range: timeRange,
+            totalProfiles,
+            identifiedCount,
+            identifiedPct,
+            repeatedBuyers: repeatedBuyersCount,
+            repeatBuyerRate,
             funnel: journey.funnel,
             sessionIntelligence: { ...journey.sessionIntelligence, ...insights },
             segments: [
-                { name: 'Identified Customers', size: customers.length, active: customers.length, conversion: Math.round((purchases / (customers.length || 1)) * 100), growth: 0 },
-                { name: 'Anonymous Guests', size: Math.max(0, sessions - customers.length), active: 0, conversion: 0, growth: 0 }
+                { name: 'Identified Customers', size: identifiedCount, active: identifiedCount, conversion: Math.round((purchases / (identifiedCount || 1)) * 100), growth: 0 },
+                { name: 'Anonymous Guests', size: Math.max(0, sessions - identifiedCount), active: 0, conversion: 0, growth: 0 }
             ],
             topAttribution,
             paymentGateways,
@@ -676,6 +783,98 @@ export class DashboardService {
                 sessions: 1,
                 lastActive: c.lastLoginAt?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'N/A'
             }))
+        };
+    }
+
+    static async getStorefrontDigest(filters: MetricFilterDto) {
+        const { siteId } = filters;
+        const timeRange = (filters as any).timeRange || '30d';
+
+        const MS_MAP: Record<string, number | null> = {
+            '24h': 24 * 60 * 60 * 1000,
+            '7d':  7  * 24 * 60 * 60 * 1000,
+            '30d': 30 * 24 * 60 * 60 * 1000,
+            '90d': 90 * 24 * 60 * 60 * 1000,
+            'all': null,
+        };
+        const now = new Date();
+        const fromMs: number | null = Object.prototype.hasOwnProperty.call(MS_MAP, timeRange) ? MS_MAP[timeRange] : MS_MAP['30d'];
+        const from: Date | null = fromMs != null ? new Date(now.getTime() - fromMs) : null;
+        const errorDateFilter  = from ? { occurredAt: { gte: from, lte: now } } : {};
+        const resyncDateFilter = from ? { createdAt:  { gte: from, lte: now } } : {};
+
+        const [
+            totalErrors,
+            errorsByType,
+            criticalErrors,
+            recentErrors,
+            totalResyncJobs,
+            failedResyncJobs,
+            recentFailedJobs,
+        ] = await Promise.all([
+            (prisma.storefrontError as any).count({
+                where: { projectId: siteId, ...errorDateFilter },
+            }),
+            (prisma.storefrontError as any).groupBy({
+                by: ['errorType'],
+                where: { projectId: siteId, ...errorDateFilter },
+                _count: { _all: true },
+            }),
+            (prisma.storefrontError as any).count({
+                where: { projectId: siteId, severity: 'critical', ...errorDateFilter },
+            }),
+            (prisma.storefrontError as any).findMany({
+                where: { projectId: siteId, ...errorDateFilter },
+                select: { errorType: true, severity: true, message: true, occurredAt: true, pageType: true },
+                orderBy: { occurredAt: 'desc' },
+                take: 200,
+            }),
+            prisma.connectorResyncJob.count({
+                where: { projectId: siteId, ...resyncDateFilter },
+            }),
+            prisma.connectorResyncJob.count({
+                where: { projectId: siteId, status: 'failed', ...resyncDateFilter },
+            }),
+            prisma.connectorResyncJob.findMany({
+                where: { projectId: siteId, status: 'failed', ...resyncDateFilter },
+                select: { jobId: true, connectorInstanceId: true, error: true, initiatedAt: true },
+                orderBy: { initiatedAt: 'desc' },
+                take: 200,
+            }),
+        ]);
+
+        const byType: Array<{ type: string; count: number }> = (errorsByType as any[])
+            .map((e: any) => ({ type: e.errorType, count: e._count._all }))
+            .sort((a: any, b: any) => b.count - a.count);
+
+        const resyncSuccessRate = totalResyncJobs > 0
+            ? Math.round(((totalResyncJobs - failedResyncJobs) / totalResyncJobs) * 100)
+            : null;
+
+        return {
+            storefrontErrors: {
+                total: totalErrors,
+                critical: criticalErrors,
+                byType,
+                recent: (recentErrors as any[]).map((e: any) => ({
+                    type: e.errorType,
+                    severity: e.severity,
+                    message: String(e.message || '').slice(0, 120),
+                    occurredAt: e.occurredAt.toISOString(),
+                    pageType: e.pageType ?? null,
+                })),
+            },
+            resyncFailures: {
+                total: totalResyncJobs,
+                failed: failedResyncJobs,
+                successRate: resyncSuccessRate,
+                recentFailed: (recentFailedJobs as any[]).map((j: any) => ({
+                    jobId: j.jobId,
+                    connectorInstanceId: j.connectorInstanceId,
+                    initiatedAt: j.initiatedAt.toISOString(),
+                    error: j.error,
+                })),
+            },
         };
     }
 
@@ -837,9 +1036,19 @@ export class DashboardService {
      */
     static async getOrderSummary(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId } = filters;
+        const timeRange = (filters as any).timeRange || 'all';
+
+        const now = new Date();
+        let startDate: Date | undefined;
+        if (timeRange === '24h') startDate = new Date(now.getTime() - 86400000);
+        else if (timeRange === '7d') startDate = new Date(now.getTime() - 7 * 86400000);
+        else if (timeRange === '30d') startDate = new Date(now.getTime() - 30 * 86400000);
+        else if (timeRange === '90d') startDate = new Date(now.getTime() - 90 * 86400000);
+
         const allOrders = await prisma.canonicalOrder.findMany({
             where: {
                 siteId,
+                ...(startDate ? { placedAt: { gte: startDate, lte: now } } : {}),
                 ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
             },
             select: {
@@ -869,7 +1078,17 @@ export class DashboardService {
             const lifecycleState = (o.lifecycleState || '').toUpperCase();
             return criticalFailureStatuses.has(normalizedStatus) || criticalFailureStatuses.has(lifecycleState);
         };
-        const isDelayedOrder = (o: typeof allOrders[number]) => (o.lifecycleState || '').toUpperCase() === 'PROCESSING';
+        // An order is "delayed" if it is still in an open state (PLACED/PAID/PROCESSING)
+        // and has been waiting for more than 24 hours without progressing to fulfillment.
+        const DELAY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+        const isDelayedOrder = (o: typeof allOrders[number]) => {
+            const status = (o.normalizedStatus || '').toUpperCase();
+            const lifecycle = (o.lifecycleState || '').toUpperCase();
+            const openStates = new Set(['PLACED', 'PAID', 'PROCESSING']);
+            if (!openStates.has(status) && !openStates.has(lifecycle)) return false;
+            const orderTime = (o.placedAt ?? o.createdAt).getTime();
+            return now.getTime() - orderTime > DELAY_THRESHOLD_MS;
+        };
 
         const failedCount = allOrders.filter(isFailedOrder).length;
         const delayedCount = allOrders.filter(isDelayedOrder).length;
@@ -880,9 +1099,9 @@ export class DashboardService {
         // can match both predicates, so we de-dupe on id before summing.
         const atRiskOrders = allOrders.filter(o => isFailedOrder(o) || isDelayedOrder(o));
         const revenueAtRisk = atRiskOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-        
-        const now = Date.now();
-        const hourAgo = now - 3600000;
+
+        const nowMs = now.getTime();
+        const hourAgo = nowMs - 3600000;
         const ordersThisHour = allOrders.filter(o => {
             const orderTimestamp = o.placedAt ?? o.createdAt;
             return orderTimestamp.getTime() > hourAgo;
@@ -892,13 +1111,17 @@ export class DashboardService {
         const taxTotal = allOrders.reduce((sum, order) => sum + Number(order.taxAmount || 0), 0);
         const averageOrderValue = allOrders.length > 0 ? totalRevenue / allOrders.length : 0;
         
+        const byStatus = (s: string) =>
+            allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === s || (o.lifecycleState || '').toUpperCase() === s).length;
+
         const stages = [
-            { stage: 'Placed', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'PLACED').length, color: '#3b82f6' },
-            { stage: 'Processing', count: allOrders.filter(o => (o.lifecycleState || '').toUpperCase() === 'PROCESSING').length, color: '#f59e0b' },
-            { stage: 'Shipped', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'SHIPPED').length, color: '#10b981' },
-            { stage: 'Delivered', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'DELIVERED').length, color: '#059669' },
-            { stage: 'Cancelled', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'CANCELLED').length, color: '#ef4444' },
-        ];
+            { stage: 'Placed',     count: byStatus('PLACED'),     color: '#3b82f6' },
+            { stage: 'Paid',       count: byStatus('PAID'),        color: '#22c55e' },
+            { stage: 'Processing', count: byStatus('PROCESSING'),  color: '#f59e0b' },
+            { stage: 'Shipped',    count: byStatus('SHIPPED'),     color: '#10b981' },
+            { stage: 'Delivered',  count: byStatus('DELIVERED'),   color: '#059669' },
+            { stage: 'Cancelled',  count: byStatus('CANCELLED') + byStatus('CANCELED'), color: '#ef4444' },
+        ].filter(s => s.count > 0); // only show stages with actual orders
 
         return {
             totalOrders: allOrders.length,
@@ -922,34 +1145,85 @@ export class DashboardService {
 
     static async getOrderTrends(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId } = filters;
-        
+        const timeRange = (filters as any).timeRange || '30d';
+
+        const now = new Date();
+        let startDate: Date;
+        let bucketFn: (d: Date) => string;
+        let bucketKeys: string[];
+
+        if (timeRange === '24h') {
+            startDate = new Date(now.getTime() - 86400000);
+            // Hourly buckets HH:00
+            bucketKeys = [];
+            for (let i = 23; i >= 0; i--) {
+                const t = new Date(now.getTime() - i * 3600000);
+                bucketKeys.push(`${t.getHours().toString().padStart(2, '0')}:00`);
+            }
+            bucketFn = (d) => `${d.getHours().toString().padStart(2, '0')}:00`;
+        } else if (timeRange === '7d') {
+            startDate = new Date(now.getTime() - 7 * 86400000);
+            bucketKeys = [];
+            for (let i = 6; i >= 0; i--) {
+                const t = new Date(now.getTime() - i * 86400000);
+                bucketKeys.push(t.toISOString().slice(0, 10));
+            }
+            bucketFn = (d) => d.toISOString().slice(0, 10);
+        } else if (timeRange === '90d') {
+            startDate = new Date(now.getTime() - 90 * 86400000);
+            // Weekly buckets
+            bucketKeys = [];
+            for (let i = 12; i >= 0; i--) {
+                const t = new Date(now.getTime() - i * 7 * 86400000);
+                bucketKeys.push(`W${t.toISOString().slice(0, 10)}`);
+            }
+            bucketFn = (d) => {
+                const diffMs = now.getTime() - d.getTime();
+                const weekIdx = Math.floor(diffMs / (7 * 86400000));
+                const wStart = new Date(now.getTime() - weekIdx * 7 * 86400000);
+                return `W${wStart.toISOString().slice(0, 10)}`;
+            };
+        } else if (timeRange === 'all') {
+            startDate = new Date('2000-01-01');
+            bucketFn = (d) => d.toISOString().slice(0, 7); // YYYY-MM
+            bucketKeys = [];
+        } else {
+            // Default: 30d daily
+            startDate = new Date(now.getTime() - 30 * 86400000);
+            bucketKeys = [];
+            for (let i = 29; i >= 0; i--) {
+                const t = new Date(now.getTime() - i * 86400000);
+                bucketKeys.push(t.toISOString().slice(0, 10));
+            }
+            bucketFn = (d) => d.toISOString().slice(0, 10);
+        }
+
         const orders = await prisma.canonicalOrder.findMany({
             where: {
                 siteId,
+                placedAt: { gte: startDate, lte: now },
                 ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
             },
-            select: { id: true, createdAt: true, placedAt: true, channel: true }
+            select: { createdAt: true, placedAt: true, totalAmount: true }
         });
 
-        const now = Date.now();
-        const buckets: Record<string, { online: number; offline: number }> = {};
-
-        for (let i = 5; i >= 0; i--) {
-            const t = new Date(now - i * 3600000);
-            const label = `${t.getHours().toString().padStart(2, '0')}:00`;
-            buckets[label] = { online: 0, offline: 0 };
+        // Build pre-seeded bucket map for fixed ranges
+        const buckets: Record<string, { orders: number; revenue: number }> = {};
+        if (bucketKeys.length > 0) {
+            for (const k of bucketKeys) buckets[k] = { orders: 0, revenue: 0 };
         }
 
-        orders.forEach(o => {
-            const orderTimestamp = o.placedAt ?? o.createdAt;
-            const label = `${orderTimestamp.getHours().toString().padStart(2, '0')}:00`;
-            if (buckets[label]) {
-                if (o.channel === 'POS') buckets[label].offline++;
-                else buckets[label].online++;
-            }
-        });
+        for (const o of orders) {
+            const d = o.placedAt ?? o.createdAt;
+            const key = bucketFn(d);
+            if (!buckets[key]) buckets[key] = { orders: 0, revenue: 0 };
+            buckets[key].orders++;
+            buckets[key].revenue = Math.round((buckets[key].revenue + Number(o.totalAmount || 0)) * 100) / 100;
+        }
 
-        return Object.entries(buckets).map(([timestamp, counts]) => ({ timestamp, ...counts }));
+        // Return in chronological order
+        const keys = bucketKeys.length > 0 ? bucketKeys : Object.keys(buckets).sort();
+        return { trends: keys.map(k => ({ timestamp: k, ...(buckets[k] ?? { orders: 0, revenue: 0 }) })) };
     }
 
     static async getOrderRCA(filters: MetricFilterDto) {

@@ -1,7 +1,7 @@
 //apps/api/src/services/pagespeed.service.ts
 import { prisma, decryptSecret } from '@kpi-platform/db';
 
-type PagespeedMetricName = 'lcp' | 'fid' | 'cls' | 'ttfb';
+type PagespeedMetricName = 'lcp' | 'fcp' | 'fid' | 'cls' | 'ttfb' | 'tti';
 type PagespeedStrategy = 'mobile' | 'desktop';
 type MetricStatusLabel = 'good' | 'needs-improvement' | 'poor';
 
@@ -18,14 +18,27 @@ type ConnectorInstanceConfig = {
     siteId: string;
     providerId: string;
     syncConfig: any;
+    metadata?: any;
     credentials?: Array<{ encryptedSecret: any }>;
 };
 
+// Discovered PDP/PLP URLs are cached on the connector for this long. Catalogs and
+// products change (a deleted product would 404 on PSI), so we re-discover after.
+const PAGE_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// Shared so resolvePageMetrics and the page-type discovery loop agree on the exact
+// "first load, nothing measured yet" sentinel (used to avoid mislabeling it as a
+// discovered-URL failure).
+const NOT_MEASURED_REASON = 'Not measured yet — click Refresh to run PageSpeed.';
+
 const METRIC_MAP: Array<{ key: PagespeedMetricName; auditName: string }> = [
     { key: 'lcp', auditName: 'largest-contentful-paint' },
+    { key: 'fcp', auditName: 'first-contentful-paint' },
     { key: 'fid', auditName: 'max-potential-fid' },
     { key: 'cls', auditName: 'cumulative-layout-shift' },
     { key: 'ttfb', auditName: 'server-response-time' },
+    // "Load Time" on the overview's Latency Confidence Profile maps to Time to Interactive.
+    { key: 'tti', auditName: 'interactive' },
 ];
 
 const PAGESPEED_SOURCE_PREFIX = 'pagespeed_api';
@@ -252,6 +265,16 @@ export class PageSpeedService {
                     if (v <= 4000) return 'needs-improvement';
                     return 'poor';
                 }
+                if (k === 'fcp') {
+                    if (v <= 1800) return 'good';
+                    if (v <= 3000) return 'needs-improvement';
+                    return 'poor';
+                }
+                if (k === 'tti') {
+                    if (v <= 3800) return 'good';
+                    if (v <= 7300) return 'needs-improvement';
+                    return 'poor';
+                }
                 if (k === 'ttfb') {
                     if (v <= 800) return 'good';
                     if (v <= 1800) return 'needs-improvement';
@@ -299,6 +322,7 @@ export class PageSpeedService {
                 siteId: true,
                 providerId: true,
                 syncConfig: true,
+                metadata: true,
                 credentials: {
                     orderBy: { lastRotatedAt: 'desc' },
                     take: 1,
@@ -512,20 +536,13 @@ export class PageSpeedService {
     }
 
     private static async fetchPageSpeedResult(storeUrl: string, strategy: PagespeedStrategy = 'mobile', bustCache = false) {
-        // Google caches runPagespeed results per URL for several minutes and returns
-        // the same analysis on repeated calls — which makes the dashboard "Refresh"
-        // look like it does nothing. When the user forces a refresh, append a unique
-        // cache-busting query param so Google performs a genuinely fresh Lighthouse run.
-        let targetUrl = storeUrl;
-        if (bustCache) {
-            try {
-                const u = new URL(storeUrl);
-                u.searchParams.set('psi_cb', String(Date.now()));
-                targetUrl = u.toString();
-            } catch {
-                // Keep the original URL if it can't be parsed.
-            }
-        }
+        // NOTE: `bustCache` is intentionally a no-op. There is no supported PSI
+        // cache-bust mechanism via query params on the target URL — appending one
+        // (e.g. ?psi_cb=...) makes Google measure a DIFFERENT URL than the real
+        // homepage, then we store/show that result as if it were the homepage.
+        // PSI's own cache is only a few minutes, so we simply always call the API
+        // against the clean store URL. The param is kept to avoid breaking callers.
+        const targetUrl = storeUrl;
 
         const url = new URL('https://www.googleapis.com/pagespeedonline/v5/runPagespeed');
         url.searchParams.set('url', targetUrl);
@@ -663,7 +680,7 @@ export class PageSpeedService {
             connector = await prisma.connectorInstance.findFirst({
                 where: { id: connectorInstanceIdParam, tenantId, siteId: projectId },
                 select: {
-                    id: true, tenantId: true, siteId: true, providerId: true, syncConfig: true,
+                    id: true, tenantId: true, siteId: true, providerId: true, syncConfig: true, metadata: true,
                     credentials: { orderBy: { lastRotatedAt: 'desc' }, take: 1, select: { encryptedSecret: true } },
                 },
             });
@@ -699,14 +716,125 @@ export class PageSpeedService {
             homepage = this.unavailablePage('homepage', homepageUrl, this.failureReason('homepage'));
         }
 
-        // Reuse the homepage measurement for the other page types until per-page-type
-        // URL configuration exists. Each is annotated so the UI shows a clear note.
         result.homepage = homepage;
-        for (const pageType of ['pdp', 'plp', 'checkout'] as PageType[]) {
+
+        // PDP/PLP/Checkout PageSpeed calculation disabled — only the homepage is
+        // measured for now. The discovery + per-page-type measurement below is
+        // commented out; each non-homepage type simply proxies the homepage result
+        // so the response shape stays unchanged for any remaining consumers.
+        for (const pageType of ['pdp', 'plp', 'checkout'] as Array<'pdp' | 'plp' | 'checkout'>) {
             result[pageType] = this.proxyHomepageResult(pageType, homepage);
         }
 
+        // // Resolve real per-page-type URLs. For Adobe Commerce we auto-discover
+        // // PDP/PLP via the REST API (cached on the connector for 7 days). Other
+        // // platforms — or a failed/empty discovery — return null here and each page
+        // // type falls back to proxying the homepage measurement (legacy behaviour).
+        // const pageUrls = await this.resolvePageTypeUrls(connector, storeUrl as string);
+        //
+        // for (const pageType of ['pdp', 'plp', 'checkout'] as Array<'pdp' | 'plp' | 'checkout'>) {
+        //     const targetUrl = pageUrls ? pageUrls[pageType] : null;
+        //     if (!targetUrl) {
+        //         result[pageType] = this.proxyHomepageResult(pageType, homepage);
+        //         continue;
+        //     }
+        //
+        //     try {
+        //         const measured = await this.resolvePageMetrics({
+        //             tenantId, projectId, connectorInstanceId, strategy, pageType, url: targetUrl, forceRefresh,
+        //         });
+        //         if (measured?.available) {
+        //             result[pageType] = measured;
+        //         } else if (measured?.reason === NOT_MEASURED_REASON) {
+        //             // First load, nothing cached yet — a benign "click Refresh" state,
+        //             // NOT a discovered-URL failure. Leave it as-is.
+        //             result[pageType] = measured;
+        //         } else {
+        //             // A discovered URL that PSI could not measure (product disabled
+        //             // after discovery, redirect chain, 404). Surface this distinctly
+        //             // from the homepage-proxy / not-configured states.
+        //             result[pageType] = { ...measured, measurementError: 'discovered_url_unreachable' };
+        //         }
+        //     } catch (error) {
+        //         console.warn('[PageSpeedService] getPageTypeMetrics:discovered-url-failed', {
+        //             projectId, pageType, url: targetUrl,
+        //             error: error instanceof Error ? error.message : String(error),
+        //         });
+        //         result[pageType] = {
+        //             ...this.unavailablePage(pageType, targetUrl, 'Discovered URL could not be measured.'),
+        //             measurementError: 'discovered_url_unreachable',
+        //         };
+        //     }
+        // }
+
         return result;
+    }
+
+    /**
+     * Resolve the PDP/PLP/Checkout URLs to measure for this connector.
+     *
+     * Adobe Commerce: returns auto-discovered URLs, using the copy cached on
+     * `connector.metadata.page_urls` when it is fresh (< 7 days) and otherwise
+     * re-discovering and persisting the result. A discovery error/empty catalog
+     * falls back to the last cached copy if present, else null.
+     *
+     * Any other platform returns null so the caller proxies the homepage.
+     */
+    private static async resolvePageTypeUrls(
+        connector: ConnectorInstanceConfig,
+        storeUrl: string,
+    ): Promise<{ pdp: string | null; plp: string | null; checkout: string } | null> {
+        if (connector.providerId !== 'adobe_commerce') {
+            return null; // Auto-discovery is Adobe Commerce-only for now.
+        }
+
+        const metadata = (connector.metadata && typeof connector.metadata === 'object')
+            ? (connector.metadata as Record<string, any>)
+            : {};
+        const cached = (metadata.page_urls && typeof metadata.page_urls === 'object')
+            ? (metadata.page_urls as Record<string, any>)
+            : null;
+
+        const discoveredAt = cached?.discovered_at ? new Date(cached.discovered_at).getTime() : NaN;
+        const isFresh = Number.isFinite(discoveredAt) && (Date.now() - discoveredAt) < PAGE_URL_TTL_MS;
+        if (cached && isFresh) {
+            return this.normalizeCachedPageUrls(cached, storeUrl);
+        }
+
+        // Absent or stale (> 7 days) — re-discover.
+        try {
+            const discovered = await this.discoverPageUrls(connector, storeUrl);
+            if (!discovered) {
+                console.warn('[PageSpeedService] resolvePageTypeUrls:discovery-empty', { connectorId: connector.id });
+                return cached ? this.normalizeCachedPageUrls(cached, storeUrl) : null;
+            }
+
+            const page_urls = { ...discovered, discovered_at: new Date().toISOString() };
+            await (prisma.connectorInstance as any).update({
+                where: { id: connector.id },
+                data: { metadata: { ...metadata, page_urls } },
+            });
+            return discovered;
+        } catch (error) {
+            console.warn('[PageSpeedService] resolvePageTypeUrls:discovery-failed', {
+                connectorId: connector.id,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return cached ? this.normalizeCachedPageUrls(cached, storeUrl) : null;
+        }
+    }
+
+    private static normalizeCachedPageUrls(
+        cached: Record<string, any>,
+        storeUrl: string,
+    ): { pdp: string | null; plp: string | null; checkout: string } {
+        return {
+            pdp: typeof cached.pdp === 'string' && cached.pdp.trim() ? cached.pdp : null,
+            plp: typeof cached.plp === 'string' && cached.plp.trim() ? cached.plp : null,
+            checkout: typeof cached.checkout === 'string' && cached.checkout.trim()
+                ? cached.checkout
+                : `${storeUrl.replace(/\/$/, '')}/checkout/`,
+        };
     }
 
     /**
@@ -728,6 +856,165 @@ export class PageSpeedService {
         };
     }
 
+    /**
+     * Adobe Commerce only: auto-discover a representative PDP and PLP URL via the
+     * REST API so the page-type breakdown measures real product/category pages
+     * instead of proxying the homepage. Checkout is the well-known static path.
+     *
+     * Returns null when discovery cannot run at all (no base URL or access token).
+     * Individual page types resolve to null when their own lookup fails, so a
+     * partial discovery (e.g. PLP found but PDP not) still returns useful URLs.
+     */
+    private static async discoverPageUrls(
+        connector: ConnectorInstanceConfig,
+        publicStoreUrl: string,
+    ): Promise<{ pdp: string | null; plp: string | null; checkout: string } | null> {
+        const syncConfig = connector.syncConfig || {};
+        const apiBase = this.normalizePublicUrl(syncConfig.baseUrl || syncConfig.storeUrl);
+        const publicBase = (publicStoreUrl || '').replace(/\/$/, '');
+        if (!apiBase || !publicBase) {
+            console.warn('[PageSpeedService] discoverPageUrls:missing-base-url', { connectorId: connector.id });
+            return null;
+        }
+
+        const credentials = this.parseCredentials(connector.credentials?.[0]?.encryptedSecret);
+        const token = String(
+            credentials.accessToken || credentials.adminApiToken || credentials.adminApiAccessToken || credentials.token || credentials.apiKey || '',
+        ).trim();
+        if (!token) {
+            console.warn('[PageSpeedService] discoverPageUrls:missing-token', { connectorId: connector.id });
+            return null;
+        }
+
+        const checkout = `${publicBase}/checkout/`;
+
+        // Magento's default URL rewrite appends ".html" to category/product url keys.
+        // The suffix is store-configurable (catalog/seo/{category,product}_url_suffix)
+        // and there is no reliable unauthenticated REST endpoint to read it, so we use
+        // the Magento default and allow an explicit override via syncConfig.
+        const categorySuffix = this.normalizeUrlSuffix(syncConfig.categoryUrlSuffix ?? syncConfig.category_url_suffix, '.html');
+        const productSuffix = this.normalizeUrlSuffix(syncConfig.productUrlSuffix ?? syncConfig.product_url_suffix, '.html');
+
+        const [plp, pdp] = await Promise.all([
+            this.discoverPlpUrl(apiBase, token, publicBase, categorySuffix).catch((error) => {
+                console.warn('[PageSpeedService] discoverPageUrls:plp-failed', {
+                    connectorId: connector.id, error: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+            }),
+            this.discoverPdpUrl(apiBase, token, publicBase, productSuffix).catch((error) => {
+                console.warn('[PageSpeedService] discoverPageUrls:pdp-failed', {
+                    connectorId: connector.id, error: error instanceof Error ? error.message : String(error),
+                });
+                return null;
+            }),
+        ]);
+
+        return { pdp, plp, checkout };
+    }
+
+    // Walk the category tree, pick the first active, in-menu, non-root category, then
+    // fetch it for its url_key (the tree endpoint omits url_key).
+    private static async discoverPlpUrl(apiBase: string, token: string, publicBase: string, suffix: string): Promise<string | null> {
+        const tree = await this.magentoGet(`${apiBase}/rest/V1/categories`, token);
+        const categoryId = this.pickMenuCategoryId(tree);
+        if (categoryId == null) return null;
+
+        const category = await this.magentoGet(`${apiBase}/rest/V1/categories/${categoryId}`, token);
+        const urlKey = this.readCustomAttribute(category, 'url_key');
+        if (!urlKey) return null;
+
+        return `${publicBase}/${urlKey}${suffix}`;
+    }
+
+    // Depth-first: first active + in-menu category below the root (level <= 1 is root).
+    private static pickMenuCategoryId(node: any): number | null {
+        const children: any[] = Array.isArray(node?.children_data) ? node.children_data : [];
+        for (const child of children) {
+            const level = Number(child?.level);
+            const isRoot = Number.isFinite(level) && level <= 1;
+            if (!isRoot && child?.is_active === true && child?.include_in_menu === true && child?.id != null) {
+                return Number(child.id);
+            }
+            const fromChild = this.pickMenuCategoryId(child);
+            if (fromChild != null) return fromChild;
+        }
+        return null;
+    }
+
+    // First enabled product; read url_key from custom_attributes, falling back to the
+    // single-product endpoint (the list response can omit it).
+    private static async discoverPdpUrl(apiBase: string, token: string, publicBase: string, suffix: string): Promise<string | null> {
+        const url = new URL(`${apiBase}/rest/V1/products`);
+        url.searchParams.set('searchCriteria[pageSize]', '1');
+        url.searchParams.set('searchCriteria[filter_groups][0][filters][0][field]', 'status');
+        url.searchParams.set('searchCriteria[filter_groups][0][filters][0][value]', '1');
+
+        const payload = await this.magentoGet(url.toString(), token);
+        const product = Array.isArray(payload?.items) ? payload.items[0] : null;
+        if (!product) return null;
+
+        let urlKey = this.readCustomAttribute(product, 'url_key');
+        if (!urlKey && product?.sku) {
+            const full = await this.magentoGet(`${apiBase}/rest/V1/products/${encodeURIComponent(String(product.sku))}`, token);
+            urlKey = this.readCustomAttribute(full, 'url_key');
+        }
+        if (!urlKey) return null;
+
+        return `${publicBase}/${urlKey}${suffix}`;
+    }
+
+    // url_key can sit at the top level or inside Magento's custom_attributes array.
+    private static readCustomAttribute(entity: any, code: string): string | null {
+        const direct = entity?.[code];
+        if (typeof direct === 'string' && direct.trim()) return direct.trim();
+
+        const attrs: any[] = Array.isArray(entity?.custom_attributes) ? entity.custom_attributes : [];
+        const found = attrs.find((attr) => attr?.attribute_code === code);
+        const value = found?.value;
+        return typeof value === 'string' && value.trim() ? value.trim() : null;
+    }
+
+    // Normalize a configured URL suffix: '' means the store uses no suffix; a bare
+    // value gets a leading dot; undefined/null uses the Magento default.
+    private static normalizeUrlSuffix(value: unknown, fallback: string): string {
+        if (value === undefined || value === null) return fallback;
+        const raw = String(value).trim();
+        if (raw === '') return '';
+        return raw.startsWith('.') ? raw : `.${raw}`;
+    }
+
+    // Bounded authenticated GET against the Adobe Commerce REST API. Throws on a
+    // non-2xx response so callers can decide whether to fall back.
+    private static async magentoGet(requestUrl: string, token: string): Promise<any> {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
+            const controller = new AbortController();
+            const timeoutMs = Number(process.env.ADOBE_COMMERCE_FETCH_TIMEOUT_MS || 10000);
+            timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+            const response = await fetchFn(requestUrl, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                },
+                signal: controller.signal,
+            });
+
+            if (!response.ok) {
+                const body = await response.text().catch(() => '');
+                throw new Error(`Adobe Commerce GET ${requestUrl} -> ${response.status} ${response.statusText} ${body.slice(0, 200)}`);
+            }
+
+            return await response.json();
+        } finally {
+            if (timeout) clearTimeout(timeout);
+        }
+    }
+
     private static async resolvePageMetrics(input: {
         tenantId: string; projectId: string; connectorInstanceId: string;
         strategy: PagespeedStrategy; pageType: PageType; url: string; forceRefresh: boolean;
@@ -735,25 +1022,27 @@ export class PageSpeedService {
         const { tenantId, projectId, connectorInstanceId, strategy, pageType, url, forceRefresh } = input;
         const source = this.buildPageSource(strategy, pageType);
 
-        // A normal page load NEVER triggers a live PageSpeed run. We serve the last
-        // stored measurement regardless of age, so opening/reloading the page is fast
-        // and can't hang on a slow Google PageSpeed call (the "socket hang up" / 500
-        // and the "recalculating on every reload" symptom). A fresh measurement only
-        // happens on an explicit refresh (the Refresh button, forceRefresh=true) or
-        // the background sync.
-        if (!forceRefresh) {
-            const cached = await this.readCachedPage(projectId, connectorInstanceId, source, strategy);
-            if (cached) {
-                if (cached.values.score !== undefined && cached.values.score < 0) {
-                    return this.unavailablePage(pageType, cached.url || url, this.failureReason(pageType), cached.timestamp);
-                }
-                return this.buildPageResult(pageType, cached.url || url, cached.values, cached.timestamp);
+        // How long a stored PageSpeed measurement is considered "fresh enough" to serve
+        // on a normal page load. Older than this and the next load auto-fetches a fresh
+        // run (no explicit Refresh click required).
+        const PAGE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+        // On a normal page load we serve the last stored measurement as long as it is
+        // still fresh (under the TTL). A first-ever load with no measurement returns a
+        // "not measured yet" state so it can't hang on a live PageSpeed call. A stale
+        // cache (older than the TTL) falls through to a live run below. An explicit
+        // refresh (forceRefresh=true) always re-measures.
+        const cached = await this.readCachedPage(projectId, connectorInstanceId, source, strategy);
+        if (!forceRefresh && cached && cached.ageMs < PAGE_CACHE_TTL_MS) {
+            if (cached.values.score !== undefined && cached.values.score < 0) {
+                return this.unavailablePage(pageType, cached.url || url, this.failureReason(pageType), cached.timestamp);
             }
-            // No measurement has ever been taken — don't block the page load on a live
-            // run. Surface a "not measured yet" state; the user runs the first
-            // measurement with Refresh.
-            return this.unavailablePage(pageType, url, 'Not measured yet — click Refresh to run PageSpeed.', null);
+            return this.buildPageResult(pageType, cached.url || url, cached.values, cached.timestamp);
         }
+        if (!forceRefresh && !cached) {
+            return this.unavailablePage(pageType, url, NOT_MEASURED_REASON, null);
+        }
+        // Cache is stale (> TTL) or forceRefresh=true — fall through to the live fetch below.
 
         // Fetch fresh from PageSpeed. On an explicit refresh, bust Google's result
         // cache so the user gets a brand-new measurement instead of a repeated one.

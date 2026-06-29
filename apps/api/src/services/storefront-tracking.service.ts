@@ -684,6 +684,38 @@ export class StorefrontTrackingService {
     };
   }
 
+  /**
+   * Live user count — distinct visitors whose sessions are still active "right
+   * now", i.e. their last_active_at falls within the trailing `windowMinutes`
+   * (default 5). This is the real-time storefront presence count, distinct from
+   * the historical session totals returned by listSessions / sessionKpis.
+   */
+  static async liveUsers(input: {
+    tenantId: string;
+    connectorInstanceId: string;
+    windowMinutes?: number | null;
+  }) {
+    const windowMinutes = Math.min(Math.max(Number(input.windowMinutes) || 5, 1), 60);
+    const since = new Date(Date.now() - windowMinutes * 60 * 1000);
+
+    const rows = await prisma.$queryRaw<Array<{ live_visitors: bigint; live_sessions: bigint }>>`
+      SELECT
+        COUNT(DISTINCT visitor_id)::bigint AS live_visitors,
+        COUNT(*)::bigint                   AS live_sessions
+      FROM storefront_sessions
+      WHERE tenant_id = ${input.tenantId}
+        AND connector_instance_id = ${input.connectorInstanceId}
+        AND last_active_at >= ${since}
+    `;
+
+    return {
+      liveUsers: Number(rows[0]?.live_visitors ?? 0),
+      liveSessions: Number(rows[0]?.live_sessions ?? 0),
+      windowMinutes,
+      asOf: new Date().toISOString(),
+    };
+  }
+
   static async listEvents(input: {
     tenantId: string;
     connectorInstanceId: string;

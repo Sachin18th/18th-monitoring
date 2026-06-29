@@ -15,6 +15,7 @@ import {
     getCustomerIntelligence,
     savePaymentGatewayConfig,
     getPaymentGatewayStatuses,
+    getSmsGatewayStatuses,
     getTopPages,
     getFunnelData,
     getOrderSummary,
@@ -38,7 +39,8 @@ import {
     getResourceBreakdown,
     getMetricsCatalog,
     getMetricsSeries,
-    getIncidents
+    getIncidents,
+    getStorefrontDigest
 } from '../controllers/dashboard.controller';
 import { tenantAuthHandler } from '../middlewares/auth.middleware';
 import { requirePageAccess } from '../middlewares/page-access.middleware';
@@ -57,6 +59,7 @@ export const dashboardRoutes = async (fastify: any) => {
     fastify.get('/governance', getGovernanceConfig);
     fastify.post('/governance', updateGovernanceConfig);
     fastify.get('/incidents', getIncidents);
+    fastify.get('/storefront/digest', getStorefrontDigest);
 
     // Performance Endpoints
     fastify.get('/performance/summary', { preHandler: [requirePageAccess(['performance', 'rum', 'observability/backend', 'observability/incidents'])] }, getPerformanceSummary);
@@ -74,6 +77,7 @@ export const dashboardRoutes = async (fastify: any) => {
     fastify.get('/customers/intelligence', { preHandler: [requirePageAccess(['customers', 'observability/journeys'])] }, getCustomerIntelligence);
     fastify.get('/customers/payment-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend'])] }, getPaymentGatewayStatuses);
     fastify.post('/customers/payment-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend'])] }, savePaymentGatewayConfig);
+    fastify.get('/customers/sms-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend'])] }, getSmsGatewayStatuses);
     fastify.get('/customers/list', getCustomerList);
     fastify.get('/customers/top-pages', { preHandler: [requirePageAccess(['customers', 'rum', 'observability/journeys'])] }, getTopPages);
     fastify.get('/customers/funnel', { preHandler: [requirePageAccess(['customers', 'rum', 'observability/journeys'])] }, getFunnelData);

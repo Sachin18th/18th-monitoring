@@ -165,7 +165,7 @@ export class AuthService {
 
         // Generate token and create session in database
         const token = crypto.randomBytes(32).toString('hex');
-        const expiresAt = new Date(Date.now() + 3600 * 1000); // 1 hour
+        const expiresAt = new Date(Date.now() + 8 * 3600 * 1000); // 8 hours
 
         await prisma.userSession.create({
             data: {

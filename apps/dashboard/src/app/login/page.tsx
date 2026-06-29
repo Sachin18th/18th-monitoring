@@ -107,7 +107,7 @@ export default function LoginPage() {
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2563eb] text-white shadow-lg shadow-blue-500/20">
             <Command size={26} />
           </div>
-          <span className="text-xl font-black tracking-tight text-[#0f1724]">GRAVITY</span>
+          <span className="text-xl font-black tracking-tight text-[#0f1724]">KPI</span>
           <span className="mt-1 text-[10px] font-bold uppercase tracking-[0.3em] text-[#2563eb]">
             Monitoring Platform
           </span>

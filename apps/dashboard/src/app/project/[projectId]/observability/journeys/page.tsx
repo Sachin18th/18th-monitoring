@@ -24,7 +24,9 @@ import {
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuth } from '@/context/AuthContext';
+import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PageRestricted } from '@/components/PageRestricted';
+import SessionJourneyTimeline from '@/components/journey/SessionJourneyTimeline';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -89,7 +91,6 @@ const stageLossColor = (pct: number) => (pct > 20 ? C.red : pct >= 10 ? C.amber 
 const bounceAccent = (pct: number) => (pct > 60 ? C.red : pct >= 40 ? C.amber : C.green);
 const durationAccent = (secs: number) => (secs > 60 ? C.green : secs >= 15 ? C.amber : 'var(--border-card)');
 const repeatAccent = (pct: number) => (pct > 30 ? C.green : pct >= 10 ? C.amber : 'var(--border-card)');
-const cartRateBadge = (pct: number) => (pct > 20 ? C.green : pct >= 5 ? C.amber : 'var(--text-muted)');
 const truncate = (s: string, n = 40) => (s && s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 // Donut chart palette for categorical breakdowns (devices, etc.).
@@ -152,7 +153,8 @@ function Donut({
 
 export default function JourneyIntelligencePage() {
   const { projectId } = useParams();
-  const { apiFetch, token } = useAuth();
+  const { apiFetch, token, user } = useAuth();
+  const { connectorInstanceId } = useConnectorFilter();
   const initialLoadKeyRef = useRef<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -1038,14 +1040,11 @@ export default function JourneyIntelligencePage() {
                   <thead>
                     <tr style={{ textAlign: 'left' }}>
                       <th style={{ ...thStyle, borderRadius: '8px 0 0 8px' }}>Product</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Views</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Carts</th>
-                      <th style={{ ...thStyle, textAlign: 'right', borderRadius: '0 8px 8px 0' }}>Cart Rate</th>
+                      <th style={{ ...thStyle, textAlign: 'right', borderRadius: '0 8px 8px 0' }}>Views</th>
                     </tr>
                   </thead>
                   <tbody>
                     {products.slice(0, 20).map((p) => {
-                      const badge = cartRateBadge(p.cart_rate);
                       return (
                         <tr
                           key={p.product_id || p.product_name}
@@ -1063,22 +1062,6 @@ export default function JourneyIntelligencePage() {
                               </div>
                               <span style={{ color: 'var(--text-secondary)', minWidth: '28px' }}>{p.views.toLocaleString()}</span>
                             </div>
-                          </td>
-                          <td style={{ padding: '12px 16px', color: 'var(--text-secondary)', textAlign: 'right' }}>{p.add_to_carts.toLocaleString()}</td>
-                          <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                            <span
-                              style={{
-                                display: 'inline-block',
-                                padding: '2px 8px',
-                                borderRadius: '999px',
-                                fontSize: '12px',
-                                fontWeight: 600,
-                                color: badge,
-                                background: `color-mix(in srgb, ${badge} 14%, transparent)`
-                              }}
-                            >
-                              {p.cart_rate.toFixed(1)}%
-                            </span>
                           </td>
                         </tr>
                       );
@@ -1168,6 +1151,15 @@ export default function JourneyIntelligencePage() {
             {intelligence?.range ? ` · Range: ${intelligence.range}` : ''}
           </div>
         )}
+
+        {/* Session Journey Timeline — individual visitor paths, event by event.
+            Self-contained: loads its own session/event data scoped to the active
+            connector. Rendered below all existing journey intelligence sections. */}
+        <SessionJourneyTimeline
+          projectId={String(projectId)}
+          connectorInstanceId={connectorInstanceId || ''}
+          tenantId={user?.tenantId || ''}
+        />
       </div>
 
 

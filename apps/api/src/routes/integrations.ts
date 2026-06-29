@@ -18,6 +18,11 @@ export const integrationRoutes = async (fastify: FastifyInstance) => {
     
     fastify.get('/',        IntegrationController.listConnectors);
     fastify.post('/',       IntegrationController.createInstance);
+
+    // Single connector instance (deep-link / page-refresh lookup).
+    // Registered as a static-vs-param sibling to /validate, /discover, /registry —
+    // Fastify's radix router prefers those static paths over this :id param.
+    fastify.get('/:id',     IntegrationController.getConnector);
     
     // Lifecycle Actions (Discovery & Validation)
     fastify.post('/validate', IntegrationController.validate);
