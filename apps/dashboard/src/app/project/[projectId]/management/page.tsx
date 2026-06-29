@@ -108,7 +108,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { PageLayout, Card, Typography } from '@kpi-platform/ui';
 import {
   Settings, ShieldCheck, History, Users,
-  ArrowRight, Workflow, BarChart3, ShieldAlert
+  ArrowRight, BarChart3, ShieldAlert
 } from 'lucide-react';
 import { RoleGuard } from '../../../../components/auth/RoleGuard';
 
@@ -118,7 +118,6 @@ export default function ManagementIndexPage() {
   const projectId = params.projectId as string;
 
   const dataPlatformTools = [
-    { title: 'Data Flow Monitor', href: `/project/${projectId}/management/data-flow`, icon: Workflow, detail: 'End-to-end intake, execution, DLQ, and sync checkpoints', status: 'live' },
     { title: 'KPI Engine', href: `/project/${projectId}/management/kpi`, icon: BarChart3, detail: 'Metric computations and formulas', status: 'live' },
     { title: 'System Monitoring', href: `/project/${projectId}/management/monitoring`, icon: ShieldAlert, detail: 'Health score and alert triggers', status: 'live' },
   ];

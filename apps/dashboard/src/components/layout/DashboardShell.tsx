@@ -18,7 +18,6 @@ import {
   Bell,
   UserCircle,
   ShieldCheck,
-  Workflow,
   ShieldAlert,
   BarChart3,
   Monitor,
@@ -309,7 +308,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
       {
         name: 'Data Platform',
         items: [
-          { label: 'Data Flow', href: `${prefix}/management/data-flow`, icon: Workflow, pageKey: 'management/data-flow' },
           { label: 'KPI Engine', href: `${prefix}/management/kpi`, icon: BarChart3, pageKey: 'management/kpi' },
           { label: 'Monitoring', href: `${prefix}/management/monitoring`, icon: ShieldAlert, pageKey: 'management/monitoring' }
         ]

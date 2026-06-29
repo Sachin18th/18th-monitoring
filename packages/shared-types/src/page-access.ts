@@ -11,7 +11,6 @@ export type ProjectPageKey =
   | 'orders'
   | 'integrations'
   | 'alerts'
-  | 'management/data-flow'
   | 'management/ingestion'
   | 'management/pipeline'
   | 'management/kpi'
@@ -48,7 +47,6 @@ export const PROJECT_PAGE_ACCESS_OPTIONS: ProjectPageAccessOption[] = [
   { key: 'orders', label: 'Orders', group: 'Operational Surface', path: '/orders' },
   { key: 'integrations', label: 'Integrations', group: 'System', path: '/integrations' },
   { key: 'alerts', label: 'Alerts', group: 'System', path: '/alerts' },
-  { key: 'management/data-flow', label: 'Data Flow', group: 'Data Platform', path: '/management/data-flow' },
   { key: 'management/ingestion', label: 'Ingestion', group: 'Data Platform', path: '/management/ingestion' },
   { key: 'management/pipeline', label: 'Pipeline', group: 'Data Platform', path: '/management/pipeline' },
   { key: 'management/kpi', label: 'KPI Engine', group: 'Data Platform', path: '/management/kpi' },
