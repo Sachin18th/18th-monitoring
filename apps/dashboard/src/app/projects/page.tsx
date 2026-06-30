@@ -32,8 +32,28 @@ type ProjectSummary = {
   metricsSummary?: {
     activeUsers?: number;
     errorRate?: number;
+    // % of the project's store connectors that are HEALTHY right now — the same
+    // "Service Availability" signal shown on the per-project integrations page.
+    serviceAvailability?: number;
+    connectorCount?: number;
   };
 };
+
+// Resolve a project's health % from its live store integration Service Availability,
+// falling back to the connector error-rate signal for older payloads that lack it.
+function resolveHealth(project: ProjectSummary) {
+  const summary = project.metricsSummary;
+  if (typeof summary?.serviceAvailability === "number") {
+    return Math.max(0, Math.min(100, summary.serviceAvailability));
+  }
+  return Math.max(0, 100 - (summary?.errorRate || 0));
+}
+
+function healthColor(tone: "healthy" | "warning" | "critical") {
+  if (tone === "critical") return "#EF4444";
+  if (tone === "warning") return "#F59E0B";
+  return "#22C55E";
+}
 
 const timeFilters = [
   { label: "24H", value: "24h" },
@@ -188,8 +208,9 @@ const ProjectCard = ({
   isDark: boolean;
 }) => {
   const traffic = project.metricsSummary?.activeUsers || 0;
-  const health = Math.max(0, 100 - (project.metricsSummary?.errorRate || 0));
+  const health = resolveHealth(project);
   const tone = getHealthTone(health);
+  const healthHex = healthColor(tone);
 
   return (
     <button
@@ -259,11 +280,17 @@ const ProjectCard = ({
               className="text-[10px] font-medium uppercase tracking-[0.08em]"
               style={{ color: "var(--text-label)" }}
             >
-              System health
+              Service availability
             </p>
             <div className="mt-2 inline-flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-[#22C55E]" />
-              <p className="text-[22px] font-medium leading-tight text-[#22C55E]">
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ background: healthHex }}
+              />
+              <p
+                className="text-[22px] font-medium leading-tight"
+                style={{ color: healthHex }}
+              >
                 {health.toFixed(0)}%
               </p>
             </div>
@@ -358,16 +385,16 @@ export default function ProjectsPage() {
       (sum, project) => sum + (project.metricsSummary?.activeUsers || 0),
       0,
     );
-    const totalErrors = projects.reduce(
-      (sum, project) => sum + (project.metricsSummary?.errorRate || 0),
+    const totalHealth = projects.reduce(
+      (sum, project) => sum + resolveHealth(project),
       0,
     );
     const projectsAtRisk = projects.filter(
-      (project) => (project.metricsSummary?.errorRate || 0) > 0,
+      (project) => getHealthTone(resolveHealth(project)) !== "healthy",
     ).length;
     const avgHealth =
       projects.length > 0
-        ? Math.max(0, 100 - totalErrors / projects.length)
+        ? Math.max(0, totalHealth / projects.length)
         : 100;
 
     return {
@@ -386,7 +413,7 @@ export default function ProjectsPage() {
   const HEALTH_PALETTE = ["#3B82F6", "#22C55E", "#8B5CF6", "#F59E0B", "#EC4899", "#06B6D4"];
   const projectHealthData = useMemo(() => {
     return projects.map((project, index) => {
-      const health = Math.max(0, 100 - (project.metricsSummary?.errorRate || 0));
+      const health = resolveHealth(project);
       return {
         name: project.name,
         value: Math.max(health, 1),

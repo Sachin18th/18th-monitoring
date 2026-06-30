@@ -33,19 +33,32 @@ export const getProjects = async (req: any, reply: any) => {
         result = tenantProjects.filter(p => assignedIds.includes(p.id));
     }
 
-    // Attach a live health summary per project. errorRate = % of connector
-    // lifecycle events with ERROR severity over the last 30 days — the same
-    // signal that drives the KPI engine's pipeline success rate, so the
-    // projects overview and the per-project KPI page stay consistent.
+    // Attach a live health summary per project.
+    //
+    // serviceAvailability = % of the project's store connectors that are HEALTHY
+    // right now — the exact same signal the per-project integrations page surfaces
+    // as "Service Availability" (see DashboardService.getIntegrationHealthSummary),
+    // so the portfolio cards and the integrations page stay consistent.
+    //
+    // errorRate = % of connector lifecycle events with ERROR severity over the last
+    // 30 days, kept for the incident-surface aggregates on the portfolio view.
     const projectIds = result.map(p => p.id);
     const errorRateByProject: Record<string, number> = {};
+    const availabilityByProject: Record<string, { rate: number; total: number }> = {};
     if (projectIds.length > 0) {
         const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const groups = await prisma.connectorLifecycleEvent.groupBy({
-            by: ['projectId', 'severity'],
-            where: { projectId: { in: projectIds }, createdAt: { gte: since } },
-            _count: { _all: true },
-        });
+        const [groups, connectors] = await Promise.all([
+            prisma.connectorLifecycleEvent.groupBy({
+                by: ['projectId', 'severity'],
+                where: { projectId: { in: projectIds }, createdAt: { gte: since } },
+                _count: { _all: true },
+            }),
+            prisma.connectorInstance.findMany({
+                where: { siteId: { in: projectIds } },
+                select: { siteId: true, healthStatus: true },
+            }),
+        ]);
+
         const totals: Record<string, { total: number; errors: number }> = {};
         for (const g of groups as any[]) {
             const t = totals[g.projectId] ?? (totals[g.projectId] = { total: 0, errors: 0 });
@@ -57,12 +70,34 @@ export const getProjects = async (req: any, reply: any) => {
                 ? Math.round((t.errors / t.total) * 10000) / 100
                 : 0;
         }
+
+        const connectorTotals: Record<string, { total: number; healthy: number }> = {};
+        for (const c of connectors) {
+            if (!c.siteId) continue;
+            const t = connectorTotals[c.siteId] ?? (connectorTotals[c.siteId] = { total: 0, healthy: 0 });
+            t.total += 1;
+            if (c.healthStatus === 'HEALTHY') t.healthy += 1;
+        }
+        for (const [pid, t] of Object.entries(connectorTotals)) {
+            availabilityByProject[pid] = {
+                rate: t.total > 0 ? Math.round((t.healthy / t.total) * 100) : 100,
+                total: t.total,
+            };
+        }
     }
 
-    const withMetrics = result.map(p => ({
-        ...p,
-        metricsSummary: { errorRate: errorRateByProject[p.id] ?? 0 },
-    }));
+    const withMetrics = result.map(p => {
+        const availability = availabilityByProject[p.id];
+        return {
+            ...p,
+            metricsSummary: {
+                errorRate: errorRateByProject[p.id] ?? 0,
+                // 100 when a project has no connectors yet, matching the integrations summary.
+                serviceAvailability: availability?.rate ?? 100,
+                connectorCount: availability?.total ?? 0,
+            },
+        };
+    });
 
     return reply.code(200).send(successResponse(withMetrics));
 };

@@ -890,9 +890,14 @@ export const ConnectorPlatformProvider: React.FC<{
   }, [activeConnectorId, canonicalProducts, connectedStores]);
 
   const healthScore = useMemo(() => {
+    // With no connected stores there is nothing unhealthy to report, so treat the
+    // project as fully available (100) instead of dividing zero by one (= 0), which
+    // would otherwise drive healthLevel to CRITICAL for a project that has no store yet.
     const storeScore =
-      connectedStores.reduce((sum, store) => sum + store.healthScore, 0) /
-      Math.max(connectedStores.length, 1);
+      connectedStores.length > 0
+        ? connectedStores.reduce((sum, store) => sum + store.healthScore, 0) /
+          connectedStores.length
+        : 100;
     const alertPenalty =
       alerts.filter(
         (alert) => alert.status === "active" && alert.severity === "critical",
