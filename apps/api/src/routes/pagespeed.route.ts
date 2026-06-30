@@ -38,14 +38,25 @@ export const pagespeedRoutes = async (fastify: FastifyInstance) => {
 
     fastify.get('/tenants/:tenantId/projects/:siteId/pagespeed/pages', async (req, reply) => {
         const { tenantId, siteId } = req.params as any;
-        const { connector_instance_id: connectorInstanceId, strategy: strategyParam, refresh } = req.query as any;
+        const { connector_instance_id: connectorInstanceId, strategy: strategyParam, refresh, page_type: pageTypeParam, source_url: sourceUrlParam } = req.query as any;
         const strategy = String(strategyParam || 'mobile').toLowerCase() === 'desktop' ? 'desktop' : 'mobile';
         const forceRefresh = String(refresh || '').toLowerCase() === 'true' || refresh === '1';
+        // Optional: measure/read a SPECIFIC discovered URL (the PDP/PLP page picked from
+        // the dropdown). Only honored together with page_type.
+        const sourceUrl = typeof sourceUrlParam === 'string' && sourceUrlParam.trim() ? sourceUrlParam.trim() : undefined;
+        // Optional single-page-type refresh. A live PSI run can take up to ~2 min per
+        // page, so measuring all 4 types in one request blows past the proxy timeout
+        // (socket hang up / 500). The dashboard refreshes ONE page type at a time; only
+        // that type is measured live, the rest are served from cache.
+        const allowedPageTypes = ['homepage', 'pdp', 'plp', 'checkout'];
+        const pageType = allowedPageTypes.includes(String(pageTypeParam || '').toLowerCase())
+            ? (String(pageTypeParam).toLowerCase() as 'homepage' | 'pdp' | 'plp' | 'checkout')
+            : undefined;
 
-        console.log('[PAGESPEED] pages request', { requestId: req.id, tenantId, siteId, connectorInstanceId, strategy, forceRefresh });
+        console.log('[PAGESPEED] pages request', { requestId: req.id, tenantId, siteId, connectorInstanceId, strategy, forceRefresh, pageType, sourceUrl });
 
         try {
-            const data = await PageSpeedService.getPageTypeMetrics(tenantId, siteId, connectorInstanceId, strategy, forceRefresh);
+            const data = await PageSpeedService.getPageTypeMetrics(tenantId, siteId, connectorInstanceId, strategy, forceRefresh, pageType, sourceUrl);
             return reply.send(ResponseUtil.success(data, { strategy }, req.id as string));
         } catch (err) {
             console.error('[PAGESPEED] pages failed', err);

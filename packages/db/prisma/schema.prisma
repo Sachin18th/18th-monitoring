@@ -421,6 +421,7 @@ model ConnectorInstance {
   storefrontEvents   StorefrontEvent[]
   storefrontErrors   StorefrontError[]
   apiHealthChecks    ConnectorHealthCheck[]
+  discoveredPageUrls DiscoveredPageUrl[]
 
   @@index([siteId], map: "idx_connector_site")
   @@index([tenantId], map: "idx_connector_tenant")
@@ -763,6 +764,30 @@ model KpiValue {
   @@index([tenantId, timestamp], map: "idx_kpi_tenant_ts")
   @@index([connectorInstanceId, timestamp], map: "idx_kpi_connector_ts")
   @@map("kpi_values")
+}
+
+// Sampled, representative PDP/PLP/checkout URLs resolved per connector by the
+// PageSpeed page-type discovery module. NOT the full catalog — capped per the
+// sampling strategy (PDP<=50, PLP<=50, checkout=1). One row per discovered URL
+// (rank = priority within page type; 0 = measured representative). PSI measures the
+// URL the user picks (default: rank 0). Re-discovered on a schedule, not per PSI run.
+model DiscoveredPageUrl {
+  id                  String   @id @default(uuid()) @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  pageType            String   @map("page_type") @db.VarChar(20) // homepage | pdp | plp | checkout
+  resolvedUrl         String   @map("resolved_url") @db.VarChar(1024)
+  urlResolutionMethod String   @map("url_resolution_method") @db.VarChar(20) // api_field | constructed | static
+  rank                Int      @default(0) // priority within page type; 0 = measured representative
+  discoveredAt        DateTime @default(now()) @map("discovered_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  connectorInstance ConnectorInstance @relation(fields: [connectorInstanceId], references: [id], onDelete: Cascade)
+
+  @@unique([connectorInstanceId, pageType, resolvedUrl], map: "uq_discovered_page_url")
+  @@index([connectorInstanceId, pageType], map: "idx_discovered_connector_pagetype")
+  @@map("discovered_page_urls")
 }
 
 model CanonicalOrder {

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
 import { PageRestricted } from '../../../../../components/PageRestricted';
+import PageSpeedCharts from '../../../../../components/rum/PageSpeedCharts';
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -153,7 +154,7 @@ const TICK_STYLE = { fontSize: 10, fill: 'var(--text-muted)' };
 export default function KpiAnalyticsPage() {
   const params = useParams();
   const projectId = params.projectId as string;
-  const { token, apiFetch } = useAuth();
+  const { token, apiFetch, user } = useAuth();
 
   const [timeRange, setTimeRange] = useState('30d');
   const [rumDevice, setRumDevice] = useState<'all' | 'mobile' | 'desktop'>('all');
@@ -170,6 +171,9 @@ export default function KpiAnalyticsPage() {
   const [custSummary, setCustSummary]       = useState<any>(null);
   const [perfSummary, setPerfSummary]       = useState<any>(null);
   const [digestData, setDigestData]         = useState<any>(null);
+  // Page-wise PageSpeed (Homepage/PLP/PDP/Checkout) for both devices, read-only from
+  // the cached /pagespeed/pages endpoint — never triggers a live PSI scan here.
+  const [pageSpeed, setPageSpeed]           = useState<Record<'mobile' | 'desktop', any>>({ mobile: null, desktop: null });
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (!token || !projectId) return;
@@ -182,6 +186,11 @@ export default function KpiAnalyticsPage() {
       if (!allowed.includes('management/kpi')) return;
 
       const qs = `siteId=${projectId}&range=${timeRange}`;
+      // Page-wise PageSpeed is keyed by the real tenant (not "current") to match the
+      // pagespeed route's tenant-isolation guard. Skipped if the tenant is unknown.
+      const tid = user?.tenantId;
+      const pagesUrl = (strategy: 'mobile' | 'desktop') =>
+        tid ? `/api/v1/tenants/${tid}/projects/${projectId}/pagespeed/pages?strategy=${strategy}` : null;
 
       const results = await Promise.allSettled([
         apiFetch(`/api/v1/tenants/current/projects/${projectId}/kpi/summary?range=${timeRange}`, { suppressUnauthorizedRedirect: true }),
@@ -192,9 +201,11 @@ export default function KpiAnalyticsPage() {
         apiFetch(`/api/v1/dashboard/customers/summary?${qs}`, { suppressUnauthorizedRedirect: true }),
         apiFetch(`/api/v1/dashboard/performance/summary?siteId=${projectId}&range=${timeRange}`, { suppressUnauthorizedRedirect: true }),
         apiFetch(`/api/v1/dashboard/storefront/digest?${qs}`, { suppressUnauthorizedRedirect: true }),
+        pagesUrl('mobile') ? apiFetch(pagesUrl('mobile')!, { suppressUnauthorizedRedirect: true }) : Promise.resolve(null),
+        pagesUrl('desktop') ? apiFetch(pagesUrl('desktop')!, { suppressUnauthorizedRedirect: true }) : Promise.resolve(null),
       ]);
 
-      const [kpiRes, catRes, ordSumRes, ordTrRes, ciRes, cSumRes, perfRes, digestRes] = results;
+      const [kpiRes, catRes, ordSumRes, ordTrRes, ciRes, cSumRes, perfRes, digestRes, pagesMobRes, pagesDeskRes] = results;
 
       // apiFetch auto-unwraps res.data.data — value IS the payload, not {data: payload}
       if (kpiRes.status === 'fulfilled')   setKpiSummary(kpiRes.value?.kpis || []);
@@ -208,6 +219,11 @@ export default function KpiAnalyticsPage() {
       if (cSumRes.status === 'fulfilled')  setCustSummary(cSumRes.value || null);
       if (perfRes.status === 'fulfilled')    setPerfSummary(perfRes.value || null);
       if (digestRes.status === 'fulfilled') setDigestData(digestRes.value || null);
+      // /pagespeed/pages returns the {homepage, plp, pdp, checkout} object directly
+      // (apiFetch already unwraps res.data.data). Merge both device payloads.
+      const unwrapPages = (res: PromiseSettledResult<any>) =>
+        res.status === 'fulfilled' && res.value ? (res.value.data ?? res.value) : null;
+      setPageSpeed({ mobile: unwrapPages(pagesMobRes), desktop: unwrapPages(pagesDeskRes) });
 
     } catch (err) {
       console.error('[KPI Engine] Failed to load analytics', err);
@@ -215,7 +231,7 @@ export default function KpiAnalyticsPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [projectId, token, apiFetch, timeRange]);
+  }, [projectId, token, apiFetch, timeRange, user?.tenantId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -901,6 +917,12 @@ export default function KpiAnalyticsPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* ── PAGESPEED BY PAGE TYPE ──────────────────────────────── */}
+        <div>
+          <div style={SECTION_LABEL}>PageSpeed by Page Type</div>
+          <PageSpeedCharts pageData={pageSpeed} loading={loading} />
         </div>
 
       </div>
