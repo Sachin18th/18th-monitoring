@@ -9,6 +9,7 @@
     "dev:synthetic": "tsx apps/synthetic-agent/src/index.ts",
     "synthetic:run": "tsx apps/synthetic-agent/src/index.ts",
     "demo:seed": "tsx scripts/demo-http-seed.ts",
+    "resync:all": "tsx scripts/resync-all-connectors.ts",
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:dashboard\"",
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",

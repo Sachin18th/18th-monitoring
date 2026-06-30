@@ -442,10 +442,7 @@ export default function KpiAnalyticsPage() {
                   <StatRow label="Total Revenue"       value={fmtCur(orderSummary.totalRevenue)}    color="#22c55e" />
                   <StatRow label="Avg Order Value"     value={fmtCur(orderSummary.averageOrderValue)} color="#a78bfa" />
                   <StatRow label="Orders This Hour"    value={fmt(orderSummary.ordersThisHour)}     color="var(--text-secondary)" />
-                  {/* Dynamic stages — only stages with actual orders are returned */}
-                  {(orderSummary.stages || []).map((s: any) => (
-                    <StatRow key={s.stage} label={s.stage} value={fmt(s.count)} color={s.color} />
-                  ))}
+                  <StatRow label="Delayed Orders"      value={fmt(orderSummary.delayedCount)}       color="#fbbf24" />
                   {orderSummary.failedCount > 0 && (
                     <StatRow label="Failed / Cancelled" value={fmt(orderSummary.failedCount)} color="#f87171" />
                   )}

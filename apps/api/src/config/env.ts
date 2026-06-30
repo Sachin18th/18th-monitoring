@@ -12,7 +12,9 @@ const envSchema = z.object({
   DATABASE_URL: z.string().optional(), // Optional for now since we use in-memory mostly
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
   ENABLE_OUTBOUND_NOTIFICATIONS: z.string().default('false'),
-  ENABLE_DEMO_SEEDING: z.string().default('true').transform(v => v === 'true'),
+
+  
+  
   // SMTP config for alert emails (nodemailer). Optional in dev — when unset,
   // NotificationService logs instead of sending.
   SMTP_HOST: z.string().optional(),

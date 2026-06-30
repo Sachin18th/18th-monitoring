@@ -21,6 +21,8 @@ export default function AuditPage() {
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [activityFeed, setActivityFeed] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'audit' | 'activity'>('audit');
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
 
   const loadData = useCallback(async () => {
@@ -36,6 +38,9 @@ export default function AuditPage() {
 
       const res = await apiFetch(`/api/v1/dashboard/audit?siteId=${projectId}`, { suppressUnauthorizedRedirect: true });
       setAuditLogs(Array.isArray(res) ? res : []);
+
+      const activity = await apiFetch(`/api/v1/dashboard/activity?siteId=${projectId}`, { suppressUnauthorizedRedirect: true });
+      setActivityFeed(Array.isArray(activity) ? activity : []);
     } catch (err: any) {
       console.error('[Audit] Load failed', err);
       setError('Failed to load audit log. Please retry.');
@@ -98,6 +103,43 @@ export default function AuditPage() {
     },
   ];
 
+  const activityColumns = [
+    {
+      key: 'timestamp',
+      header: 'Time',
+      width: '180px',
+      render: (val: string) => <span className="text-xs font-mono text-text-muted">{val}</span>,
+    },
+    {
+      key: 'type',
+      header: 'Event Type',
+      render: (val: string) => <span className="text-sm font-medium">{val}</span>,
+    },
+    {
+      key: 'entity',
+      header: 'Module',
+      render: (val: string) => <span className="text-xs text-text-muted">{val}</span>,
+    },
+    {
+      key: 'description',
+      header: 'Description',
+      render: (val: string) => <span className="text-xs">{val}</span>,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (val: string) => (
+        <Badge
+          variant={val === 'active' ? 'error' : val === 'resolved' ? 'success' : 'default'}
+          size="sm"
+          dot
+        >
+          {val?.toUpperCase()}
+        </Badge>
+      ),
+    },
+  ];
+
   return (
     <PageLayout
       title="Audit & Activity"
@@ -111,7 +153,9 @@ export default function AuditPage() {
             <Typography variant="h3" className="text-sm m-0">Recent Activity</Typography>
             <Badge variant="info" size="sm">Live</Badge>
             {!loading && !error && (
-              <span className="text-[10px] text-text-muted font-mono">{auditLogs.length} entries</span>
+              <span className="text-[10px] text-text-muted font-mono">
+                {(activeTab === 'audit' ? auditLogs.length : activityFeed.length)} entries
+              </span>
             )}
           </div>
           <div className="flex gap-3 items-center">
@@ -122,12 +166,36 @@ export default function AuditPage() {
             >
               <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
               Refresh
-            </button>
+            {/* </button>
             <button className="text-xs text-primary font-bold hover:underline flex items-center gap-1">
               <Calendar size={12} />
-              Export CSV
+              Export CSV */}
             </button>
           </div>
+        </div>
+
+        {/* Tab switcher */}
+        <div className="flex items-center gap-4 px-4 pt-3 border-b border-subtle">
+          <button
+            onClick={() => setActiveTab('audit')}
+            className={`text-xs font-medium px-3 py-2 -mb-px border-b-2 transition-colors ${
+              activeTab === 'audit'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            Audit Logs
+          </button>
+          <button
+            onClick={() => setActiveTab('activity')}
+            className={`text-xs font-medium px-3 py-2 -mb-px border-b-2 transition-colors ${
+              activeTab === 'activity'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            Activity Feed
+          </button>
         </div>
 
         {/* Error state */}
@@ -142,10 +210,18 @@ export default function AuditPage() {
         )}
 
         {/* Table */}
-        {!error && (
+        {!error && activeTab === 'audit' && (
           <OperationalTable
             columns={columns as any}
             data={auditLogs}
+            isLoading={loading}
+            isDense
+          />
+        )}
+        {!error && activeTab === 'activity' && (
+          <OperationalTable
+            columns={activityColumns as any}
+            data={activityFeed}
             isLoading={loading}
             isDense
           />

@@ -2,6 +2,16 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, decryptSecret } from '@kpi-platform/db';
 import { orderNormalizationService } from './order-normalization.service';
+import {
+    getSinceCursor,
+    computeMaxCheckpoint,
+    extractNextLink,
+    ORDER_SYNC_TYPE,
+    MAX_SYNC_PAGES
+} from './sync-checkpoint.util';
+
+const SHOPIFY_PAGE_DELAY_MS = 550;
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type ConnectorRecord = {
     id: string;
@@ -90,7 +100,7 @@ export class ShopifyOrderSyncService {
             data: {
                 id: runId,
                 connectorInstanceId,
-                syncType: 'MANUAL_RESYNC',
+                syncType: ORDER_SYNC_TYPE,
                 status: 'RUNNING',
                 startedAt,
                 recordsFetched: 0,
@@ -109,10 +119,15 @@ export class ShopifyOrderSyncService {
         });
 
         try {
+            // Incremental cursor: only orders updated since the last successful run (minus
+            // overlap). Null on the first run → full backfill.
+            const since = await getSinceCursor(connectorInstanceId, ORDER_SYNC_TYPE);
+
             const orders = await this.fetchOrders({
                 shopDomain,
                 adminApiAccessToken,
-                apiVersion
+                apiVersion,
+                since
             });
 
             let created = 0;
@@ -146,7 +161,9 @@ export class ShopifyOrderSyncService {
                     recordsFetched: orders.length,
                     recordsProcessed: created + updated,
                     recordsFailed: failed,
-                    checkpointValue: orders[0]?.updated_at || orders[0]?.created_at || null
+                    // Advance the checkpoint ONLY on a fully successful run. On a PARTIAL run we
+                    // leave it null so the cursor is not advanced and failed records are retried.
+                    checkpointValue: failed > 0 ? null : computeMaxCheckpoint(orders, ['updated_at', 'created_at'], 'shopify')
                 }
             });
 
@@ -222,6 +239,7 @@ export class ShopifyOrderSyncService {
         shopDomain: string;
         adminApiAccessToken: string;
         apiVersion: string;
+        since: Date | null;
     }): Promise<any[]> {
         const normalizedShopDomain = this.normalizeShopDomain(input.shopDomain);
         const baseUrl = `https://${normalizedShopDomain}/admin/api/${input.apiVersion}`;
@@ -234,61 +252,70 @@ export class ShopifyOrderSyncService {
             normalizedShopDomain,
             apiVersion: input.apiVersion,
             hasToken: Boolean(input.adminApiAccessToken),
-            maskedToken
+            maskedToken,
+            since: input.since?.toISOString() || null
         });
 
-        // console.log(`[ShopifyOrderSyncService] Fetching orders from ${baseUrl} for shop ${input.shopDomain}`);
-        const url = new URL(`${baseUrl}/orders.json`);
-        url.searchParams.set('status', 'any');
-        url.searchParams.set('limit', '100');
-        url.searchParams.set('order', 'updated_at desc');
-
-        console.log('[ShopifyOrderSyncService] fetchOrders:request', {
-            method: 'GET',
-            url: url.toString()
-        });
+        const firstUrl = new URL(`${baseUrl}/orders.json`);
+        firstUrl.searchParams.set('status', 'any');
+        firstUrl.searchParams.set('limit', '250');
+        // Incremental: only orders updated since the cursor. Omitted on full backfill.
+        if (input.since) {
+            firstUrl.searchParams.set('updated_at_min', input.since.toISOString());
+        }
 
         const fetchFunc: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
 
-        const response = await fetchFunc(url.toString(), {
-            method: 'GET',
-            headers: {
-                'X-Shopify-Access-Token': input.adminApiAccessToken,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
+        const orders: any[] = [];
+        // Shopify uses cursor pagination via the Link header; subsequent pages carry their own
+        // page_info (plus limit) so we follow the next URL verbatim.
+        let nextUrl: string | null = firstUrl.toString();
+        let page = 0;
+
+        while (nextUrl) {
+            page += 1;
+            if (page > MAX_SYNC_PAGES) {
+                console.warn('[ShopifyOrderSyncService] fetchOrders:page-cap-hit', { page, totalSoFar: orders.length });
+                break;
             }
-        });
 
-        console.log('[ShopifyOrderSyncService] fetchOrders:response', {
-            status: response.status,
-            statusText: response.statusText,
-            contentType: response.headers.get('content-type'),
-            requestId: response.headers.get('x-request-id')
-        });
-
-        if (!response.ok) {
-            const body = await response.text();
-            console.error('[ShopifyOrderSyncService] fetchOrders:error-response', {
-                status: response.status,
-                statusText: response.statusText,
-                body
+            const response = await fetchFunc(nextUrl, {
+                method: 'GET',
+                headers: {
+                    'X-Shopify-Access-Token': input.adminApiAccessToken,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                }
             });
-            throw new Error(`Shopify API request failed (${response.status}): ${body || response.statusText}`);
+
+            if (!response.ok) {
+                const body = await response.text();
+                console.error('[ShopifyOrderSyncService] fetchOrders:error-response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    body
+                });
+                throw new Error(`Shopify API request failed (${response.status}): ${body || response.statusText}`);
+            }
+
+            const payload = await response.json();
+            const pageOrders = Array.isArray(payload?.orders) ? payload.orders : [];
+            orders.push(...pageOrders);
+
+            if (!Array.isArray(payload?.orders)) {
+                console.warn('[ShopifyOrderSyncService] fetchOrders:unexpected-payload-shape', payload);
+            }
+
+            nextUrl = extractNextLink(response.headers.get('link') || response.headers.get('Link'));
+            if (nextUrl) {
+                await delay(SHOPIFY_PAGE_DELAY_MS);
+            }
         }
 
-        const payload = await response.json();
-        const orders = Array.isArray(payload?.orders) ? payload.orders : [];
-
-        console.log('[ShopifyOrderSyncService] fetchOrders:payload', {
-            payloadKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
-            orderCount: orders.length,
-            firstOrderId: orders[0]?.id || null,
-            firstOrderName: orders[0]?.name || null
+        console.log('[ShopifyOrderSyncService] fetchOrders:complete', {
+            pages: page,
+            orderCount: orders.length
         });
-
-        if (!Array.isArray(payload?.orders)) {
-            console.warn('[ShopifyOrderSyncService] fetchOrders:unexpected-payload-shape', payload);
-        }
 
         return orders;
     }

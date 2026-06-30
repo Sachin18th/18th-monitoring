@@ -2,6 +2,12 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, decryptSecret } from '@kpi-platform/db';
 import { orderNormalizationService } from './order-normalization.service';
+import {
+  getSinceCursor,
+  computeMaxCheckpoint,
+  ORDER_SYNC_TYPE,
+  MAX_SYNC_PAGES
+} from './sync-checkpoint.util';
 
 type ConnectorRecord = {
   id: string;
@@ -62,7 +68,7 @@ export class BigCommerceOrderSyncService {
       data: {
         id: runId,
         connectorInstanceId,
-        syncType: 'MANUAL_RESYNC',
+        syncType: ORDER_SYNC_TYPE,
         status: 'RUNNING',
         startedAt,
         recordsFetched: 0,
@@ -81,7 +87,10 @@ export class BigCommerceOrderSyncService {
     });
 
     try {
-      const orders = await this.fetchOrders({ baseUrl, accessToken });
+      // Incremental cursor: only orders modified since the last successful run (minus overlap).
+      // Null on the first run → full backfill.
+      const since = await getSinceCursor(connectorInstanceId, ORDER_SYNC_TYPE);
+      const orders = await this.fetchOrders({ baseUrl, accessToken, since });
 
       let created = 0;
       let updated = 0;
@@ -114,7 +123,9 @@ export class BigCommerceOrderSyncService {
           recordsFetched: orders.length,
           recordsProcessed: created + updated,
           recordsFailed: failed,
-          checkpointValue: orders[0]?.date_modified || orders[0]?.date_created || null
+          // Advance the checkpoint ONLY on a fully successful run; PARTIAL leaves it null so the
+          // cursor is not advanced and failed records are retried next run.
+          checkpointValue: failed > 0 ? null : computeMaxCheckpoint(orders, ['date_modified', 'date_created'], 'bigcommerce')
         }
       });
 
@@ -189,17 +200,26 @@ export class BigCommerceOrderSyncService {
   private static async fetchOrders(input: {
     baseUrl: string;
     accessToken: string;
+    since: Date | null;
   }): Promise<any[]> {
     const url = new URL(`${input.baseUrl}/v2/orders`);
     url.searchParams.set('limit', '250');
     url.searchParams.set('page', '1');
-    url.searchParams.set('sort', 'date_modified:desc');
+    url.searchParams.set('sort', 'date_modified:asc');
+    // Incremental: only orders modified since the cursor. Omitted on full backfill.
+    if (input.since) {
+      url.searchParams.set('min_date_modified', input.since.toISOString());
+    }
 
     const fetchFunc: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
     const allOrders: any[] = [];
     let currentPage = 1;
 
     while (true) {
+      if (currentPage > MAX_SYNC_PAGES) {
+        console.warn('[BigCommerceOrderSyncService] fetchOrders:page-cap-hit', { currentPage, totalSoFar: allOrders.length });
+        break;
+      }
       url.searchParams.set('page', String(currentPage));
 
       const response = await fetchFunc(url.toString(), {

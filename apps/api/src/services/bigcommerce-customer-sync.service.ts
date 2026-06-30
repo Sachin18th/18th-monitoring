@@ -1,6 +1,12 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
+import {
+  getSinceCursor,
+  computeMaxCheckpoint,
+  CUSTOMER_SYNC_TYPE,
+  MAX_SYNC_PAGES
+} from './sync-checkpoint.util';
 
 type ConnectorRecord = {
   id: string;
@@ -61,7 +67,7 @@ export class BigCommerceCustomerSyncService {
       data: {
         id: runId,
         connectorInstanceId,
-        syncType: 'MANUAL_RESYNC',
+        syncType: CUSTOMER_SYNC_TYPE,
         status: 'RUNNING',
         startedAt,
         recordsFetched: 0,
@@ -71,7 +77,10 @@ export class BigCommerceCustomerSyncService {
     });
 
     try {
-      const customers = await this.fetchCustomers({ baseUrl, accessToken });
+      // Incremental cursor: only customers modified since the last successful run (minus overlap).
+      // Null on the first run → full backfill.
+      const since = await getSinceCursor(connectorInstanceId, CUSTOMER_SYNC_TYPE);
+      const customers = await this.fetchCustomers({ baseUrl, accessToken, since });
 
       let created = 0;
       let updated = 0;
@@ -104,8 +113,15 @@ export class BigCommerceCustomerSyncService {
           recordsFetched: customers.length,
           recordsProcessed: created + updated,
           recordsFailed: failed,
-          checkpointValue: customers[0]?.date_modified || customers[0]?.date_created || null
+          // Advance the checkpoint ONLY on a fully successful run; PARTIAL leaves it null so the
+          // cursor is not advanced and failed records are retried next run.
+          checkpointValue: failed > 0 ? null : computeMaxCheckpoint(customers, ['date_modified', 'date_created'], 'bigcommerce')
         }
+      });
+
+      await prisma.connectorInstance.update({
+        where: { id: connectorInstanceId },
+        data: { lastSyncAt: finishedAt, lastAttemptAt: startedAt }
       });
 
       console.log('[BigCommerceCustomerSyncService] Sync completed', {
@@ -147,16 +163,26 @@ export class BigCommerceCustomerSyncService {
   private static async fetchCustomers(input: {
     baseUrl: string;
     accessToken: string;
+    since: Date | null;
   }): Promise<any[]> {
     const url = new URL(`${input.baseUrl}/v3/customers`);
     url.searchParams.set('limit', '250');
     url.searchParams.set('page', '1');
+    // Incremental: only customers modified since the cursor (v3 `date_modified:min`).
+    // Omitted on full backfill. Page order doesn't matter — the checkpoint is the max over all rows.
+    if (input.since) {
+      url.searchParams.set('date_modified:min', input.since.toISOString());
+    }
 
     const fetchFunc: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
     const allCustomers: any[] = [];
     let currentPage = 1;
 
     while (true) {
+      if (currentPage > MAX_SYNC_PAGES) {
+        console.warn('[BigCommerceCustomerSyncService] fetchCustomers:page-cap-hit', { currentPage, totalSoFar: allCustomers.length });
+        break;
+      }
       url.searchParams.set('page', String(currentPage));
 
       const response = await fetchFunc(url.toString(), {

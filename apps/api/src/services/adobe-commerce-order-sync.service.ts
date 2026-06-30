@@ -3,6 +3,16 @@ import { Prisma } from '@prisma/client';
 import { prisma, decryptSecret } from '@kpi-platform/db';
 import { orderNormalizationService } from './order-normalization.service';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
+import {
+  getSinceCursor,
+  computeMaxCheckpoint,
+  toAdobeDateTime,
+  ORDER_SYNC_TYPE,
+  MAX_SYNC_PAGES
+} from './sync-checkpoint.util';
+
+const ADOBE_PAGE_DELAY_MS = 250;
+const adobeDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type ConnectorRecord = {
   id: string;
@@ -67,7 +77,7 @@ export class AdobeCommerceOrderSyncService {
       data: {
         id: runId,
         connectorInstanceId,
-        syncType: 'MANUAL_RESYNC',
+        syncType: ORDER_SYNC_TYPE,
         status: 'RUNNING',
         startedAt,
         recordsFetched: 0,
@@ -79,7 +89,10 @@ export class AdobeCommerceOrderSyncService {
     await prisma.connectorInstance.update({ where: { id: connectorInstanceId }, data: { lastAttemptAt: startedAt, status: 'ACTIVE', lifecycleState: 'ACTIVE' } });
 
     try {
-      const orders = await this.fetchOrders(instance);
+      // Incremental cursor: only orders updated since the last successful run (minus overlap).
+      // Null on the first run → full backfill.
+      const since = await getSinceCursor(connectorInstanceId, ORDER_SYNC_TYPE);
+      const orders = await this.fetchOrders(instance, since);
 
       let created = 0;
       let updated = 0;
@@ -165,7 +178,7 @@ export class AdobeCommerceOrderSyncService {
       }
 
       const finishedAt = new Date();
-      await prisma.connectorSyncRun.update({ where: { id: runId }, data: { status: failed > 0 ? 'PARTIAL' : 'SUCCESS', finishedAt, recordsFetched: orders.length, recordsProcessed: created + updated, recordsFailed: failed, checkpointValue: orders[0]?.updated_at || null } });
+      await prisma.connectorSyncRun.update({ where: { id: runId }, data: { status: failed > 0 ? 'PARTIAL' : 'SUCCESS', finishedAt, recordsFetched: orders.length, recordsProcessed: created + updated, recordsFailed: failed, checkpointValue: failed > 0 ? null : computeMaxCheckpoint(orders, ['updated_at', 'created_at'], 'adobe_commerce') } });
 
       await prisma.connectorInstance.update({ where: { id: connectorInstanceId }, data: { lastSyncAt: finishedAt, lastAttemptAt: startedAt, healthStatus: failed > 0 ? 'DEGRADED' : 'HEALTHY', lifecycleState: failed > 0 ? 'DEGRADED' : 'ACTIVE', healthScore: failed > 0 ? 75 : 100, lastError: failed > 0 ? ({ message: `${failed} order(s) failed during sync.`, at: finishedAt.toISOString() } as Prisma.InputJsonValue) : Prisma.JsonNull } });
 
@@ -191,7 +204,7 @@ export class AdobeCommerceOrderSyncService {
     }
   }
 
-  private static async fetchOrders(instance: ConnectorRecord): Promise<any[]> {
+  private static async fetchOrders(instance: ConnectorRecord, since: Date | null): Promise<any[]> {
     const config = instance.syncConfig || {};
     // The connect flow persists the store URL under `storeUrl`; older/alt configs
     // may use `baseUrl`. Accept either so orders actually fetch.
@@ -218,51 +231,72 @@ export class AdobeCommerceOrderSyncService {
       throw new Error('Adobe Commerce integration is missing access token in credentials.');
     }
 
-    const url = new URL(`${base}/rest/V1/orders`);
-    url.searchParams.set('searchCriteria[sortOrders][0][field]', 'updated_at');
-    url.searchParams.set('searchCriteria[sortOrders][0][direction]', 'DESC');
-    url.searchParams.set('searchCriteria[pageSize]', '100');
-
     console.log('[AdobeCommerceOrderSyncService] fetchOrders:start', {
       baseUrl: config.baseUrl,
       hasToken: Boolean(accessToken),
-      maskedToken: accessToken ? `${accessToken.slice(0, 4)}...${accessToken.slice(-4)}` : 'missing'
+      maskedToken: accessToken ? `${accessToken.slice(0, 4)}...${accessToken.slice(-4)}` : 'missing',
+      since: since?.toISOString() || null
     });
 
     const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
-    const response = await fetchFn(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+    const pageSize = 100;
+    const items: any[] = [];
+    let currentPage = 1;
+    let totalPages = 1;
+
+    while (currentPage <= totalPages) {
+      if (currentPage > MAX_SYNC_PAGES) {
+        console.warn('[AdobeCommerceOrderSyncService] fetchOrders:page-cap-hit', { currentPage, totalSoFar: items.length });
+        break;
       }
-    });
 
-    console.log('[AdobeCommerceOrderSyncService] fetchOrders:response', {
-      status: response.status,
-      statusText: response.statusText,
-      contentType: response.headers.get('content-type')
-    });
+      const url = new URL(`${base}/rest/V1/orders`);
+      url.searchParams.set('searchCriteria[sortOrders][0][field]', 'updated_at');
+      url.searchParams.set('searchCriteria[sortOrders][0][direction]', 'ASC');
+      url.searchParams.set('searchCriteria[pageSize]', String(pageSize));
+      url.searchParams.set('searchCriteria[currentPage]', String(currentPage));
+      // Incremental: only orders updated after the cursor. Omitted on full backfill.
+      if (since) {
+        url.searchParams.set('searchCriteria[filterGroups][0][filters][0][field]', 'updated_at');
+        url.searchParams.set('searchCriteria[filterGroups][0][filters][0][conditionType]', 'gt');
+        url.searchParams.set('searchCriteria[filterGroups][0][filters][0][value]', toAdobeDateTime(since));
+      }
 
-    if (!response.ok) {
-      const body = await response.text();
-      console.error('[AdobeCommerceOrderSyncService] fetchOrders:error-response', {
-        status: response.status,
-        statusText: response.statusText,
-        body
+      const response = await fetchFn(url.toString(), {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
       });
-      throw new Error(interpretAdobeApiError(response.status, body, response.statusText));
+
+      if (!response.ok) {
+        const body = await response.text();
+        console.error('[AdobeCommerceOrderSyncService] fetchOrders:error-response', {
+          status: response.status,
+          statusText: response.statusText,
+          body
+        });
+        throw new Error(interpretAdobeApiError(response.status, body, response.statusText));
+      }
+
+      const payload = await response.json();
+      // Magento/Adobe Commerce returns { items: [...], search_criteria: {...}, total_count: N }
+      const pageItems = Array.isArray(payload?.items) ? payload.items : [];
+      items.push(...pageItems);
+
+      const totalCount = Number(payload?.total_count || pageItems.length || 0);
+      totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+      currentPage += 1;
+
+      if (currentPage <= totalPages) {
+        await adobeDelay(ADOBE_PAGE_DELAY_MS);
+      }
     }
 
-    const payload = await response.json();
-    // Magento/Adobe Commerce returns { items: [...], search_criteria: {...}, total_count: N }
-    const items = Array.isArray(payload?.items) ? payload.items : [];
-
-    console.log('[AdobeCommerceOrderSyncService] fetchOrders:success', {
-      itemCount: items.length,
-      totalCount: payload?.total_count || null,
-      firstItemId: items[0]?.entity_id || null
+    console.log('[AdobeCommerceOrderSyncService] fetchOrders:complete', {
+      itemCount: items.length
     });
 
     return items;

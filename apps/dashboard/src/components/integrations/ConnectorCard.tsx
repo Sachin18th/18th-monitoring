@@ -108,9 +108,8 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
       </div>
 
       {/* Health Dimensions */}
-      <div className="grid grid-cols-4 gap-2 mb-4">
+      <div className="grid grid-cols-3 gap-2 mb-4">
         <StatusPill active={dimensions.connectivity} label="Connection" />
-        <StatusPill active={dimensions.webhook} label="Webhook" />
         <StatusPill active={dimensions.sync} label="Sync" />
         <StatusPill active={dimensions.auth} label="Auth" />
       </div>

@@ -1,6 +1,16 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
+import {
+    getSinceCursor,
+    computeMaxCheckpoint,
+    extractNextLink,
+    CUSTOMER_SYNC_TYPE,
+    MAX_SYNC_PAGES
+} from './sync-checkpoint.util';
+
+const SHOPIFY_PAGE_DELAY_MS = 550;
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type ConnectorRecord = {
     id: string;
@@ -71,7 +81,7 @@ export class ShopifyCustomerSyncService {
             data: {
                 id: runId,
                 connectorInstanceId,
-                syncType: 'MANUAL_RESYNC',
+                syncType: CUSTOMER_SYNC_TYPE,
                 status: 'RUNNING',
                 startedAt,
                 recordsFetched: 0,
@@ -81,10 +91,15 @@ export class ShopifyCustomerSyncService {
         });
 
         try {
+            // Incremental cursor: only customers updated since the last successful run (minus
+            // overlap). Null on the first run → full backfill.
+            const since = await getSinceCursor(connectorInstanceId, CUSTOMER_SYNC_TYPE);
+
             const customers = await this.fetchCustomers({
                 shopDomain,
                 adminApiAccessToken,
-                apiVersion
+                apiVersion,
+                since
             });
 
             let created = 0;
@@ -118,8 +133,15 @@ export class ShopifyCustomerSyncService {
                     recordsFetched: customers.length,
                     recordsProcessed: created + updated,
                     recordsFailed: failed,
-                    checkpointValue: customers[0]?.updated_at || customers[0]?.created_at || null
+                    // Advance the checkpoint ONLY on a fully successful run; PARTIAL leaves it null
+                    // so the cursor is not advanced and failed records are retried next run.
+                    checkpointValue: failed > 0 ? null : computeMaxCheckpoint(customers, ['updated_at', 'created_at'], 'shopify')
                 }
+            });
+
+            await prisma.connectorInstance.update({
+                where: { id: connectorInstanceId },
+                data: { lastSyncAt: finishedAt, lastAttemptAt: startedAt }
             });
 
             console.log('[ShopifyCustomerSyncService] Sync completed', {
@@ -162,6 +184,7 @@ export class ShopifyCustomerSyncService {
         shopDomain: string;
         adminApiAccessToken: string;
         apiVersion: string;
+        since: Date | null;
     }): Promise<any[]> {
         const normalizedShopDomain = this.normalizeShopDomain(input.shopDomain);
         const baseUrl = `https://${normalizedShopDomain}/admin/api/${input.apiVersion}`;
@@ -169,40 +192,62 @@ export class ShopifyCustomerSyncService {
         console.log('[ShopifyCustomerSyncService] fetchCustomers:start', {
             shopDomain: input.shopDomain,
             normalizedShopDomain,
-            apiVersion: input.apiVersion
+            apiVersion: input.apiVersion,
+            since: input.since?.toISOString() || null
         });
 
-        const url = new URL(`${baseUrl}/customers.json`);
-        url.searchParams.set('limit', '100');
-        url.searchParams.set('order', 'updated_at desc');
+        const firstUrl = new URL(`${baseUrl}/customers.json`);
+        firstUrl.searchParams.set('limit', '250');
+        if (input.since) {
+            firstUrl.searchParams.set('updated_at_min', input.since.toISOString());
+        }
 
         const fetchFunc: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
 
-        const response = await fetchFunc(url.toString(), {
-            method: 'GET',
-            headers: {
-                'X-Shopify-Access-Token': input.adminApiAccessToken,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            }
-        });
+        const customers: any[] = [];
+        // Cursor pagination via the Link header; the next URL carries its own page_info + limit.
+        let nextUrl: string | null = firstUrl.toString();
+        let page = 0;
 
-        if (!response.ok) {
-            const body = await response.text();
-            console.error('[ShopifyCustomerSyncService] fetchCustomers:error-response', {
-                status: response.status,
-                statusText: response.statusText,
-                body
+        while (nextUrl) {
+            page += 1;
+            if (page > MAX_SYNC_PAGES) {
+                console.warn('[ShopifyCustomerSyncService] fetchCustomers:page-cap-hit', { page, totalSoFar: customers.length });
+                break;
+            }
+
+            const response = await fetchFunc(nextUrl, {
+                method: 'GET',
+                headers: {
+                    'X-Shopify-Access-Token': input.adminApiAccessToken,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                }
             });
-            throw new Error(`Shopify API request failed (${response.status}): ${body || response.statusText}`);
+
+            if (!response.ok) {
+                const body = await response.text();
+                console.error('[ShopifyCustomerSyncService] fetchCustomers:error-response', {
+                    status: response.status,
+                    statusText: response.statusText,
+                    body
+                });
+                throw new Error(`Shopify API request failed (${response.status}): ${body || response.statusText}`);
+            }
+
+            const payload = await response.json();
+            const pageCustomers = Array.isArray(payload?.customers) ? payload.customers : [];
+            customers.push(...pageCustomers);
+
+            nextUrl = extractNextLink(response.headers.get('link') || response.headers.get('Link'));
+            if (nextUrl) {
+                await delay(SHOPIFY_PAGE_DELAY_MS);
+            }
         }
 
-        const payload = await response.json();
-        const customers = Array.isArray(payload?.customers) ? payload.customers : [];
-
-        console.log('[ShopifyCustomerSyncService] fetchCustomers:success', {
-            customerCount: customers.length,
-            firstCustomerId: customers[0]?.id || null
+        console.log('[ShopifyCustomerSyncService] fetchCustomers:complete', {
+            pages: page,
+            customerCount: customers.length
         });
 
         return customers;

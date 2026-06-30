@@ -2,6 +2,12 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
+import {
+    getSinceCursor,
+    computeMaxCheckpoint,
+    toAdobeDateTime,
+    CUSTOMER_SYNC_TYPE
+} from './sync-checkpoint.util';
 
 type ConnectorRecord = {
     id: string;
@@ -76,7 +82,7 @@ export class AdobeCommerceCustomerSyncService {
             data: {
                 id: runId,
                 connectorInstanceId,
-                syncType: 'MANUAL_RESYNC',
+                syncType: CUSTOMER_SYNC_TYPE,
                 status: 'RUNNING',
                 startedAt,
                 recordsFetched: 0,
@@ -86,9 +92,14 @@ export class AdobeCommerceCustomerSyncService {
         });
 
         try {
+            // Incremental cursor: only customers updated since the last successful run (minus
+            // overlap). Null on the first run → full backfill.
+            const since = await getSinceCursor(connectorInstanceId, CUSTOMER_SYNC_TYPE);
+
             const customers = await this.fetchCustomers({
                 storeUrl,
-                accessToken
+                accessToken,
+                since
             });
 
             let created = 0;
@@ -122,8 +133,15 @@ export class AdobeCommerceCustomerSyncService {
                     recordsFetched: customers.length,
                     recordsProcessed: created + updated,
                     recordsFailed: failed,
-                    checkpointValue: customers[0]?.updated_at || null
+                    // Advance the checkpoint ONLY on a fully successful run; PARTIAL leaves it null
+                    // so the cursor is not advanced and failed records are retried next run.
+                    checkpointValue: failed > 0 ? null : computeMaxCheckpoint(customers, ['updated_at', 'created_at'], 'adobe_commerce')
                 }
+            });
+
+            await prisma.connectorInstance.update({
+                where: { id: connectorInstanceId },
+                data: { lastSyncAt: finishedAt, lastAttemptAt: startedAt }
             });
 
             console.log('[AdobeCommerceCustomerSyncService] Sync completed', {
@@ -165,6 +183,7 @@ export class AdobeCommerceCustomerSyncService {
     private static async fetchCustomers(input: {
         storeUrl: string;
         accessToken: string;
+        since: Date | null;
     }): Promise<any[]> {
         const baseUrl = input.storeUrl.replace(/\/+$/, '');
         const fetchFunc: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
@@ -179,7 +198,8 @@ export class AdobeCommerceCustomerSyncService {
         const all: any[] = [];
 
         console.log('[AdobeCommerceCustomerSyncService] fetchCustomers:start', {
-            storeUrl: input.storeUrl
+            storeUrl: input.storeUrl,
+            since: input.since?.toISOString() || null
         });
 
         for (let currentPage = 1; currentPage <= maxPages; currentPage++) {
@@ -187,7 +207,13 @@ export class AdobeCommerceCustomerSyncService {
             url.searchParams.set('searchCriteria[pageSize]', String(pageSize));
             url.searchParams.set('searchCriteria[currentPage]', String(currentPage));
             url.searchParams.set('searchCriteria[sortOrders][0][field]', 'updated_at');
-            url.searchParams.set('searchCriteria[sortOrders][0][direction]', 'DESC');
+            url.searchParams.set('searchCriteria[sortOrders][0][direction]', 'ASC');
+            // Incremental: only customers updated after the cursor. Omitted on full backfill.
+            if (input.since) {
+                url.searchParams.set('searchCriteria[filterGroups][0][filters][0][field]', 'updated_at');
+                url.searchParams.set('searchCriteria[filterGroups][0][filters][0][conditionType]', 'gt');
+                url.searchParams.set('searchCriteria[filterGroups][0][filters][0][value]', toAdobeDateTime(input.since));
+            }
 
             const response = await fetchFunc(url.toString(), {
                 method: 'GET',

@@ -623,35 +623,6 @@ export default function ProjectsPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <div
-                className="inline-flex h-[34px] items-center rounded-full p-1"
-                style={{
-                  border: "1px solid var(--border-card)",
-                  background: "var(--bg-card)",
-                }}
-              >
-                {timeFilters.map((filter) => {
-                  const active = selectedRange === filter.value;
-                  return (
-                    <button
-                      key={filter.value}
-                      type="button"
-                      onClick={() => setSelectedRange(filter.value)}
-                      className={`inline-flex h-[26px] min-w-[42px] items-center justify-center rounded-full px-3 text-[12px] font-medium transition-colors duration-150 ${
-                        active ? "text-[#3B82F6]" : ""
-                      }`}
-                      style={
-                        active
-                          ? { background: "var(--bg-badge-active)" }
-                          : { color: "var(--text-secondary)" }
-                      }
-                    >
-                      {filter.label}
-                    </button>
-                  );
-                })}
-              </div>
-
               <button
                 type="button"
                 onClick={toggleTheme}
@@ -1014,7 +985,7 @@ export default function ProjectsPage() {
                   className="text-[10px] font-medium uppercase tracking-[0.12em]"
                   style={{ color: "var(--text-label)" }}
                 >
-                  Operator identity
+                  Account
                 </p>
                 <span
                   className="inline-flex items-center rounded-md text-[10px] font-medium uppercase tracking-[0.08em]"
@@ -1057,16 +1028,16 @@ export default function ProjectsPage() {
                 </div>
               </div>
 
-              {/* Authorized scope */}
-              <div className="mt-7">
+              {/* Workspaces */}
+              <div className="mt-7 flex items-center justify-between gap-6">
                 <p
                   className="text-[10px] font-medium uppercase tracking-[0.12em]"
                   style={{ color: "var(--text-label)" }}
                 >
-                  Authorized scope
+                  Workspaces
                 </p>
                 <p
-                  className="mt-2 text-[15px] font-semibold leading-tight"
+                  className="text-[15px] font-semibold leading-tight"
                   style={{ color: "var(--text-primary)" }}
                 >
                   {metrics.totalProjects || 1}{" "}
@@ -1084,15 +1055,15 @@ export default function ProjectsPage() {
                     color: isDark ? "#60A5FA" : "#1E40AF",
                   }}
                 >
-                  Portfolio intelligence
+                  Overview
                 </span>
                 <p
                   className="mt-3 text-[12px] font-normal leading-[1.7]"
                   style={{ color: "var(--text-muted)" }}
                 >
-                  Monitoring {metrics.totalProjects || 0} active streams with a
-                  stable operational surface designed for low-friction scanning
-                  and quick workspace launch.
+                  Tracking {metrics.totalProjects || 0} active{" "}
+                  {metrics.totalProjects === 1 ? "project" : "projects"} across
+                  your portfolio.
                 </p>
               </div>
 
@@ -1103,9 +1074,9 @@ export default function ProjectsPage() {
 
               {/* Meta rows */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between gap-2 text-[12px]">
+                <div className="flex items-center justify-between gap-6 text-[12px]">
                   <span className="font-normal" style={{ color: "var(--text-secondary)" }}>
-                    Attention surface
+                    Needs attention
                   </span>
                   <span
                     className="font-medium"
@@ -1120,9 +1091,9 @@ export default function ProjectsPage() {
                     {metrics.projectsAtRisk === 1 ? "project" : "projects"}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-2 text-[12px]">
+                <div className="flex items-center justify-between gap-6 text-[12px]">
                   <span className="font-normal" style={{ color: "var(--text-secondary)" }}>
-                    Portfolio health
+                    Health
                   </span>
                   <span
                     className="font-medium"
@@ -1134,9 +1105,9 @@ export default function ProjectsPage() {
                     {metrics.avgHealth}%
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-2 text-[12px]">
+                <div className="flex items-center justify-between gap-6 text-[12px]">
                   <span className="font-normal" style={{ color: "var(--text-secondary)" }}>
-                    Active operators
+                    Team members
                   </span>
                   <span className="font-medium" style={{ color: "var(--text-primary)" }}>
                     {formatValue(metrics.totalUsers)}

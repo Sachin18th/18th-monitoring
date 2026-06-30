@@ -1,11 +1,23 @@
 //apps/api/src/services/dashboard.service.ts
 import { prisma, decryptEmail } from '@kpi-platform/db';
+import { Prisma } from '@prisma/client';
 import type { MetricFilterDto, KpiSummaryResponse, AlertSummaryResponse } from '../models/dashboard.dto';
 import { AnalyticsEngine } from './analytics-engine.service';
 import { PaymentGatewayService } from './payment-gateway.service';
 import { StorefrontTrackingService } from './storefront-tracking.service';
+import { PageSpeedService } from './pagespeed.service';
 
 // Removed GlobalMemoryStore usage - now using DB queries
+
+function deriveCategory(action: string): string {
+    if (!action) return 'system';
+    const a = action.toUpperCase();
+    if (a.includes('LOGIN') || a.includes('OTP') || a.includes('SESSION') || a.includes('PASSWORD')) return 'security';
+    if (a.includes('KEY') || a.includes('CREDENTIAL') || a.includes('TOKEN')) return 'security';
+    if (a.includes('CONNECTOR') || a.includes('SYNC') || a.includes('MAPPING')) return 'configuration';
+    if (a.includes('RESYNC') || a.includes('BACKFILL') || a.includes('EXPORT')) return 'action';
+    return 'system';
+}
 
 export class DashboardService {
     private static deriveCustomerEmail(customer: any): string | null {
@@ -168,40 +180,42 @@ export class DashboardService {
     }
 
     static async getAuditLogs(filters: MetricFilterDto) {
-        const { tenantId, siteId, limit = 50 } = filters as any;
+        const { siteId } = filters as any;
         try {
-            const logs = await prisma.iamAuditLog.findMany({
-                where: {
-                    tenantId,
-                    project: {
-                        is: { id: siteId }
-                    }
-                },
+            // First try project-scoped
+            let logs = await prisma.iamAuditLog.findMany({
+                where: { projectId: siteId },
                 orderBy: { timestamp: 'desc' },
-                take: limit,
-                select: {
-                    id: true,
-                    actorId: true,
-                    action: true,
-                    targetType: true,
-                    targetId: true,
-                    timestamp: true,
-                    metadata: true
-                }
+                take: 200
             });
 
+            // Fall back to tenant-level if nothing found (auth events have project_id = NULL)
             if (logs.length === 0) {
-                return [];
+                const project = await prisma.project.findUnique({
+                    where: { id: siteId },
+                    select: { tenantId: true }
+                });
+                if (project?.tenantId) {
+                    logs = await prisma.iamAuditLog.findMany({
+                        where: { tenantId: project.tenantId },
+                        orderBy: { timestamp: 'desc' },
+                        take: 200
+                    });
+                }
             }
 
-            return logs.map((l: any) => ({
-                id: l.id,
-                actor: l.actorId || 'System',
-                action: l.action,
-                entity: l.targetType || '-',
-                value: l.targetId || '-',
-                timestamp: l.timestamp.toLocaleString(),
-                category: 'system'
+            return logs.map((row: any) => ({
+                id: String(row.id),
+                timestamp: row.timestamp
+                    ? new Date(row.timestamp).toLocaleString('en-IN', {
+                        dateStyle: 'medium', timeStyle: 'short'
+                    })
+                    : '—',
+                action: row.action,
+                actor: row.actorId || 'system',
+                entity: row.targetType !== 'unknown' ? `${row.targetType}:${row.targetId}` : row.targetId,
+                value: row.metadata ? JSON.stringify(row.metadata).slice(0, 80) : '—',
+                category: deriveCategory(row.action),
             }));
         } catch (err) {
             console.warn(`[DashboardService] getAuditLogs failed for site ${siteId}.`, err);
@@ -213,60 +227,49 @@ export class DashboardService {
         const { siteId } = filters;
 
         try {
-            // Get recent sync events
-            const syncEvents = await prisma.connectorLifecycleEvent.findMany({
-                where: { projectId: siteId, eventType: 'CONNECTOR_SYNCED' },
-                orderBy: { createdAt: 'desc' },
-                take: 5,
-                select: {
-                    id: true,
-                    connectorInstanceId: true,
-                    createdAt: true,
-                    severity: true,
-                    payload: true
-                }
+            const rows = await prisma.alert.findMany({
+                where: { siteId },
+                orderBy: { triggeredAt: 'desc' },
+                take: 100
             });
 
-            const syncs = syncEvents.map((s: any) => ({
-                id: `act-sync-${s.id}`,
-                type: 'Integration Sync',
-                entity: s.connectorInstanceId || 'Connector',
-                timestamp: s.createdAt.toISOString(),
-                status: s.severity === 'ERROR' ? 'error' : 'success',
-                description: `Sync ${s.severity === 'ERROR' ? 'failed' : 'completed'} with ${s.payload?.records || 0} records.`
-            }));
+            // Fetch alert rule names for any rule: prefixed alertTypes
+            const ruleIds = [...new Set(
+                rows
+                    .filter((r: any) => r.alertType?.startsWith('rule:'))
+                    .map((r: any) => r.alertType.replace('rule:', ''))
+            )];
 
-            // Get recent ingestion events
-            const ingestions = await prisma.ingestionEvent.findMany({
-                where: { projectId: siteId },
-                orderBy: { receivedAt: 'desc' },
-                take: 3,
-                select: {
-                    id: true,
-                    mode: true,
-                    sourceReferenceId: true,
-                    receivedAt: true,
-                    status: true
-                }
-            });
-
-            const ingestionsFeed = ingestions.map((l: any) => ({
-                id: `act-ing-${l.id}`,
-                type: 'Event Ingested',
-                entity: l.sourceReferenceId || 'Ingestion Pipeline',
-                timestamp: l.receivedAt.toISOString(),
-                status: l.status === 'SUCCESS' ? 'success' : 'processing',
-                description: `${l.mode || 'Event'} received from ${l.sourceReferenceId || 'unknown'}.`
-            }));
-
-            const combined = [...syncs, ...ingestionsFeed]
-                .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                .slice(0, 10);
-
-            if (combined.length === 0) {
-                return [];
+            const ruleNames: Record<string, string> = {};
+            if (ruleIds.length > 0) {
+                const rules = await prisma.alertRule.findMany({
+                    where: { id: { in: ruleIds } },
+                    select: { id: true, name: true }
+                });
+                rules.forEach((r: any) => { ruleNames[r.id] = r.name; });
             }
-            return combined;
+
+            return rows.map((row: any) => {
+                const ruleId = row.alertType?.startsWith('rule:')
+                    ? row.alertType.replace('rule:', '')
+                    : null;
+                const eventLabel = ruleId && ruleNames[ruleId]
+                    ? ruleNames[ruleId]
+                    : (row.alertType || row.module || 'Alert');
+
+                return {
+                    id: row.id,
+                    status: row.status === 'TRIGGERED' ? 'active' : row.status?.toLowerCase() || 'resolved',
+                    type: eventLabel,
+                    entity: row.module,
+                    description: row.message,
+                    timestamp: row.triggeredAt
+                    ? new Date(row.triggeredAt).toLocaleString('en-IN', {
+                        dateStyle: 'medium', timeStyle: 'short'
+                    })
+                    : '—',
+                };
+            });
         } catch (err) {
             console.warn(`[DashboardService] getActivityFeed failed for site ${siteId}.`, err);
             return [];
@@ -274,106 +277,67 @@ export class DashboardService {
     }
 
     static async getPerformanceSummary(filters: MetricFilterDto) {
-        const { siteId } = filters;
-        const timeRange = (filters as any).timeRange || '30d';
+        const { siteId, connectorInstanceId } = filters as any;
+        const systemPerf = await AnalyticsEngine.getSystemPerformance(siteId);
 
-        // Time window for the scan timestamp — if the last PageSpeed scan is older
-        // than the selected period the UI shows "No scan in this period".
-        // '24h' has no meaningful PageSpeed history so we show whatever is available.
-        const MS_MAP: Record<string, number | null> = {
-            '24h': null,                           // no floor — show latest regardless
-            '7d':  7  * 24 * 60 * 60 * 1000,
-            '30d': 30 * 24 * 60 * 60 * 1000,
-            '90d': 90 * 24 * 60 * 60 * 1000,
-            'all': null,
-        };
-        const now = new Date();
-        const fromMs: number | null = Object.prototype.hasOwnProperty.call(MS_MAP, timeRange)
-            ? MS_MAP[timeRange]
-            : MS_MAP['30d'];
-        const from: Date | null = fromMs != null ? new Date(now.getTime() - fromMs) : null;
+        // Core Web Vitals come from the latest Google PageSpeed scan — stored in
+        // performance_metrics under the `pagespeed_api` source, split by device.
+        // getLatestMetrics returns { mobile: { lcp: {value,unit,status,timestamp}, … }, desktop: {…} }.
+        const ps = await PageSpeedService.getLatestMetrics(
+            siteId,
+            connectorInstanceId && connectorInstanceId !== 'all' ? connectorInstanceId : undefined
+        );
 
-        // Only site-level PageSpeed API records (source = 'pagespeed_api:mobile' / ':desktop').
-        // These are upserted — exactly 1 record per (siteId, metricName, source).
-        // The timestamp filter tells us whether the last scan is fresh enough for this period.
-        const [metrics, systemPerf] = await Promise.all([
-            (prisma.performanceMetric as any).findMany({
-                where: {
-                    siteId,
-                    metricName: { in: ['lcp', 'fcp', 'fid', 'cls', 'ttfb', 'tti'] },
-                    source: { startsWith: 'pagespeed_api:' },
-                    ...(from ? { timestamp: { gte: from, lte: now } } : {}),
-                },
-                select: { metricValue: true, metricName: true, device: true, timestamp: true, source: true },
-                orderBy: { timestamp: 'desc' },
-            }),
-            AnalyticsEngine.getSystemPerformance(siteId),
-        ]);
-
-        // Resolve device from device field or source suffix ('pagespeed_api:mobile' → 'mobile')
-        const resolveDevice = (m: any): string => {
-            const d = String(m.device || '').toLowerCase();
-            if (d === 'mobile' || d === 'desktop') return d;
-            const src = String(m.source || '').toLowerCase();
-            if (src.endsWith(':mobile')) return 'mobile';
-            if (src.endsWith(':desktop')) return 'desktop';
-            return 'desktop';
+        const VITALS = ['lcp', 'fid', 'cls', 'ttfb', 'fcp'] as const;
+        const flattenDevice = (deviceData: any) => {
+            const out: any = { lcp: null, fid: null, cls: null, ttfb: null, fcp: null, lastScan: null };
+            if (!deviceData) return out;
+            let latest: string | null = null;
+            for (const k of VITALS) {
+                const entry = deviceData[k];
+                if (entry && entry.value != null) {
+                    out[k] = entry.value;
+                    if (entry.timestamp && (!latest || entry.timestamp > latest)) latest = entry.timestamp;
+                }
+            }
+            out.lastScan = latest;
+            return out;
         };
 
-        // Direct value per metric per device — no aggregation needed (1 row per upsert key).
-        // For "all" tab: average the available device values.
-        const val = (name: string, deviceFilter?: string): number | null => {
-            const rows = metrics.filter((m: any) =>
-                m.metricName === name &&
-                (deviceFilter == null || resolveDevice(m) === deviceFilter)
-            );
-            if (rows.length === 0) return null;
-            const sum = rows.reduce((s: number, m: any) => s + Number(m.metricValue), 0);
-            return sum / rows.length;
-        };
+        const mobile = flattenDevice(ps?.mobile);
+        const desktop = flattenDevice(ps?.desktop);
 
-        // Timestamp of the most recent scan for this device
-        const lastScan = (deviceFilter?: string): string | null => {
-            const row = metrics.find((m: any) =>
-                deviceFilter == null || resolveDevice(m) === deviceFilter
-            );
-            return row?.timestamp ? new Date(row.timestamp).toISOString() : null;
-        };
+        // The "All" toggle averages whichever devices reported each metric.
+        const aggregate: any = { lcp: null, fid: null, cls: null, ttfb: null, fcp: null, lastScan: null };
+        for (const k of VITALS) {
+            const vals = [mobile[k], desktop[k]].filter((v) => v != null) as number[];
+            aggregate[k] = vals.length
+                ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 1000) / 1000
+                : null;
+        }
+        aggregate.lastScan = [mobile.lastScan, desktop.lastScan].filter(Boolean).sort().pop() || null;
 
-        const buildDevice = (deviceFilter?: string) => ({
-            lcp:      val('lcp',  deviceFilter),
-            fcp:      val('fcp',  deviceFilter),
-            fid:      val('fid',  deviceFilter),
-            cls:      val('cls',  deviceFilter),
-            ttfb:     val('ttfb', deviceFilter),
-            tti:      val('tti',  deviceFilter),
-            lastScan: lastScan(deviceFilter),
-            hasData:  metrics.filter((m: any) =>
-                deviceFilter == null || resolveDevice(m) === deviceFilter
-            ).length > 0,
-        });
-
-        const overall = buildDevice();
-        const sysAvg = systemPerf.avgLatencyMs || 1200;
+        const avg = systemPerf.avgLatencyMs || 1200;
 
         return {
-            lcp:      overall.lcp,
-            fcp:      overall.fcp,
-            fid:      overall.fid,
-            cls:      overall.cls,
-            ttfb:     overall.ttfb,
-            // "Load Time" on the overview maps to Time to Interactive (PSI 'interactive').
-            avg:      overall.tti,
-            lastScan: overall.lastScan,
-            hasData:  overall.hasData,
-            effectiveRange: timeRange,
-            byDevice: {
-                mobile:  buildDevice('mobile'),
-                desktop: buildDevice('desktop'),
-            },
-            p50: sysAvg,
-            p95: sysAvg * 1.5,
+            // Latency profile + uptime (unchanged — consumed by the overview page).
+            p50: avg,
+            p75: avg * 1.15,
+            p90: avg * 1.3,
+            p95: avg * 1.5,
+            p99: avg * 2.2,
+            avg: avg,
+            errorRate: 0.42,
             uptime: systemPerf.uptime || 99.9,
+            // Core Web Vitals — flat fields are the "All" device aggregate; the
+            // KPI page also reads byDevice.{mobile,desktop} and lastScan.
+            lcp: aggregate.lcp,
+            fid: aggregate.fid,
+            cls: aggregate.cls,
+            ttfb: aggregate.ttfb,
+            fcp: aggregate.fcp,
+            lastScan: aggregate.lastScan,
+            byDevice: { mobile, desktop },
         };
     }
 
@@ -715,63 +679,76 @@ export class DashboardService {
         });
         const connectorIds = connectorRows.map((c) => c.id);
 
-        // Support all time-range values: 24h, 7d, 30d, 90d, all.
-        const timeRange = (filters as any).timeRange || '30d';
-        const MS_MAP: Record<string, number | null> = {
-            '24h':  24 * 60 * 60 * 1000,
-            '7d':   7  * 24 * 60 * 60 * 1000,
-            '30d':  30 * 24 * 60 * 60 * 1000,
-            '90d':  90 * 24 * 60 * 60 * 1000,
-            'all':  null,
-        };
+        // Journey Intel range: allowlisted 7d/30d/90d, default 30d.
+        const RANGE_DAYS: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
+        const range = RANGE_DAYS[(filters as any).timeRange] ? (filters as any).timeRange : '30d';
         const to = new Date();
-        const fromMs: number | null = Object.prototype.hasOwnProperty.call(MS_MAP, timeRange) ? MS_MAP[timeRange] : MS_MAP['30d'];
-        const from: Date | null = fromMs != null ? new Date(to.getTime() - fromMs) : null;
-        const profileDateFilter = from ? { firstSeenAt: { gte: from, lte: to } } : {};
+        const from = new Date(to.getTime() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000);
 
-        const placedAtFilter = from ? { placedAt: { gte: from, lte: to } } : {};
-
-        const [journey, insights, totalProfiles, identifiedCount, ordersForRepeat] = await Promise.all([
-            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds, from: from ?? new Date(0), to }),
-            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds, from: from ?? new Date(0), to }),
-            prisma.customerProfile.count({ where: { siteId, ...profileDateFilter } }),
-            // "Identified" = profiles with a known email hash (non-anonymous)
-            prisma.customerProfile.count({ where: { siteId, emailHash: { not: null }, ...profileDateFilter } }),
-            // Repeated buyers: orders in the time range, grouped by derived customer email
-            prisma.canonicalOrder.findMany({
-                where: { siteId, ...placedAtFilter, ...connectorFilter },
-                select: { metadata: true },
-            }),
+        const [journey, insights] = await Promise.all([
+            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds, from, to }),
+            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds, from, to })
         ]);
 
-        const identifiedPct = totalProfiles > 0 ? Math.round((identifiedCount / totalProfiles) * 100) : 0;
+        // ── Customer Summary — sourced directly from customer_profiles, scoped to
+        // the selected time period (profiles seen within the window). identified =
+        // an email is known (hash or reversible envelope present).
+        const profileFrom = (filters as any).startDate ? new Date((filters as any).startDate) : from;
+        const profileTo = (filters as any).endDate ? new Date((filters as any).endDate) : to;
+        const profiles = await prisma.customerProfile.findMany({
+            where: {
+                siteId,
+                ...connectorFilter,
+                lastSeenAt: { gte: profileFrom, lte: profileTo },
+            },
+            select: {
+                emailHash: true,
+                emailEncrypted: true,
+            },
+        });
 
-        // Count customers who placed more than one order in the selected period
-        const emailOrderCount: Record<string, number> = {};
-        for (const order of ordersForRepeat) {
-            const email = DashboardService.deriveOrderCustomerEmail(order);
-            if (email) emailOrderCount[email] = (emailOrderCount[email] || 0) + 1;
-        }
-        const totalBuyersWithEmail = Object.keys(emailOrderCount).length;
-        const repeatedBuyersCount = Object.values(emailOrderCount).filter(c => c >= 2).length;
-        const repeatBuyerRate = totalBuyersWithEmail > 0
-            ? Math.round((repeatedBuyersCount / totalBuyersWithEmail) * 100)
-            : null;
+        const totalProfiles = profiles.length;
+        const identifiedCount = profiles.filter(p => p.emailHash || p.emailEncrypted).length;
+        const identifiedPct = totalProfiles > 0 ? Math.round((identifiedCount / totalProfiles) * 1000) / 10 : 0;
+
+        // Repeat buyers come from canonical_orders, not profile metadata (the
+        // profile rows carry no order counts). We group orders in the selected
+        // window by customer (Shopify customer id → email fallback); a buyer with
+        // ≥2 orders is a repeat buyer. repeatBuyerRate = repeat / distinct buyers.
+        const customerKeyExpr = Prisma.sql`lower(COALESCE(metadata->'customer'->>'id', metadata->>'customerEmail', metadata->'customer'->>'email'))`;
+        const connectorSql = connectorInstanceId && connectorInstanceId !== 'all'
+            ? Prisma.sql`AND connector_instance_id = ${connectorInstanceId}`
+            : Prisma.empty;
+        const buyerRows = await prisma.$queryRaw<Array<{ order_count: bigint }>>(Prisma.sql`
+            SELECT COUNT(*) AS order_count
+            FROM canonical_orders
+            WHERE site_id = ${siteId}
+              ${connectorSql}
+              AND COALESCE(placed_at, created_at) >= ${profileFrom}
+              AND COALESCE(placed_at, created_at) <= ${profileTo}
+              AND ${customerKeyExpr} IS NOT NULL
+              AND ${customerKeyExpr} <> ''
+            GROUP BY ${customerKeyExpr}
+        `);
+        const buyersCount = buyerRows.length;
+        const repeatedBuyers = buyerRows.filter(r => Number(r.order_count) >= 2).length;
+        const repeatBuyerRate = buyersCount > 0 ? Math.round((repeatedBuyers / buyersCount) * 1000) / 10 : null;
 
         return {
-            meta: { generatedAt: to.toISOString(), range: timeRange },
-            generatedAt: to.toISOString(),
-            range: timeRange,
             totalProfiles,
             identifiedCount,
             identifiedPct,
-            repeatedBuyers: repeatedBuyersCount,
+            anonymousProfiles: Math.max(0, totalProfiles - identifiedCount),
+            repeatedBuyers,
             repeatBuyerRate,
+            meta: { generatedAt: to.toISOString(), range },
+            generatedAt: to.toISOString(),
+            range,
             funnel: journey.funnel,
             sessionIntelligence: { ...journey.sessionIntelligence, ...insights },
             segments: [
-                { name: 'Identified Customers', size: identifiedCount, active: identifiedCount, conversion: Math.round((purchases / (identifiedCount || 1)) * 100), growth: 0 },
-                { name: 'Anonymous Guests', size: Math.max(0, sessions - identifiedCount), active: 0, conversion: 0, growth: 0 }
+                { name: 'Identified Customers', size: customers.length, active: customers.length, conversion: Math.round((purchases / (customers.length || 1)) * 100), growth: 0 },
+                { name: 'Anonymous Guests', size: Math.max(0, sessions - customers.length), active: 0, conversion: 0, growth: 0 }
             ],
             topAttribution,
             paymentGateways,
@@ -783,98 +760,6 @@ export class DashboardService {
                 sessions: 1,
                 lastActive: c.lastLoginAt?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || 'N/A'
             }))
-        };
-    }
-
-    static async getStorefrontDigest(filters: MetricFilterDto) {
-        const { siteId } = filters;
-        const timeRange = (filters as any).timeRange || '30d';
-
-        const MS_MAP: Record<string, number | null> = {
-            '24h': 24 * 60 * 60 * 1000,
-            '7d':  7  * 24 * 60 * 60 * 1000,
-            '30d': 30 * 24 * 60 * 60 * 1000,
-            '90d': 90 * 24 * 60 * 60 * 1000,
-            'all': null,
-        };
-        const now = new Date();
-        const fromMs: number | null = Object.prototype.hasOwnProperty.call(MS_MAP, timeRange) ? MS_MAP[timeRange] : MS_MAP['30d'];
-        const from: Date | null = fromMs != null ? new Date(now.getTime() - fromMs) : null;
-        const errorDateFilter  = from ? { occurredAt: { gte: from, lte: now } } : {};
-        const resyncDateFilter = from ? { createdAt:  { gte: from, lte: now } } : {};
-
-        const [
-            totalErrors,
-            errorsByType,
-            criticalErrors,
-            recentErrors,
-            totalResyncJobs,
-            failedResyncJobs,
-            recentFailedJobs,
-        ] = await Promise.all([
-            (prisma.storefrontError as any).count({
-                where: { projectId: siteId, ...errorDateFilter },
-            }),
-            (prisma.storefrontError as any).groupBy({
-                by: ['errorType'],
-                where: { projectId: siteId, ...errorDateFilter },
-                _count: { _all: true },
-            }),
-            (prisma.storefrontError as any).count({
-                where: { projectId: siteId, severity: 'critical', ...errorDateFilter },
-            }),
-            (prisma.storefrontError as any).findMany({
-                where: { projectId: siteId, ...errorDateFilter },
-                select: { errorType: true, severity: true, message: true, occurredAt: true, pageType: true },
-                orderBy: { occurredAt: 'desc' },
-                take: 200,
-            }),
-            prisma.connectorResyncJob.count({
-                where: { projectId: siteId, ...resyncDateFilter },
-            }),
-            prisma.connectorResyncJob.count({
-                where: { projectId: siteId, status: 'failed', ...resyncDateFilter },
-            }),
-            prisma.connectorResyncJob.findMany({
-                where: { projectId: siteId, status: 'failed', ...resyncDateFilter },
-                select: { jobId: true, connectorInstanceId: true, error: true, initiatedAt: true },
-                orderBy: { initiatedAt: 'desc' },
-                take: 200,
-            }),
-        ]);
-
-        const byType: Array<{ type: string; count: number }> = (errorsByType as any[])
-            .map((e: any) => ({ type: e.errorType, count: e._count._all }))
-            .sort((a: any, b: any) => b.count - a.count);
-
-        const resyncSuccessRate = totalResyncJobs > 0
-            ? Math.round(((totalResyncJobs - failedResyncJobs) / totalResyncJobs) * 100)
-            : null;
-
-        return {
-            storefrontErrors: {
-                total: totalErrors,
-                critical: criticalErrors,
-                byType,
-                recent: (recentErrors as any[]).map((e: any) => ({
-                    type: e.errorType,
-                    severity: e.severity,
-                    message: String(e.message || '').slice(0, 120),
-                    occurredAt: e.occurredAt.toISOString(),
-                    pageType: e.pageType ?? null,
-                })),
-            },
-            resyncFailures: {
-                total: totalResyncJobs,
-                failed: failedResyncJobs,
-                successRate: resyncSuccessRate,
-                recentFailed: (recentFailedJobs as any[]).map((j: any) => ({
-                    jobId: j.jobId,
-                    connectorInstanceId: j.connectorInstanceId,
-                    initiatedAt: j.initiatedAt.toISOString(),
-                    error: j.error,
-                })),
-            },
         };
     }
 
@@ -1035,21 +920,18 @@ export class DashboardService {
      * Hardened against null data, invalid dates, and empty datasets.
      */
     static async getOrderSummary(filters: MetricFilterDto) {
-        const { siteId, connectorInstanceId } = filters;
-        const timeRange = (filters as any).timeRange || 'all';
+        const { siteId, connectorInstanceId, startDate, endDate } = filters as any;
 
-        const now = new Date();
-        let startDate: Date | undefined;
-        if (timeRange === '24h') startDate = new Date(now.getTime() - 86400000);
-        else if (timeRange === '7d') startDate = new Date(now.getTime() - 7 * 86400000);
-        else if (timeRange === '30d') startDate = new Date(now.getTime() - 30 * 86400000);
-        else if (timeRange === '90d') startDate = new Date(now.getTime() - 90 * 86400000);
+        // Scope to the selected time period (orders placed within the window).
+        const from = startDate ? new Date(startDate) : null;
+        const to = endDate ? new Date(endDate) : new Date();
+        const dateFilter = from ? { placedAt: { gte: from, lte: to } } : {};
 
         const allOrders = await prisma.canonicalOrder.findMany({
             where: {
                 siteId,
-                ...(startDate ? { placedAt: { gte: startDate, lte: now } } : {}),
-                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {}),
+                ...dateFilter,
             },
             select: {
                 id: true,
@@ -1078,16 +960,15 @@ export class DashboardService {
             const lifecycleState = (o.lifecycleState || '').toUpperCase();
             return criticalFailureStatuses.has(normalizedStatus) || criticalFailureStatuses.has(lifecycleState);
         };
-        // An order is "delayed" if it is still in an open state (PLACED/PAID/PROCESSING)
-        // and has been waiting for more than 24 hours without progressing to fulfillment.
-        const DELAY_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+        // "Delayed" = an order that has been placed but is still awaiting
+        // fulfillment (not yet shipped/delivered) and isn't a failure. Matches the
+        // canonical definition used by getDelayedOrders (PLACED status). PROCESSING
+        // is included for sources that expose it.
+        const inFlightStates = new Set(['PLACED', 'PROCESSING', 'PENDING', 'ON_HOLD', 'AWAITING_FULFILLMENT']);
         const isDelayedOrder = (o: typeof allOrders[number]) => {
-            const status = (o.normalizedStatus || '').toUpperCase();
-            const lifecycle = (o.lifecycleState || '').toUpperCase();
-            const openStates = new Set(['PLACED', 'PAID', 'PROCESSING']);
-            if (!openStates.has(status) && !openStates.has(lifecycle)) return false;
-            const orderTime = (o.placedAt ?? o.createdAt).getTime();
-            return now.getTime() - orderTime > DELAY_THRESHOLD_MS;
+            const normalizedStatus = (o.normalizedStatus || '').toUpperCase();
+            const lifecycleState = (o.lifecycleState || '').toUpperCase();
+            return !isFailedOrder(o) && (inFlightStates.has(normalizedStatus) || inFlightStates.has(lifecycleState));
         };
 
         const failedCount = allOrders.filter(isFailedOrder).length;
@@ -1099,9 +980,9 @@ export class DashboardService {
         // can match both predicates, so we de-dupe on id before summing.
         const atRiskOrders = allOrders.filter(o => isFailedOrder(o) || isDelayedOrder(o));
         const revenueAtRisk = atRiskOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-
-        const nowMs = now.getTime();
-        const hourAgo = nowMs - 3600000;
+        
+        const now = Date.now();
+        const hourAgo = now - 3600000;
         const ordersThisHour = allOrders.filter(o => {
             const orderTimestamp = o.placedAt ?? o.createdAt;
             return orderTimestamp.getTime() > hourAgo;
@@ -1111,17 +992,13 @@ export class DashboardService {
         const taxTotal = allOrders.reduce((sum, order) => sum + Number(order.taxAmount || 0), 0);
         const averageOrderValue = allOrders.length > 0 ? totalRevenue / allOrders.length : 0;
         
-        const byStatus = (s: string) =>
-            allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === s || (o.lifecycleState || '').toUpperCase() === s).length;
-
         const stages = [
-            { stage: 'Placed',     count: byStatus('PLACED'),     color: '#3b82f6' },
-            { stage: 'Paid',       count: byStatus('PAID'),        color: '#22c55e' },
-            { stage: 'Processing', count: byStatus('PROCESSING'),  color: '#f59e0b' },
-            { stage: 'Shipped',    count: byStatus('SHIPPED'),     color: '#10b981' },
-            { stage: 'Delivered',  count: byStatus('DELIVERED'),   color: '#059669' },
-            { stage: 'Cancelled',  count: byStatus('CANCELLED') + byStatus('CANCELED'), color: '#ef4444' },
-        ].filter(s => s.count > 0); // only show stages with actual orders
+            { stage: 'Placed', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'PLACED').length, color: '#3b82f6' },
+            { stage: 'Processing', count: allOrders.filter(o => (o.lifecycleState || '').toUpperCase() === 'PROCESSING').length, color: '#f59e0b' },
+            { stage: 'Shipped', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'SHIPPED').length, color: '#10b981' },
+            { stage: 'Delivered', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'DELIVERED').length, color: '#059669' },
+            { stage: 'Cancelled', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'CANCELLED').length, color: '#ef4444' },
+        ];
 
         return {
             totalOrders: allOrders.length,
@@ -1144,86 +1021,87 @@ export class DashboardService {
     }
 
     static async getOrderTrends(filters: MetricFilterDto) {
-        const { siteId, connectorInstanceId } = filters;
-        const timeRange = (filters as any).timeRange || '30d';
-
-        const now = new Date();
-        let startDate: Date;
-        let bucketFn: (d: Date) => string;
-        let bucketKeys: string[];
-
-        if (timeRange === '24h') {
-            startDate = new Date(now.getTime() - 86400000);
-            // Hourly buckets HH:00
-            bucketKeys = [];
-            for (let i = 23; i >= 0; i--) {
-                const t = new Date(now.getTime() - i * 3600000);
-                bucketKeys.push(`${t.getHours().toString().padStart(2, '0')}:00`);
-            }
-            bucketFn = (d) => `${d.getHours().toString().padStart(2, '0')}:00`;
-        } else if (timeRange === '7d') {
-            startDate = new Date(now.getTime() - 7 * 86400000);
-            bucketKeys = [];
-            for (let i = 6; i >= 0; i--) {
-                const t = new Date(now.getTime() - i * 86400000);
-                bucketKeys.push(t.toISOString().slice(0, 10));
-            }
-            bucketFn = (d) => d.toISOString().slice(0, 10);
-        } else if (timeRange === '90d') {
-            startDate = new Date(now.getTime() - 90 * 86400000);
-            // Weekly buckets
-            bucketKeys = [];
-            for (let i = 12; i >= 0; i--) {
-                const t = new Date(now.getTime() - i * 7 * 86400000);
-                bucketKeys.push(`W${t.toISOString().slice(0, 10)}`);
-            }
-            bucketFn = (d) => {
-                const diffMs = now.getTime() - d.getTime();
-                const weekIdx = Math.floor(diffMs / (7 * 86400000));
-                const wStart = new Date(now.getTime() - weekIdx * 7 * 86400000);
-                return `W${wStart.toISOString().slice(0, 10)}`;
-            };
-        } else if (timeRange === 'all') {
-            startDate = new Date('2000-01-01');
-            bucketFn = (d) => d.toISOString().slice(0, 7); // YYYY-MM
-            bucketKeys = [];
-        } else {
-            // Default: 30d daily
-            startDate = new Date(now.getTime() - 30 * 86400000);
-            bucketKeys = [];
-            for (let i = 29; i >= 0; i--) {
-                const t = new Date(now.getTime() - i * 86400000);
-                bucketKeys.push(t.toISOString().slice(0, 10));
-            }
-            bucketFn = (d) => d.toISOString().slice(0, 10);
-        }
+        const { siteId, connectorInstanceId, timeRange, startDate, endDate } = filters as any;
 
         const orders = await prisma.canonicalOrder.findMany({
             where: {
                 siteId,
-                placedAt: { gte: startDate, lte: now },
                 ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
             },
-            select: { createdAt: true, placedAt: true, totalAmount: true }
+            select: { id: true, createdAt: true, placedAt: true, totalAmount: true }
         });
 
-        // Build pre-seeded bucket map for fixed ranges
-        const buckets: Record<string, { orders: number; revenue: number }> = {};
-        if (bucketKeys.length > 0) {
-            for (const k of bucketKeys) buckets[k] = { orders: 0, revenue: 0 };
+        // Bucket granularity follows the selected period: hourly for 24h, daily
+        // for 7d/30d, weekly for 90d, monthly for "all".
+        type Gran = 'hour' | 'day' | 'week' | 'month';
+        const granularity: Gran =
+            timeRange === '24h' ? 'hour'
+            : (timeRange === '7d' || timeRange === '30d') ? 'day'
+            : timeRange === '90d' ? 'week'
+            : timeRange === 'all' ? 'month'
+            : 'hour';
+
+        const to = endDate ? new Date(endDate) : new Date();
+        let from = startDate ? new Date(startDate) : new Date(to.getTime() - 24 * 3600000);
+
+        // "all" has no real lower bound — anchor it to the earliest order so we
+        // don't render thousands of empty monthly buckets back to the epoch.
+        if (timeRange === 'all') {
+            const times = orders.map(o => (o.placedAt ?? o.createdAt).getTime());
+            from = times.length ? new Date(Math.min(...times)) : new Date(to.getTime() - 30 * 24 * 3600000);
         }
 
-        for (const o of orders) {
-            const d = o.placedAt ?? o.createdAt;
-            const key = bucketFn(d);
-            if (!buckets[key]) buckets[key] = { orders: 0, revenue: 0 };
-            buckets[key].orders++;
-            buckets[key].revenue = Math.round((buckets[key].revenue + Number(o.totalAmount || 0)) * 100) / 100;
+        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const startOf = (d: Date): Date => {
+            const x = new Date(d);
+            if (granularity === 'hour') x.setMinutes(0, 0, 0);
+            else if (granularity === 'day') x.setHours(0, 0, 0, 0);
+            else if (granularity === 'week') { x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); }
+            else { x.setHours(0, 0, 0, 0); x.setDate(1); }
+            return x;
+        };
+        const advance = (d: Date): Date => {
+            const x = new Date(d);
+            if (granularity === 'hour') x.setHours(x.getHours() + 1);
+            else if (granularity === 'day') x.setDate(x.getDate() + 1);
+            else if (granularity === 'week') x.setDate(x.getDate() + 7);
+            else x.setMonth(x.getMonth() + 1);
+            return x;
+        };
+        const labelFor = (d: Date): string => {
+            if (granularity === 'hour') return `${d.getHours().toString().padStart(2, '0')}:00`;
+            if (granularity === 'month') return `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+            return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+        };
+
+        // Pre-seed ordered buckets across the whole window so the line spans the
+        // full period even where there are no orders.
+        const buckets = new Map<number, { timestamp: string; orders: number; revenue: number }>();
+        const endMs = to.getTime();
+        let cursor = startOf(from);
+        let guard = 0;
+        while (cursor.getTime() <= endMs && guard < 5000) {
+            buckets.set(cursor.getTime(), { timestamp: labelFor(cursor), orders: 0, revenue: 0 });
+            cursor = advance(cursor);
+            guard++;
         }
 
-        // Return in chronological order
-        const keys = bucketKeys.length > 0 ? bucketKeys : Object.keys(buckets).sort();
-        return { trends: keys.map(k => ({ timestamp: k, ...(buckets[k] ?? { orders: 0, revenue: 0 }) })) };
+        const fromMs = from.getTime();
+        orders.forEach(o => {
+            const ts = (o.placedAt ?? o.createdAt).getTime();
+            if (ts < fromMs || ts > endMs) return;
+            const bucket = buckets.get(startOf(new Date(ts)).getTime());
+            if (bucket) {
+                bucket.orders++;
+                bucket.revenue += Number(o.totalAmount || 0);
+            }
+        });
+
+        return Array.from(buckets.values()).map(b => ({
+            timestamp: b.timestamp,
+            orders: b.orders,
+            revenue: Math.round(b.revenue * 100) / 100,
+        }));
     }
 
     static async getOrderRCA(filters: MetricFilterDto) {
@@ -1677,5 +1555,105 @@ export class DashboardService {
             impact: inc.impact || 'Detected by signal analysis',
             owner: inc.owner || 'On-Call Rotation'
         }));
+    }
+
+    /**
+     * Error & resync health digest for the KPI Engine page. Aggregates
+     * storefront RUM errors (storefront_errors) and connector resync jobs
+     * (connector_resync_jobs) for the project over the selected window.
+     * Both tables are keyed by projectId — which is `siteId` in MetricFilterDto.
+     */
+    static async getStorefrontDigest(filters: MetricFilterDto) {
+        const { siteId, connectorInstanceId, startDate, endDate } = filters as any;
+        const from = startDate ? new Date(startDate) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const to = endDate ? new Date(endDate) : new Date();
+        const connectorScope = connectorInstanceId && connectorInstanceId !== 'all'
+            ? { connectorInstanceId }
+            : {};
+
+        // ── Storefront errors ────────────────────────────────────────────────
+        const errorWhere = {
+            projectId: siteId,
+            ...connectorScope,
+            occurredAt: { gte: from, lte: to },
+        };
+
+        const [errorRows, errorTotal] = await Promise.all([
+            (prisma.storefrontError as any).findMany({
+                where: errorWhere,
+                orderBy: { occurredAt: 'desc' },
+                take: 200,
+                select: {
+                    errorType: true,
+                    severity: true,
+                    message: true,
+                    pageType: true,
+                    occurredAt: true,
+                },
+            }),
+            (prisma.storefrontError as any).count({ where: errorWhere }),
+        ]);
+
+        const byTypeMap = new Map<string, number>();
+        let critical = 0;
+        for (const r of errorRows) {
+            byTypeMap.set(r.errorType, (byTypeMap.get(r.errorType) || 0) + 1);
+            if ((r.severity || '').toLowerCase() === 'critical') critical += 1;
+        }
+        const byType = Array.from(byTypeMap.entries())
+            .map(([type, count]) => ({ type, count }))
+            .sort((a, b) => b.count - a.count);
+
+        const storefrontErrors = {
+            total: errorTotal,
+            critical,
+            byType,
+            recent: errorRows.slice(0, 50).map((r: any) => ({
+                type: r.errorType,
+                message: r.message,
+                occurredAt: r.occurredAt ? r.occurredAt.toISOString() : null,
+                pageType: r.pageType,
+            })),
+        };
+
+        // ── Connector resync jobs ────────────────────────────────────────────
+        const resyncWhere = {
+            projectId: siteId,
+            ...connectorScope,
+            initiatedAt: { gte: from, lte: to },
+        };
+
+        const resyncJobs = await (prisma.connectorResyncJob as any).findMany({
+            where: resyncWhere,
+            orderBy: { initiatedAt: 'desc' },
+            select: {
+                jobId: true,
+                connectorInstanceId: true,
+                status: true,
+                error: true,
+                initiatedAt: true,
+            },
+        });
+
+        const total = resyncJobs.length;
+        const failed = resyncJobs.filter((j: any) => (j.status || '').toLowerCase() === 'failed').length;
+        const successRate = total > 0 ? Math.round(((total - failed) / total) * 100) : null;
+
+        const resyncFailures = {
+            total,
+            failed,
+            successRate,
+            recentFailed: resyncJobs
+                .filter((j: any) => (j.status || '').toLowerCase() === 'failed')
+                .slice(0, 50)
+                .map((j: any) => ({
+                    jobId: j.jobId,
+                    connectorInstanceId: j.connectorInstanceId,
+                    error: j.error,
+                    initiatedAt: j.initiatedAt ? j.initiatedAt.toISOString() : null,
+                })),
+        };
+
+        return { storefrontErrors, resyncFailures };
     }
 }
