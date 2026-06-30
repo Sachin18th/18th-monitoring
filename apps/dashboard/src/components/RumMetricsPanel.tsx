@@ -184,17 +184,11 @@ export default function RumMetricsPanel() {
     setPagesLoading(false);
   }, [apiFetch, projectId, tenantId, token]);
 
-  // Tracks devices we've already auto-measured this session so the auto-run effect
-  // below fires at most once per device (and never loops if PSI keeps returning
-  // "not measured"). Reset whenever the connector changes.
-  const autoMeasuredRef = React.useRef<Record<'mobile' | 'desktop', boolean>>({ mobile: false, desktop: false });
-
   // Reset all cached state when the active connector changes.
   useEffect(() => {
     if (!token || !projectId) return;
     setError(null);
     setPageData({ mobile: null, desktop: null });
-    autoMeasuredRef.current = { mobile: false, desktop: false };
   }, [connectorSelectionTick, projectId, token]);
 
   // Lazily load the page-type breakdown for the currently-selected device.
@@ -205,25 +199,10 @@ export default function RumMetricsPanel() {
     }
   }, [device, pageData, pagesLoading, fetchPages, token, projectId, tenantId]);
 
-  // First time a device has never been measured, the cheap load above returns a
-  // "not measured yet" state. Rather than make the user click Refresh, kick off one
-  // live PageSpeed run automatically (force=true). Guarded so it runs once per device
-  // and only for the genuine "not measured" state — a real PSI failure (which reports
-  // a different reason) is left alone so we don't hammer the API.
-  useEffect(() => {
-    if (!token || !projectId || !tenantId) return;
-    const data = pageData[device];
-    if (!data || pagesLoading || refreshing) return;
-    const home = data.homepage;
-    const notMeasured = Boolean(
-      home && !home.available && !home.measurementError &&
-      (home.reason || '').toLowerCase().includes('not measured'),
-    );
-    if (notMeasured && !autoMeasuredRef.current[device]) {
-      autoMeasuredRef.current[device] = true;
-      void fetchPages(device, true);
-    }
-  }, [pageData, device, pagesLoading, refreshing, fetchPages, token, projectId, tenantId]);
+  // NOTE: a live PageSpeed run is triggered ONLY by the Refresh button (handleRefresh
+  // below). We deliberately do NOT auto-measure on mount — the lazy load above is
+  // read-only and just displays the last stored measurement (or a "not measured yet"
+  // state until the user clicks Refresh).
 
   const handleRefresh = useCallback(async () => {
     if (!token || !projectId || !tenantId) return;

@@ -1022,27 +1022,22 @@ export class PageSpeedService {
         const { tenantId, projectId, connectorInstanceId, strategy, pageType, url, forceRefresh } = input;
         const source = this.buildPageSource(strategy, pageType);
 
-        // How long a stored PageSpeed measurement is considered "fresh enough" to serve
-        // on a normal page load. Older than this and the next load auto-fetches a fresh
-        // run (no explicit Refresh click required).
-        const PAGE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-        // On a normal page load we serve the last stored measurement as long as it is
-        // still fresh (under the TTL). A first-ever load with no measurement returns a
-        // "not measured yet" state so it can't hang on a live PageSpeed call. A stale
-        // cache (older than the TTL) falls through to a live run below. An explicit
-        // refresh (forceRefresh=true) always re-measures.
+        // A live PageSpeed run happens ONLY on an explicit Refresh (forceRefresh=true).
+        // A normal page load never scans: it serves the last stored measurement
+        // regardless of age, or a "not measured yet" state when nothing is stored.
+        // This guarantees the only thing that ever calls Google PSI is the Refresh
+        // button (and the background /sync it kicks off), never a page visit.
         const cached = await this.readCachedPage(projectId, connectorInstanceId, source, strategy);
-        if (!forceRefresh && cached && cached.ageMs < PAGE_CACHE_TTL_MS) {
+        if (!forceRefresh) {
+            if (!cached) {
+                return this.unavailablePage(pageType, url, NOT_MEASURED_REASON, null);
+            }
             if (cached.values.score !== undefined && cached.values.score < 0) {
                 return this.unavailablePage(pageType, cached.url || url, this.failureReason(pageType), cached.timestamp);
             }
             return this.buildPageResult(pageType, cached.url || url, cached.values, cached.timestamp);
         }
-        if (!forceRefresh && !cached) {
-            return this.unavailablePage(pageType, url, NOT_MEASURED_REASON, null);
-        }
-        // Cache is stale (> TTL) or forceRefresh=true — fall through to the live fetch below.
+        // forceRefresh=true — fall through to the live fetch below.
 
         // Fetch fresh from PageSpeed. On an explicit refresh, bust Google's result
         // cache so the user gets a brand-new measurement instead of a repeated one.
