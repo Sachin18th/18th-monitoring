@@ -25,6 +25,7 @@ import { idempotencyGuard } from './middlewares/idempotency.middleware';
 import { exposureV1Routes } from './exposure/routes/v1';
 import { OutboundBridge } from './services/outbound-bridge';
 import { initializeConnectors } from './initializers/connectors';
+import { reapStaleSyncRuns } from './services/sync-run-reaper';
 import { ScheduledMonitor } from './services/scheduled-monitor.service';
 import { EventRegistry } from '../../../services/processor/src/registry/event-registry';
 import { integrationRoutes } from './routes/integrations';
@@ -79,9 +80,29 @@ consumer.connectAndSubscribe([
 export const bootstrapApi = async () => {
     console.log('[API] Initializing Fastify server…');
     initializeConnectors();
+    // Reclaim any sync runs/resync jobs orphaned by the previous process exit,
+    // so a connector interrupted mid-sync (e.g. a dev reload) isn't stuck
+    // RUNNING forever and blocking future resyncs. Fire-and-forget.
+    void reapStaleSyncRuns();
     ScheduledMonitor.start();
 
-    const server = fastify({ logger: false });
+    // Long PSI scans (up to ~120s each) are proxied through the Next.js dev server,
+    // which keeps the upstream socket alive between requests. Node's default
+    // keepAliveTimeout (72s) is SHORTER than the gap between successive scans, so the
+    // API silently reaps a socket the proxy still holds — the next scan reuses that
+    // dead socket and surfaces as "socket hang up" / ECONNRESET 500 (typically after
+    // the 2nd–3rd scan). Fix: keep the server's keep-alive window well above the
+    // client/proxy window (dashboard apiFetch uses 250s), and headersTimeout above
+    // keepAliveTimeout (Node requires headersTimeout > keepAliveTimeout).
+    const server = fastify({
+        logger: false,
+        keepAliveTimeout: 620000,
+        // 0 = no cap on request processing time, so a slow PSI scan is never cut off.
+        requestTimeout: 0,
+    });
+    // Fastify has no headersTimeout option; set it on the raw Node server. Must exceed
+    // keepAliveTimeout or Node closes keep-alive connections at the lower value.
+    server.server.headersTimeout = 625000;
 
     // ── Security Hardening ──────────────────────────────────────────────────
     

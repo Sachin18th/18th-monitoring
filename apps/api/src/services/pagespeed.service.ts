@@ -119,70 +119,74 @@ export class PageSpeedService {
 
             // Fetch for both strategies and tolerate one strategy failing.
             // This avoids 502 responses when Google API is temporarily slow for one device.
-            // Run the strategies concurrently: sequential mobile+desktop scans can take
-            // ~60s+ combined, which pushes the request past the dashboard proxy / client
-            // timeout (70s) and surfaces as a socket-hang-up / ECONNRESET 500.
+            // Strategies run SERIALLY below (see loop) so a fragile origin is never hit
+            // by two concurrent Lighthouse loads at once (the PAGE_HUNG trigger).
             const strategies: PagespeedStrategy[] = ['mobile', 'desktop'];
             const timestamp = new Date();
 
             const strategyResults: Array<{ strategy: PagespeedStrategy; upserted: number }> = [];
             const rejected: Array<{ strategy: PagespeedStrategy; reason: unknown }> = [];
 
-            const settled = await Promise.allSettled(strategies.map(async (strategy) => {
-                const response = await this.fetchPageSpeedResultWithRetry(storeUrl, strategy);
-                console.log('[PageSpeedService] syncProjectMetrics:pagespeed-response', {
-                    tenantId,
-                    projectId,
-                    strategy,
-                    hasResponse: Boolean(response),
-                    lighthouseCategories: response?.lighthouseResult ? Object.keys(response.lighthouseResult) : [],
-                });
-
-                const audits = response?.lighthouseResult?.audits || {};
-                const rows = METRIC_MAP.map((metric) => ({
-                    metricName: metric.key,
-                    metricValue: Number(audits?.[metric.auditName]?.numericValue),
-                })).filter((row) => Number.isFinite(row.metricValue));
-
-                console.log('[PageSpeedService] syncProjectMetrics:parsed-metrics', {
-                    tenantId,
-                    projectId,
-                    strategy,
-                    rows,
-                });
-
-                if (rows.length === 0) {
-                    console.warn('[PageSpeedService] syncProjectMetrics:no-metrics-extracted', {
+            // Run strategies SERIALLY (not concurrently). Weak/staging origins
+            // cannot handle mobile + desktop Lighthouse loads at the same time and
+            // hang (PSI PAGE_HUNG). One-at-a-time keeps the target under a single
+            // load. A short pause between runs lets the origin recover.
+            for (let index = 0; index < strategies.length; index += 1) {
+                const strategy = strategies[index];
+                if (index > 0) {
+                    await new Promise((resolve) => setTimeout(resolve, 3000));
+                }
+                try {
+                    const response = await this.fetchPageSpeedResultWithRetry(storeUrl, strategy);
+                    console.log('[PageSpeedService] syncProjectMetrics:pagespeed-response', {
                         tenantId,
                         projectId,
                         strategy,
-                        auditsPresent: Object.keys(audits).length,
-                        auditsSample: Object.keys(audits).slice(0, 12),
+                        hasResponse: Boolean(response),
+                        lighthouseCategories: response?.lighthouseResult ? Object.keys(response.lighthouseResult) : [],
                     });
-                    return { strategy, upserted: 0 };
+
+                    const audits = response?.lighthouseResult?.audits || {};
+                    const rows = METRIC_MAP.map((metric) => ({
+                        metricName: metric.key,
+                        metricValue: Number(audits?.[metric.auditName]?.numericValue),
+                    })).filter((row) => Number.isFinite(row.metricValue));
+
+                    console.log('[PageSpeedService] syncProjectMetrics:parsed-metrics', {
+                        tenantId,
+                        projectId,
+                        strategy,
+                        rows,
+                    });
+
+                    if (rows.length === 0) {
+                        console.warn('[PageSpeedService] syncProjectMetrics:no-metrics-extracted', {
+                            tenantId,
+                            projectId,
+                            strategy,
+                            auditsPresent: Object.keys(audits).length,
+                            auditsSample: Object.keys(audits).slice(0, 12),
+                        });
+                        strategyResults.push({ strategy, upserted: 0 });
+                        continue;
+                    }
+
+                    await Promise.all(rows.map((row) => this.upsertMetric({
+                        tenantId,
+                        siteId: projectId,
+                        metricName: row.metricName,
+                        metricValue: row.metricValue,
+                        timestamp,
+                        source: this.buildSource(strategy),
+                        device: strategy,
+                        connectorInstanceId: connectorInstanceIdParam || connector.id
+                    })));
+
+                    strategyResults.push({ strategy, upserted: rows.length });
+                } catch (reason) {
+                    rejected.push({ strategy, reason });
                 }
-
-                await Promise.all(rows.map((row) => this.upsertMetric({
-                    tenantId,
-                    siteId: projectId,
-                    metricName: row.metricName,
-                    metricValue: row.metricValue,
-                    timestamp,
-                    source: this.buildSource(strategy),
-                    device: strategy,
-                    connectorInstanceId: connectorInstanceIdParam || connector.id
-                })));
-
-                return { strategy, upserted: rows.length };
-            }));
-
-            settled.forEach((outcome, index) => {
-                if (outcome.status === 'fulfilled') {
-                    strategyResults.push(outcome.value);
-                } else {
-                    rejected.push({ strategy: strategies[index], reason: outcome.reason });
-                }
-            });
+            }
 
             if (rejected.length > 0) {
                 console.warn('[PageSpeedService] syncProjectMetrics:partial-failure', {
@@ -512,25 +516,20 @@ export class PageSpeedService {
     }
 
     private static async fetchPageSpeedResultWithRetry(storeUrl: string, strategy: PagespeedStrategy, bustCache = false) {
-        const attempts = strategy === 'mobile' ? 2 : 1;
-        let lastError: unknown;
-
-        for (let attempt = 1; attempt <= attempts; attempt += 1) {
-            try {
-                return await this.fetchPageSpeedResult(storeUrl, strategy, bustCache);
-            } catch (error) {
-                lastError = error;
-                console.warn('[PageSpeedService] fetchPageSpeedResultWithRetry:attempt-failed', {
-                    storeUrl,
-                    strategy,
-                    attempt,
-                    attempts,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            }
+        // Run a SINGLE attempt only. Retrying against a fragile/slow origin
+        // (e.g. Magento mcstaging.*) just re-triggers back-to-back Lighthouse loads,
+        // which makes PSI fail harder ("Lighthouse returned error" / PAGE_HUNG) and
+        // multiplies wall-clock time.
+        try {
+            return await this.fetchPageSpeedResult(storeUrl, strategy, bustCache);
+        } catch (error) {
+            console.warn('[PageSpeedService] fetchPageSpeedResultWithRetry:attempt-failed', {
+                storeUrl,
+                strategy,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            throw error instanceof Error ? error : new Error(`PageSpeed ${strategy} request failed`);
         }
-
-        throw lastError instanceof Error ? lastError : new Error(`PageSpeed ${strategy} request failed`);
     }
 
     private static async fetchPageSpeedResult(storeUrl: string, strategy: PagespeedStrategy = 'mobile', bustCache = false) {
@@ -562,10 +561,15 @@ export class PageSpeedService {
         let timeout: ReturnType<typeof setTimeout> | undefined;
         try {
             const fetchFn: typeof fetch = (globalThis as any).fetch ?? (await import('undici')).fetch;
-            // Google PageSpeed API can take 15-30+ seconds to analyze a page.
-            // Mobile runs are often slower than desktop, so give them more headroom.
+            // Google PageSpeed API can take 15-30+ seconds to analyze a page, and
+            // slow/staging origins routinely push both strategies past 90s. Give
+            // desktop the same headroom as mobile so it isn't aborted prematurely.
             const controller = new AbortController();
-            const defaultTimeoutMs = strategy === 'mobile' ? 120000 : 90000;
+            // Slow/staging origins (e.g. Magento mcstaging.*) routinely make Google's
+            // Lighthouse analysis take 2-3+ minutes. pagespeed.web.dev has no client-side
+            // cutoff, so it "works there"; our 120s abort was firing before PSI finished.
+            // Give a single attempt enough headroom (override via PAGESPEED_FETCH_TIMEOUT_MS).
+            const defaultTimeoutMs = 180000;
             const timeoutMs = Number(process.env.PAGESPEED_FETCH_TIMEOUT_MS || defaultTimeoutMs);
             timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -730,7 +734,16 @@ export class PageSpeedService {
         // its full discovered candidate set; PSI measures the SELECTED URL (the one the
         // user picked, else the top-ranked). A page type with no discovered URL proxies
         // the homepage, clearly labeled — never a fabricated score.
-        const discovered = await this.resolveDiscoveredUrls(connector, storeUrl);
+        //
+        // A homepage-only refresh (pageTypeFilter === 'homepage') never uses discovered
+        // URLs and the client discards the other sections from the response, so skip
+        // discovery entirely: when the persisted sample is stale it would otherwise fire
+        // synchronous store-API calls and pile 10–40s of latency onto a request that
+        // doesn't need them. For pdp/plp/checkout (and full, unfiltered loads) discovery
+        // is still required to resolve candidate URLs.
+        const discovered = pageTypeFilter === 'homepage'
+            ? null
+            : await this.resolveDiscoveredUrls(connector, storeUrl);
 
         for (const pageType of ['pdp', 'plp', 'checkout'] as Array<'pdp' | 'plp' | 'checkout'>) {
             const candidates = discovered?.[pageType] || [];

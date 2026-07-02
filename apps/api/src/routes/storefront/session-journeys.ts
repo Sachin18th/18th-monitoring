@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { prisma } from '@kpi-platform/db';
+import { prisma, decryptEmail } from '@kpi-platform/db';
 import { tenantAuthHandler } from '../../middlewares/auth.middleware';
 import { successResponse, errorResponse } from '../../utils/response';
 
@@ -74,8 +74,18 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                     s.funnel_stages_reached,
                     s.purchase_completed,
                     s.checkout_started,
-                    s.funnel_stage
+                    s.funnel_stage,
+                    email_lookup.email_encrypted
                 FROM storefront_sessions s
+                LEFT JOIN LATERAL (
+                    SELECT e.properties->>'email_encrypted' AS email_encrypted
+                    FROM storefront_events e
+                    WHERE e.session_id = s.session_id
+                      AND e.connector_instance_id = s.connector_instance_id
+                      AND e.properties->>'email_encrypted' IS NOT NULL
+                    ORDER BY e.occurred_at DESC
+                    LIMIT 1
+                ) email_lookup ON true
                 WHERE s.connector_instance_id = ${connectorId}
                   AND s.tenant_id = ${req.tenantId}
                 ORDER BY s.started_at DESC
@@ -96,7 +106,10 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                 funnel_stages_reached: Array.isArray(r.funnel_stages_reached) ? r.funnel_stages_reached : [],
                 purchase_completed: Boolean(r.purchase_completed),
                 checkout_started: Boolean(r.checkout_started),
-                funnel_stage: r.funnel_stage
+                funnel_stage: r.funnel_stage,
+                // Decrypt the captured checkout email in memory for display. Never
+                // expose email_encrypted to the client — only the plaintext or null.
+                email: r.email_encrypted ? decryptEmail(r.email_encrypted) : null
             }));
 
             return reply.code(200).send(successResponse({ sessions }));

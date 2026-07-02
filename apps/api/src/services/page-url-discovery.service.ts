@@ -368,13 +368,16 @@ export class PageUrlDiscoveryService {
             categoriesUrl.searchParams.set('searchCriteria[filterGroups][0][filters][0][value]', '1');
             const payload = await this.getJson(categoriesUrl.toString(), headers);
             const items: any[] = Array.isArray(payload?.items) ? payload.items : [];
-            const keys = items
+            const paths = items
                 .filter((c) => Number(c?.level) > 1) // skip root / default category
-                .map((c) => this.readCustomAttribute(c, 'url_key'))
+                // url_path holds the FULL nested path (e.g. "women/style/clogs"); url_key is
+                // only the last segment ("clogs"), which drops ancestor categories from the URL.
+                .map((c) => this.readCustomAttribute(c, 'url_path') ?? this.readCustomAttribute(c, 'url_key'))
                 .filter((k): k is string => Boolean(k))
+                .map((k) => k.replace(/^\/+/, '')) // guard against a leading slash in url_path
                 .slice(0, SAMPLE_CAPS.plp);
-            keys.forEach((key, i) => urls.push({ pageType: 'plp', url: `${storefront}/${key}${categorySuffix}`, method: 'constructed', rank: i }));
-            coverage.plp.found = keys.length;
+            paths.forEach((path, i) => urls.push({ pageType: 'plp', url: `${storefront}/${path}${categorySuffix}`, method: 'constructed', rank: i }));
+            coverage.plp.found = paths.length;
         } catch (error) {
             this.logTypeFailure(connector, 'plp', error);
         }

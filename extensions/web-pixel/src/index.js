@@ -82,6 +82,7 @@ register(({ analytics, settings, init }) => {
     sendEvent(event, "checkout_step", {
       step: "contact_info",
       checkout_token: checkout.token,
+      ...(checkout.email ? { email: checkout.email } : {}),
     });
   });
 
@@ -90,6 +91,7 @@ register(({ analytics, settings, init }) => {
     sendEvent(event, "checkout_step", {
       step: "address_info",
       checkout_token: checkout.token,
+      ...(checkout.email ? { email: checkout.email } : {}),
     });
   });
 
@@ -99,6 +101,7 @@ register(({ analytics, settings, init }) => {
       step: "shipping_info",
       checkout_token: checkout.token,
       shipping_method: checkout.shippingLine && checkout.shippingLine.title,
+      ...(checkout.email ? { email: checkout.email } : {}),
     });
   });
 
@@ -107,6 +110,7 @@ register(({ analytics, settings, init }) => {
     sendEvent(event, "checkout_step", {
       step: "payment_info",
       checkout_token: checkout.token,
+      ...(checkout.email ? { email: checkout.email } : {}),
     });
   });
 
@@ -121,6 +125,7 @@ register(({ analytics, settings, init }) => {
       currency: checkout.currencyCode,
       checkout_token: checkout.token,
       line_item_count: checkout.lineItems ? checkout.lineItems.length : 0,
+      ...(checkout.email ? { email: checkout.email } : {}),
     });
   });
 });

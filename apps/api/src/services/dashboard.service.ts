@@ -1344,18 +1344,54 @@ export class DashboardService {
         }));
     }
 
-    static async getOrders(filters: MetricFilterDto) {
+    static async getOrders(filters: MetricFilterDto & { limit?: number; offset?: number }) {
         const { siteId } = filters;
+
+        // Honor pagination from the caller. Previously this loaded EVERY order
+        // (with the full raw provider payload in metadata) which timed out on
+        // large stores. Cap the page size so a runaway `limit` can't do the same.
+        const take = Math.min(Math.max(Number(filters.limit) || 1000, 1), 10000);
+        const skip = Math.max(Number(filters.offset) || 0, 0);
+
         const orders = await prisma.canonicalOrder.findMany({
             where: { siteId },
-            orderBy: { placedAt: 'desc' }
+            orderBy: { placedAt: 'desc' },
+            take,
+            skip
         });
 
+        console.log('[DashboardService.getOrders]', { siteId, take, skip, returned: orders.length });
+
+        // Diagnostic: if this project has no orders, surface whether ANY orders
+        // exist in the table and under which siteIds — this instantly reveals a
+        // siteId mismatch between the sync (writer) and the dashboard (reader).
+        if (orders.length === 0) {
+            const [totalInDb, siteRows] = await Promise.all([
+                prisma.canonicalOrder.count(),
+                prisma.canonicalOrder.findMany({ distinct: ['siteId'], select: { siteId: true }, take: 25 })
+            ]);
+            console.warn('[DashboardService.getOrders] 0 orders for this siteId — diagnostics', {
+                requestedSiteId: siteId,
+                totalOrdersInDb: totalInDb,
+                siteIdsPresentInDb: siteRows.map((r: any) => r.siteId)
+            });
+        }
+
         return orders.map((order: any) => {
+            // Derive the email BEFORE stripping raw payloads — it may live inside
+            // the raw provider order (see deriveOrderCustomerEmail).
             const customerEmail = this.deriveOrderCustomerEmail(order);
-            const metadata = {
-                ...(order?.metadata || {})
-            } as Record<string, any>;
+
+            // Drop the heavy raw provider payloads from the response. The
+            // dashboard never reads them, and at page-size they bloat the JSON
+            // enough to blow past the request timeout.
+            const {
+                adobeOrder: _adobeOrder,
+                shopifyOrder: _shopifyOrder,
+                bigcommerceOrder: _bigcommerceOrder,
+                rawOrder: _rawOrder,
+                ...metadata
+            } = (order?.metadata || {}) as Record<string, any>;
 
             if (customerEmail && !metadata.customerEmail) {
                 metadata.customerEmail = customerEmail;
@@ -1374,6 +1410,21 @@ export class DashboardService {
             where: { siteId },
             orderBy: { lastSeenAt: 'desc' }
         });
+
+        console.log('[DashboardService.getCustomers]', { siteId, returned: customers.length });
+
+        // Diagnostic: same siteId-mismatch check as getOrders.
+        if (customers.length === 0) {
+            const [totalInDb, siteRows] = await Promise.all([
+                prisma.customerProfile.count(),
+                prisma.customerProfile.findMany({ distinct: ['siteId'], select: { siteId: true }, take: 25 })
+            ]);
+            console.warn('[DashboardService.getCustomers] 0 customers for this siteId — diagnostics', {
+                requestedSiteId: siteId,
+                totalCustomersInDb: totalInDb,
+                siteIdsPresentInDb: siteRows.map((r: any) => r.siteId)
+            });
+        }
 
         return customers.map((customer: any) => {
             const metadata = {

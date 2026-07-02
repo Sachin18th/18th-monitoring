@@ -1070,7 +1070,7 @@ export default function CustomersPage() {
           ? apiFetch(`/api/v1/dashboard/customers/list?siteId=${projectId}&limit=${CUSTOMERS_FETCH_LIMIT}&offset=0`)
           : Promise.resolve([]),
         canViewOrders
-          ? apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}`, {
+          ? apiFetch(`/api/v1/dashboard/orders/list?siteId=${projectId}&limit=10000&offset=0`, {
               suppressUnauthorizedRedirect: true,
             }).catch(() => [])
           : Promise.resolve([]),

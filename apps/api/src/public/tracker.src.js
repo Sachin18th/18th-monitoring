@@ -32,6 +32,17 @@
     //   installed as tracker.js?cid=...&ingest=...) → window.__PLAT_CONFIG__.
     // When no ingest is given, derive it from the script's own origin.
     var script = document.currentScript;
+    // Fallback for dynamic injection (Google Tag Manager / any tag manager) or
+    // any context where currentScript is null: locate our own tag by its src.
+    // Prefer the last match (most-recently injected wins). This keeps config
+    // readable from data-* attributes and the src query string without needing
+    // an inline <script> — which a strict CSP (nonce present) blocks.
+    if (!script) {
+      try {
+        var cand = document.querySelectorAll('script[src*="/api/track/tracker.js"]');
+        if (cand && cand.length) script = cand[cand.length - 1];
+      } catch (e) {}
+    }
     var ds = (script && script.dataset) || {};
     var cfg = window.__PLAT_CONFIG__ || {};
     var srcUrl = (script && script.src) || '';

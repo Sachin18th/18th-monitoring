@@ -1,4 +1,4 @@
-import { prisma } from '@kpi-platform/db';
+import { prisma, encryptEmail, hashEmail, scrubEmails } from '@kpi-platform/db';
 import { reserveTrackingBudget } from '../utils/track-rate-limit';
 import {
   classifyEvent,
@@ -141,6 +141,20 @@ export class StorefrontTrackingService {
       if (!RESERVED_EVENT_KEYS.has(key)) properties[key] = raw[key];
     }
 
+    // Email must never be persisted in plaintext in storefront_events.properties —
+    // only the AES-256-GCM envelope and the deterministic hash, mirroring
+    // customer_profiles.email_encrypted/email_hash.
+    if (typeof properties.email === 'string') {
+      const rawEmail = properties.email;
+      properties.email_encrypted = encryptEmail(rawEmail);
+      properties.email_hash = hashEmail(rawEmail);
+      delete properties.email;
+    }
+    // Defense-in-depth: scrub any raw email that may be nested inside another
+    // property (e.g. a captured checkout_token object) so no plaintext address
+    // can leak into storefront_events.properties through any other field.
+    const scrubbedProperties = scrubEmails(properties);
+
     return {
       sessionId: sessionId.slice(0, 255),
       visitorId: visitorId.slice(0, 255),
@@ -148,7 +162,7 @@ export class StorefrontTrackingService {
       pageUrl: pageUrl ? String(pageUrl).slice(0, 2000) : null,
       pageTitle: pageTitle ? String(pageTitle).slice(0, 500) : null,
       occurredAt,
-      properties,
+      properties: scrubbedProperties,
       // Placeholders; resolved in ingestBatch once the connector's platform is known.
       canonicalStage: 'visit',
       shouldInsert: false,

@@ -703,7 +703,11 @@ model PerformanceMetric {
   region              String?  @db.VarChar(100)
   device              String?  @db.VarChar(100)
   browser             String?  @db.VarChar(100)
-  route               String?  @db.VarChar(255)
+  // Holds full per-page-type PSI URLs (PDP/PLP), which mirror discovered_page_urls
+  // .resolved_url (VarChar 1024). Deep nested category paths (e.g. Adobe url_path)
+  // exceed 255, so this must match that width or the metric upsert throws
+  // "value too long for character varying(255)" and the page silently shows stale data.
+  route               String?  @db.VarChar(1024)
   timestamp           DateTime
   traceId             String?  @map("trace_id") @db.VarChar(255)
   correlationId       String?  @map("correlation_id") @db.VarChar(255)

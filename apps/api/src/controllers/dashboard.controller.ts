@@ -363,7 +363,12 @@ export const getMetricsSeries = async (req: any, res: any) => {
 export const getOrders = async (req: any, res: any) => {
     const { siteId } = getFilters(req);
     try {
-        const data = await DashboardService.getOrders(getFilters(req) as any);
+        const filters = {
+            ...getFilters(req),
+            limit: req.query.limit,
+            offset: req.query.offset
+        };
+        const data = await DashboardService.getOrders(filters as any);
         return res.code(200).send(successResponse(data));
     } catch (err) {
         return respondWithError(res, err, 'getOrders', siteId);

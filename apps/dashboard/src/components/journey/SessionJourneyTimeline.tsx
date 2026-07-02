@@ -23,6 +23,7 @@ interface Session {
   purchase_completed: boolean;
   checkout_started: boolean;
   funnel_stage: string | null;
+  email: string | null;
 }
 
 interface JourneyEvent {
@@ -416,8 +417,15 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
                   }}
                 >
                   <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: dotColor(session), flexShrink: 0 }} />
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: TEXT, width: '110px', flexShrink: 0, fontFamily: 'monospace' }}>
-                    {session.visitor_id ? `${session.visitor_id.slice(0, 8)}…` : '—'}
+                  <span
+                    style={{ fontSize: '13px', fontWeight: 600, color: TEXT, width: '110px', flexShrink: 0, fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                    title={session.email || session.visitor_id || ''}
+                  >
+                    {session.email
+                      ? session.email
+                      : session.visitor_id
+                        ? `${session.visitor_id.slice(0, 8)}…`
+                        : '—'}
                   </span>
                   <span style={{ fontSize: '12px', color: MUTED, width: '90px', flexShrink: 0 }}>{relativeTime(session.started_at)}</span>
                   <span style={{ fontSize: '12px', color: TEXT, width: '90px', flexShrink: 0, textTransform: 'capitalize' }}>

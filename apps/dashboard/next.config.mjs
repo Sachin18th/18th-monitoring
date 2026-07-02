@@ -5,6 +5,16 @@ const nextConfig = {
     typescript: {
         ignoreBuildErrors: true,
     },
+    // A live PageSpeed refresh proxies to the backend, which calls Google PSI — a
+    // single scan can take 90s (desktop) to ~240s (mobile, with retry). Next's rewrite
+    // proxy defaults to a 30s timeout: past that it destroys the upstream socket, which
+    // surfaces as "Failed to proxy … socket hang up (ECONNRESET)" and a 500 to the
+    // browser while the last-cached numbers stay on screen. Hold the proxied connection
+    // as long as the dashboard's own apiFetch is willing to wait (250s) so the fresh
+    // result actually comes back instead of resetting mid-scan.
+    experimental: {
+        proxyTimeout: 250000,
+    },
     // Next.js 16 blocks dev/HMR requests from non-localhost origins. When the
     // app is reached through a tunnel (ngrok) the browser origin is that tunnel
     // host, so it must be allow-listed or the client never hydrates (the page

@@ -126,6 +126,12 @@ const PAGE_SECTIONS: Array<{ key: PageType; label: string }> = [
 ];
 const PAGE_VITALS: MetricKey[] = ['lcp', 'tbt', 'cls', 'ttfb'];
 
+// Cooldown between the mobile and desktop PSI runs of a single Refresh. Firing desktop
+// the instant mobile resolves hits the same (often fragile/staging) origin with a second
+// Lighthouse load back-to-back, which is the PAGE_HUNG trigger the backend is already
+// guarding against. A short pause lets the origin recover between the two device runs.
+const DEVICE_COOLDOWN_MS = 20000;
+
 export default function RumMetricsPanel() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -257,7 +263,9 @@ export default function RumMetricsPanel() {
       apiFetch(`/api/v1/tenants/${tenantId}/projects/${projectId}/pagespeed/sync`, {
         method: 'POST',
         body: connectorInstanceId ? JSON.stringify({ connectorInstanceId }) : undefined,
-        timeout: 120000,
+        // Backend allows a single PSI attempt up to ~180s for slow staging origins; give
+        // the frontend enough headroom so it doesn't spuriously report "still syncing".
+        timeout: 210000,
       }).catch((err) => console.warn('[RumMetricsPanel] background sync failed', err));
     }
 
@@ -266,6 +274,9 @@ export default function RumMetricsPanel() {
     // (sets pagesError, never throws), so run both strategies in order — mobile, desktop.
     const url = sectionUrl[pageType];
     await fetchPages('mobile', true, pageType, url);
+    // Cooldown before the desktop run so the origin isn't hit by two back-to-back
+    // Lighthouse loads (PAGE_HUNG). See DEVICE_COOLDOWN_MS.
+    await new Promise((resolve) => setTimeout(resolve, DEVICE_COOLDOWN_MS));
     await fetchPages('desktop', true, pageType, url);
     setRefreshingType(null);
   }, [apiFetch, connectorInstanceId, fetchPages, projectId, refreshingType, sectionUrl, tenantId, token]);

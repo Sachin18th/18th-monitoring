@@ -292,40 +292,79 @@ export class IntegrationController {
             }
         });
 
-        // Map Prisma fields to dashboard-expected field names
-        let initialSync: any = null;
-        if (type === 'shopify') {
+        // The initial order/customer sync (and Shopify pixel registration) make
+        // live, paginated calls to the store's API. Running them inline blocks
+        // the HTTP response — a slow, large, or unreachable store makes the dev
+        // proxy reset the socket (ECONNRESET / "socket hang up") and the UI sees
+        // a spurious 500 even though the connector was created. Kick the setup
+        // off in the background (like ConnectorResyncService) and respond now.
+        // Each sync service records its own health/lastError on the instance, so
+        // progress and failures are still surfaced without blocking the request.
+        setImmediate(() => {
+            void IntegrationController.runInitialSetup({ id, type, siteId, config, credentials })
+                .catch((err: any) => {
+                    console.error('[Integration] initial background setup failed', { id, error: err?.message || err });
+                });
+        });
+
+        const mappedInstance = {
+            ...instance,
+            lastSuccessfulSync: instance.lastSyncAt?.toISOString(),
+            lastAttemptedSync: instance.lastAttemptAt?.toISOString(),
+            initialSync: { status: 'PENDING', message: 'Initial sync started in the background.' }
+        };
+
+        return reply.code(201).send(ResponseUtil.success(mappedInstance, {}, req.id as string));
+    }
+
+    /**
+     * Runs the post-create initial sync and provider-specific setup in the
+     * background. Never throws — all failures are logged and captured on the
+     * connector instance's health state by the individual sync services.
+     */
+    private static async runInitialSetup(input: {
+        id: string;
+        type: string;
+        siteId: string;
+        config: any;
+        credentials: any;
+    }): Promise<void> {
+        const { id, type, siteId, config, credentials } = input;
+
+        console.log('[Integration] runInitialSetup:start', { connectorInstanceId: id, type, siteId });
+
+        // ─── Initial order + customer sync ───────────────────────────────────
+        // Orders and customers are synced INDEPENDENTLY. They authenticate against
+        // different provider ACLs (e.g. Adobe Commerce needs Magento_Sales::sales
+        // for orders and Magento_Customer::manage for customers, granted
+        // separately), so a failure in one must not skip the other. Each sync
+        // service records its own DEGRADED/lastError state on the instance.
+        const orderSync =
+            type === 'shopify' ? () => ShopifyOrderSyncService.syncConnectorInstance(id)
+            : type === 'adobe_commerce' ? () => AdobeCommerceOrderSyncService.syncConnectorInstance(id)
+            : type === 'bigcommerce' ? () => BigCommerceOrderSyncService.syncConnectorInstance(id)
+            : null;
+        const customerSync =
+            type === 'shopify' ? () => ShopifyCustomerSyncService.syncConnectorInstance(id)
+            : type === 'adobe_commerce' ? () => AdobeCommerceCustomerSyncService.syncConnectorInstance(id)
+            : type === 'bigcommerce' ? () => BigCommerceCustomerSyncService.syncConnectorInstance(id)
+            : null;
+
+        if (orderSync) {
             try {
-                const orderSync = await ShopifyOrderSyncService.syncConnectorInstance(id);
-                const customerSync = await ShopifyCustomerSyncService.syncConnectorInstance(id);
-                initialSync = { orders: orderSync, customers: customerSync };
+                const result = await orderSync();
+                console.log('[Integration] initial order sync done', { id, siteId, ...result });
             } catch (err: any) {
-                initialSync = {
-                    ok: false,
-                    message: err.message
-                };
+                console.error('[Integration] initial order sync failed', { id, siteId, error: err?.message || err });
             }
-        } else if (type === 'adobe_commerce') {
+        }
+
+        if (customerSync) {
             try {
-                const orderSync = await AdobeCommerceOrderSyncService.syncConnectorInstance(id);
-                const customerSync = await AdobeCommerceCustomerSyncService.syncConnectorInstance(id);
-                initialSync = { orders: orderSync, customers: customerSync };
+                const result = await customerSync();
+                console.log('[Integration] initial customer sync done', { id, siteId, ...result });
             } catch (err: any) {
-                initialSync = {
-                    ok: false,
-                    message: err.message
-                };
-            }
-        } else if (type === 'bigcommerce') {
-            try {
-                const orderSync = await BigCommerceOrderSyncService.syncConnectorInstance(id);
-                const customerSync = await BigCommerceCustomerSyncService.syncConnectorInstance(id);
-                initialSync = { orders: orderSync, customers: customerSync };
-            } catch (err: any) {
-                initialSync = {
-                    ok: false,
-                    message: err.message
-                };
+                console.error('[Integration] initial customer sync failed', { id, siteId, error: err?.message || err });
             }
         }
 
@@ -397,19 +436,6 @@ export class IntegrationController {
                 console.error('[ShopifyPixel] registration step errored (non-fatal):', pixelErr?.message || pixelErr);
             }
         }
-
-        const refreshedInstance = await prisma.connectorInstance.findUnique({
-            where: { id }
-        });
-
-        const mappedInstance = {
-            ...(refreshedInstance || instance),
-            lastSuccessfulSync: refreshedInstance?.lastSyncAt?.toISOString() || instance.lastSyncAt?.toISOString(),
-            lastAttemptedSync: refreshedInstance?.lastAttemptAt?.toISOString() || instance.lastAttemptAt?.toISOString(),
-            initialSync
-        };
-
-        return reply.code(201).send(ResponseUtil.success(mappedInstance, {}, req.id as string));
     }
 
     /**

@@ -9,6 +9,14 @@ import {
     CUSTOMER_SYNC_TYPE
 } from './sync-checkpoint.util';
 
+// Bound each customer-search request. Magento's /customers/search degrades on
+// deep offset pagination for large stores; without a timeout a single stalled
+// page hangs the whole sync (and any resync job that runs it) indefinitely.
+const ADOBE_FETCH_TIMEOUT_MS = 30000;
+// Gentle spacing between pages so a big backfill doesn't hammer the store API.
+const ADOBE_CUSTOMER_PAGE_DELAY_MS = 250;
+const customerDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 type ConnectorRecord = {
     id: string;
     tenantId: string;
@@ -175,6 +183,24 @@ export class AdobeCommerceCustomerSyncService {
                 }
             });
 
+            // Surface the failure on the connector itself so the UI shows why
+            // customers didn't sync (e.g. a missing Magento_Customer::manage ACL),
+            // mirroring the order sync. Best-effort — never mask the original error.
+            try {
+                await prisma.connectorInstance.update({
+                    where: { id: connectorInstanceId },
+                    data: {
+                        lastAttemptAt: startedAt,
+                        healthStatus: 'DEGRADED',
+                        lifecycleState: 'DEGRADED',
+                        healthScore: 45,
+                        lastError: errorPayload as Prisma.InputJsonValue
+                    }
+                });
+            } catch (updateErr) {
+                console.error('[AdobeCommerceCustomerSyncService] Failed to persist connector error state', { updateErr });
+            }
+
             console.error('[AdobeCommerceCustomerSyncService] Sync failed', errorPayload);
             throw err;
         }
@@ -215,14 +241,29 @@ export class AdobeCommerceCustomerSyncService {
                 url.searchParams.set('searchCriteria[filterGroups][0][filters][0][value]', toAdobeDateTime(input.since));
             }
 
-            const response = await fetchFunc(url.toString(), {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${input.accessToken}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
+            let response: Response;
+            try {
+                response = await fetchFunc(url.toString(), {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${input.accessToken}`,
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    signal: AbortSignal.timeout(ADOBE_FETCH_TIMEOUT_MS)
+                });
+            } catch (err: any) {
+                // AbortSignal.timeout raises a TimeoutError; make it actionable
+                // instead of a bare "The operation was aborted".
+                if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+                    throw new Error(
+                        `Adobe Commerce customer sync timed out after ${ADOBE_FETCH_TIMEOUT_MS / 1000}s on page ${currentPage} ` +
+                        `(GET /rest/V1/customers/search). The store's customer search is responding too slowly — ` +
+                        `retry, or narrow the sync window.`
+                    );
                 }
-            });
+                throw err;
+            }
 
             if (!response.ok) {
                 const body = await response.text();
@@ -243,6 +284,18 @@ export class AdobeCommerceCustomerSyncService {
             if (items.length < pageSize || (totalCount > 0 && all.length >= totalCount)) {
                 break;
             }
+
+            // Loud when we stop early on a large store, so partial customer data
+            // is never mistaken for a complete sync.
+            if (currentPage === maxPages) {
+                console.warn('[AdobeCommerceCustomerSyncService] fetchCustomers:page-cap-hit', {
+                    maxPages,
+                    fetchedSoFar: all.length,
+                    totalCount: totalCount || 'unknown'
+                });
+            }
+
+            await customerDelay(ADOBE_CUSTOMER_PAGE_DELAY_MS);
         }
 
         console.log('[AdobeCommerceCustomerSyncService] fetchCustomers:success', {

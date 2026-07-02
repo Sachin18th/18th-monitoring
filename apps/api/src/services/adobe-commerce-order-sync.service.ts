@@ -12,6 +12,7 @@ import {
 } from './sync-checkpoint.util';
 
 const ADOBE_PAGE_DELAY_MS = 250;
+const ADOBE_FETCH_TIMEOUT_MS = 20000;
 const adobeDelay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 type ConnectorRecord = {
@@ -232,7 +233,7 @@ export class AdobeCommerceOrderSyncService {
     }
 
     console.log('[AdobeCommerceOrderSyncService] fetchOrders:start', {
-      baseUrl: config.baseUrl,
+      baseUrl: base,
       hasToken: Boolean(accessToken),
       maskedToken: accessToken ? `${accessToken.slice(0, 4)}...${accessToken.slice(-4)}` : 'missing',
       since: since?.toISOString() || null
@@ -262,13 +263,16 @@ export class AdobeCommerceOrderSyncService {
         url.searchParams.set('searchCriteria[filterGroups][0][filters][0][value]', toAdobeDateTime(since));
       }
 
+      // Bound each request so an unreachable/slow store can't hang the sync
+      // indefinitely — surfaces as a normal sync failure instead.
       const response = await fetchFn(url.toString(), {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
           'Accept': 'application/json'
-        }
+        },
+        signal: AbortSignal.timeout(ADOBE_FETCH_TIMEOUT_MS)
       });
 
       if (!response.ok) {
