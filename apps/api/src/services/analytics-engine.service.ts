@@ -68,14 +68,8 @@ export class AnalyticsEngine {
      */
     public static async getSystemPerformance(siteId: string) {
         // Query KpiValue for performance metrics
-        const kpis = await prisma.kpiValue.findMany({
-            where: { siteId },
-            select: {
-                kpiName: true,
-                kpiValue: true,
-                timestamp: true
-            }
-        });
+        // kpiValue table removed — query neutralized
+        const kpis: any[] = [];
 
         // Priority 1: Browser Page Load
         const browserLoadTimes = kpis.filter(m => m.kpiName === 'pageLoadTime');

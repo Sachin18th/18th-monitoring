@@ -407,15 +407,8 @@ export class CheckoutSyncService {
         const customerId = await this.resolveCustomerProfileId(instance, sourceSystem, checkout);
         const lineItemsCount = checkout.raw?.lineItemsCount ?? checkout.lineItems.length;
 
-        const existing = await prisma.canonicalCheckout.findFirst({
-            where: {
-                siteId: instance.siteId,
-                tenantId: instance.tenantId,
-                sourceSystem,
-                checkoutId: checkout.checkoutId
-            },
-            select: { id: true }
-        });
+        // canonical_checkout table removed — query neutralized
+        const existing: { id: string } | null = null;
 
         const data = {
             siteId: instance.siteId,
@@ -447,11 +440,8 @@ export class CheckoutSyncService {
             updatedAt: new Date()
         };
 
-        if (existing) {
-            await prisma.canonicalCheckout.update({ where: { id: existing.id }, data });
-        } else {
-            await prisma.canonicalCheckout.create({ data: { id: crypto.randomUUID(), ...data } });
-        }
+        // canonical_checkout table removed — query neutralized (write no-op)
+        void data;
     }
 
     /**

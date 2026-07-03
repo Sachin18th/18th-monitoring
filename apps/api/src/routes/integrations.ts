@@ -31,6 +31,10 @@ export const integrationRoutes = async (fastify: FastifyInstance) => {
     // Instance Lifecycle Actions
     fastify.post('/:id/sync', IntegrationController.sync);
 
+    // Initial (post-create) background sync status — polled by the setup modal
+    // to show real progress and a completion acknowledgement.
+    fastify.get('/:id/initial-sync/status', IntegrationController.initialSyncStatus);
+
     // Credential rotation / re-authenticate (update an expired store token)
     fastify.patch('/:connectorInstanceId/credentials', IntegrationController.updateCredentials);
 

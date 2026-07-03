@@ -7,7 +7,8 @@ export class ReplayService {
      * Requirement 6 (Safe replay with idempotency)
      */
     static async replayEvent(eventId: string) {
-        const event = await prisma.ingestionEvent.findUnique({ where: { id: eventId } });
+        // ingestionEvent table removed — query neutralized
+        const event: any = null;
         if (!event) throw new Error('Event not found');
         console.log(`[ReplayService] Replaying event ${eventId} for connector ${event.integrationId}`);
 
@@ -35,21 +36,8 @@ export class ReplayService {
      * Requirement 6 (Batch replay)
      */
     static async replayBatch(filters: { connectorId?: string; siteId: string; start?: Date; end?: Date; status?: string }) {
-        const events = await prisma.ingestionEvent.findMany({
-            where: {
-                projectId: filters.siteId,
-                ...(filters.connectorId ? { integrationId: filters.connectorId } : {}),
-                status: filters.status || 'FAILED',
-                ...(filters.start || filters.end
-                    ? {
-                        receivedAt: {
-                            ...(filters.start ? { gte: filters.start } : {}),
-                            ...(filters.end ? { lte: filters.end } : {})
-                        }
-                    }
-                    : {})
-            }
-        });
+        // ingestionEvent table removed — query neutralized
+        const events: any[] = [];
         console.log(`[ReplayService] Triggering replay for ${events.length} events...`);
 
         const results = {

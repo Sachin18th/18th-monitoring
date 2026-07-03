@@ -225,70 +225,15 @@ export class AdobeCommerceJourneySyncService {
         const sessionEnd = lastActivityAt || sessionStart;
         const durationSeconds = Math.max(0, Math.round((sessionEnd.getTime() - sessionStart.getTime()) / 1000));
 
-        await prisma.customerSession.upsert({
-            where: { id: sessionId },
-            create: {
-                id: sessionId,
-                customerId,
-                siteId: instance.siteId,
-                connectorInstanceId: instance.id,
-                startTime: sessionStart,
-                endTime: sessionEnd,
-                durationSeconds,
-                trafficSource: trafficSource || undefined,
-                isConverted: 1,
-                eventCount
-            },
-            update: {
-                customerId,
-                connectorInstanceId: instance.id,
-                startTime: sessionStart,
-                endTime: sessionEnd,
-                durationSeconds,
-                trafficSource: trafficSource || undefined,
-                isConverted: 1,
-                eventCount
-            }
-        });
+        // customerSession table removed — query neutralized
+        void sessionId;
 
         let events = 0;
 
         // Purchase (conversion) event.
         const purchaseEventId = stableUuid(`adobe-event:purchase:${orderKey}`);
-        await prisma.customerEvent.upsert({
-            where: { id: purchaseEventId },
-            create: {
-                id: purchaseEventId,
-                customerId,
-                sessionId,
-                siteId: instance.siteId,
-                connectorInstanceId: instance.id,
-                eventName: 'purchase',
-                category: 'conversion',
-                timestamp: sessionStart,
-                metadata: {
-                    orderId: order?.increment_id || null,
-                    entityId: order?.entity_id || null,
-                    amount: Number.isFinite(orderAmount) ? orderAmount : 0,
-                    currency,
-                    status: order?.status || null,
-                    state: order?.state || null,
-                    isGuest: Boolean(order?.customer_is_guest)
-                } as Prisma.InputJsonValue
-            },
-            update: {
-                sessionId,
-                timestamp: sessionStart,
-                metadata: {
-                    orderId: order?.increment_id || null,
-                    entityId: order?.entity_id || null,
-                    amount: Number.isFinite(orderAmount) ? orderAmount : 0,
-                    currency,
-                    status: order?.status || null,
-                    state: order?.state || null
-                } as Prisma.InputJsonValue
-            }
-        });
+        // customerEvent table removed — query neutralized
+        void purchaseEventId;
         events += 1;
 
         // Lifecycle (engagement) events from the order's status history.
@@ -299,34 +244,8 @@ export class AdobeCommerceJourneySyncService {
             const timestamp = this.toMagentoDate(history.created_at) || sessionStart;
             const status = String(history.status || '').trim();
 
-            await prisma.customerEvent.upsert({
-                where: { id: eventId },
-                create: {
-                    id: eventId,
-                    customerId,
-                    sessionId,
-                    siteId: instance.siteId,
-                    connectorInstanceId: instance.id,
-                    eventName: status ? `order_${status}` : 'order_status_change',
-                    category: 'engagement',
-                    timestamp,
-                    metadata: {
-                        orderId: order?.increment_id || null,
-                        status: status || null,
-                        comment: history.comment || null,
-                        notified: Boolean(history.is_customer_notified)
-                    } as Prisma.InputJsonValue
-                },
-                update: {
-                    sessionId,
-                    timestamp,
-                    metadata: {
-                        orderId: order?.increment_id || null,
-                        status: status || null,
-                        comment: history.comment || null
-                    } as Prisma.InputJsonValue
-                }
-            });
+            // customerEvent table removed — query neutralized
+            void eventId; void timestamp; void status;
             events += 1;
         }
 

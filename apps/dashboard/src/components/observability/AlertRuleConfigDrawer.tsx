@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Plus, Pencil, Trash2, BellRing, ArrowLeft, Gauge, ShoppingCart,
-  AlertTriangle, Route, Users, Check, Mail,
+  AlertTriangle, Route, Users, Check, Mail, Plug, CreditCard,
 } from 'lucide-react';
 import { DiagnosticDrawer, useToast } from '@kpi-platform/ui';
 
@@ -40,6 +40,8 @@ export const CATEGORIES: Category[] = [
   { id: 'errors', label: 'Storefront errors', icon: AlertTriangle },
   { id: 'journey', label: 'Customer journey', icon: Route },
   { id: 'sessions', label: 'Visitors', icon: Users },
+  { id: 'integrations', label: 'Integrations', icon: Plug },
+  { id: 'gateways', label: 'Payments & SMS', icon: CreditCard },
 ];
 
 export const TEMPLATES: Template[] = [
@@ -52,7 +54,7 @@ export const TEMPLATES: Template[] = [
   // ── Orders ──
   { id: 'delayed_orders', categoryId: 'orders', title: 'Fulfillment Delay Threshold Exceeded', desc: 'Unprocessed orders awaiting fulfillment have exceeded your acceptable backlog limit.', family: 'orders', metric: 'delayed_orders', dir: 'above', unit: 'orders', subject: 'delayed orders', defaultThreshold: 10, defaultWindow: 1440, defaultSeverity: 'HIGH' },
   { id: 'failed_orders', categoryId: 'orders', title: 'Order Failure Rate Spike', desc: 'Cancelled, failed, returned or refunded orders have exceeded your failure-rate threshold.', family: 'orders', metric: 'failed_orders', dir: 'above', unit: 'orders', subject: 'failed or cancelled orders', defaultThreshold: 5, defaultWindow: 1440, defaultSeverity: 'CRITICAL' },
-  { id: 'no_orders', categoryId: 'orders', title: 'Order Volume Dropout', desc: 'Incoming order count has dropped below your minimum floor — possible platform or payment outage.', family: 'orders', metric: 'order_count', dir: 'below', unit: 'orders', subject: 'orders received', defaultThreshold: 1, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
+  { id: 'no_orders', categoryId: 'orders', title: ' Last Hour Order Volume Dropout', desc: 'Incoming order count has dropped below your minimum floor — possible platform or payment outage.', family: 'orders', metric: 'order_count', dir: 'below', unit: 'orders', subject: 'orders received', defaultThreshold: 1, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
   { id: 'revenue_drop', categoryId: 'orders', title: 'Revenue Floor Breach', desc: 'Revenue has fallen below your expected minimum — investigate order or payment issues.', family: 'orders', metric: 'revenue', dir: 'below', unit: '', subject: 'revenue', defaultThreshold: 1000, defaultWindow: 1440, defaultSeverity: 'HIGH' },
 
   // ── Storefront errors ──
@@ -68,6 +70,14 @@ export const TEMPLATES: Template[] = [
   // ── Visitors ──
   { id: 'conversion_drop', categoryId: 'sessions', title: 'Session Conversion Rate Alert', desc: 'The share of sessions converting to a purchase has dropped below your target.', family: 'customer_session', metric: 'conversion_rate', dir: 'below', unit: '%', subject: 'session conversion rate', defaultThreshold: 2, defaultWindow: 1440, defaultSeverity: 'MEDIUM' },
   { id: 'traffic_drop', categoryId: 'sessions', title: 'Visitor Session Volume Drop', desc: 'Incoming session count has fallen below your floor — possible acquisition or infrastructure issue.', family: 'customer_session', metric: 'session_count', dir: 'below', unit: 'sessions', subject: 'visitor sessions', defaultThreshold: 10, defaultWindow: 60, defaultSeverity: 'MEDIUM' },
+
+  // ── Integrations ──
+  { id: 'integration_sync_fail', categoryId: 'integrations', title: 'Integration Sync Failure', desc: 'A store connector failed to sync data — orders, products or customers may be missing or stale.', family: 'integration', metric: 'sync_failures', dir: 'above', unit: '', subject: 'failed integration syncs', defaultThreshold: 0, defaultWindow: 60, defaultSeverity: 'HIGH' },
+  { id: 'integration_down', categoryId: 'integrations', title: 'Integration Connection Down', desc: 'A connected store API is unreachable or rejecting our token — reconnecting the store may be required.', family: 'integration', metric: 'unhealthy_connectors', dir: 'above', unit: '', subject: 'failing integrations', defaultThreshold: 0, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
+
+  // ── Payments & SMS ──
+  { id: 'payment_degraded', categoryId: 'gateways', title: 'Payment Gateway Degraded', desc: 'A configured payment gateway is reporting downtime or degraded service — checkout is at risk.', family: 'payment_gateway', metric: 'degraded_gateways', dir: 'above', unit: '', subject: 'impacted payment gateways', defaultThreshold: 0, defaultWindow: 60, defaultSeverity: 'CRITICAL' },
+  { id: 'sms_degraded', categoryId: 'gateways', title: 'SMS Gateway Degraded', desc: 'An SMS provider (Twilio, GupShup, ClickSend, Infobip) is reporting an incident — OTPs and notifications may fail.', family: 'sms_gateway', metric: 'degraded_gateways', dir: 'above', unit: '', subject: 'impacted SMS gateways', defaultThreshold: 0, defaultWindow: 60, defaultSeverity: 'HIGH' },
 ];
 
 const findTemplate = (id: string) => TEMPLATES.find((t) => t.id === id);

@@ -17,7 +17,6 @@ const PAYU_TEST_CREDENTIALS = {
 
 const PAYU_DOWNTIME_ENDPOINT = 'https://test.payu.in/merchant/postservice.php?form=2';
 const PAYU_DOWNTIME_COMMAND = 'getIssuingBankDownBins';
-const PAYU_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 
@@ -440,87 +439,6 @@ const fetchPayUCommand = async (
     }
 };
 
-const getCachedPayUResult = (config?: GatewayConfigRow) => {
-    const lastCheckedAt = config?.lastCheckedAt ? new Date(config.lastCheckedAt) : null;
-
-    if (!lastCheckedAt || Number.isNaN(lastCheckedAt.getTime())) {
-        return null;
-    }
-
-    const ageMs = Date.now() - lastCheckedAt.getTime();
-    if (ageMs < 0 || ageMs > PAYU_CACHE_TTL_MS) {
-        return null;
-    }
-
-    const cachedPayload = config?.lastPayload;
-    if (!cachedPayload) {
-        return null;
-    }
-
-    const checkedAt = cachedPayload?.checked_at || lastCheckedAt.toISOString();
-    const activeDowntimes = Array.isArray(cachedPayload?.active_downtimes)
-        ? cachedPayload.active_downtimes
-        : [];
-
-    return buildGatewayPayload('PayU', cachedPayload?.status || config?.lastStatus || 'UNKNOWN', activeDowntimes, new Date(checkedAt), {
-        ...cachedPayload,
-        source: 'journey-refresh-cache',
-        cached: true,
-        cache_age_ms: ageMs
-    });
-};
-
-const persistCachedPayUSnapshot = async (
-    config: GatewayConfigRow,
-    siteId: string,
-    tenantId: string,
-    payload: any
-) => {
-    const checkedAt = new Date(payload.checked_at || new Date().toISOString());
-
-    await prisma.$executeRaw`
-        UPDATE payment_gateway_configs
-        SET
-            last_checked_at = ${checkedAt},
-            last_status = ${payload.status},
-            last_payload = ${JSON.stringify(payload)}::jsonb,
-            is_active = true,
-            updated_at = NOW()
-        WHERE id = ${config.id}
-    `;
-
-    await prisma.$executeRaw`
-        INSERT INTO payment_gateway_status_snapshots (
-            id,
-            payment_gateway_config_id,
-            project_id,
-            tenant_id,
-            gateway_name,
-            status,
-            active_downtimes,
-            payload,
-            checked_at,
-            source,
-            error_message
-        )
-        VALUES (
-            ${crypto.randomUUID()},
-            ${config.id},
-            ${siteId},
-            ${tenantId},
-            ${config.gatewayName},
-            ${payload.status},
-            ${JSON.stringify(Array.isArray(payload.active_downtimes) ? payload.active_downtimes : [])}::jsonb,
-            ${JSON.stringify(payload)}::jsonb,
-            ${checkedAt},
-            'journey-refresh-cache',
-            ${payload.error_message || null}
-        )
-    `;
-
-    return checkedAt.toISOString();
-};
-
 const fetchRazorpayDowntimes = async (config?: GatewayConfigRow) => {
     const checkedAt = new Date();
     const key = config?.apiKey || RAZORPAY_TEST_CREDENTIALS.key;
@@ -570,12 +488,6 @@ const fetchRazorpayDowntimes = async (config?: GatewayConfigRow) => {
 
 const fetchPayUDowntimes = async (config?: GatewayConfigRow) => {
     const checkedAt = new Date();
-    const cachedResult = getCachedPayUResult(config);
-
-    if (cachedResult) {
-        return cachedResult;
-    }
-
     const key = config?.apiKey || PAYU_TEST_CREDENTIALS.key;
     const salt = config?.apiSecret || PAYU_TEST_CREDENTIALS.salt;
 
@@ -841,15 +753,6 @@ export const PaymentGatewayService = {
         const statuses = await Promise.all(
             configs.map(async (config) => {
                 const payload: any = await fetchGatewayStatusByType(config);
-
-                if (payload?.cached) {
-                    const checkedAt = await persistCachedPayUSnapshot(config, siteId, tenantId, payload);
-
-                    return mapSnapshotRecord(config, {
-                        ...payload,
-                        checked_at: checkedAt
-                    }, 'journey-refresh-cache');
-                }
 
                 const checkedAt = await persistGatewaySnapshot(config, siteId, tenantId, payload);
 

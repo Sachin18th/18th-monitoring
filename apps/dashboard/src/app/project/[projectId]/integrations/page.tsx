@@ -22,6 +22,7 @@ import {
   MoreHorizontal,
   Plus,
   Plug,
+  Clock,
 } from "lucide-react";
 import { useToast } from "@kpi-platform/ui";
 import { useConnectorPlatform } from "../../../../context/ConnectorPlatformContext";
@@ -100,6 +101,15 @@ export default function IntegrationsPage() {
   const { openConnectorSetupModal, openReauthSetup } = useConnectorPlatform();
   const { success, error: showError } = useToast();
   const resyncPollersRef = useRef<Record<string, number>>({});
+  const [resyncElapsed, setResyncElapsed] = useState(0);
+  const resyncStartedAtRef = useRef<number | null>(null);
+
+  const formatElapsed = (totalSeconds: number): string => {
+    const safe = Math.max(0, Math.floor(totalSeconds));
+    const minutes = Math.floor(safe / 60);
+    const seconds = safe % 60;
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  };
 
   const toText = (value: unknown, fallback = ""): string => {
     if (typeof value === "string") return value;
@@ -203,6 +213,15 @@ export default function IntegrationsPage() {
     loadData();
   }, [loadData]);
 
+  // Reload the connector list/health when an initial sync finishes (fired by
+  // the connector setup modal once the background orders/customers sync completes).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => loadData();
+    window.addEventListener("kpi:sync:completed", handler);
+    return () => window.removeEventListener("kpi:sync:completed", handler);
+  }, [loadData]);
+
   // When a store/connector is selected elsewhere in the app (via useConnectorFilter),
   // automatically show that connector's details. If the integration record is not
   // present in the list yet, fetch the single integration record.
@@ -298,6 +317,32 @@ export default function IntegrationsPage() {
     };
   }, []);
 
+  // Live "elapsed" ticker so the re-sync dialog visibly shows the background
+  // job is still working (the status alone stays "running" the whole time).
+  useEffect(() => {
+    if (resyncDialog?.phase !== "running") {
+      resyncStartedAtRef.current = null;
+      setResyncElapsed(0);
+      return;
+    }
+
+    if (resyncStartedAtRef.current === null) {
+      resyncStartedAtRef.current = Date.now();
+      setResyncElapsed(0);
+    }
+
+    const tick = () => {
+      if (resyncStartedAtRef.current !== null) {
+        setResyncElapsed(
+          Math.floor((Date.now() - resyncStartedAtRef.current) / 1000),
+        );
+      }
+    };
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [resyncDialog?.phase]);
+
   const handleInspect = (connector: any) => {
     setConnectorInstanceId(resolveConnectorInstanceId(connector) || null);
     setSelectedConnector(connector);
@@ -380,7 +425,7 @@ export default function IntegrationsPage() {
             updateResyncJobState(connectorInstanceId, null);
             setResyncDialog(null);
             success(`Re-sync completed for ${connector.name}`);
-            await loadData();
+            window.location.reload();
           } else if (status === "failed") {
             clearResyncPoller(connectorInstanceId);
             updateResyncJobState(connectorInstanceId, null);
@@ -504,7 +549,7 @@ export default function IntegrationsPage() {
             method: "POST",
           },
         );
-        loadData();
+        window.location.reload();
       } catch (e) {
         console.error("Action failed", e);
       }
@@ -1236,6 +1281,23 @@ export default function IntegrationsPage() {
                       ? `Current job status: ${resyncJobs[resyncDialog.connector.id].status}`
                       : "Waiting to start the job."}
                   </p>
+                  {resyncDialog.phase === "running" && (
+                    <p
+                      style={{
+                        margin: "6px 0 0",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        color: "#60a5fa",
+                        lineHeight: 1.5,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <Clock style={{ width: "13px", height: "13px" }} />
+                      Syncing for {formatElapsed(resyncElapsed)}
+                    </p>
+                  )}
                   {resyncDialog.error && (
                     <p
                       style={{

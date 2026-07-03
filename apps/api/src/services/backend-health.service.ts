@@ -171,9 +171,10 @@ export class BackendHealthService {
 
   private static async checkDlq(siteId: string): Promise<BackendHealthSnapshot['dlq']> {
     try {
+      // deadLetterQueue table removed — query neutralized
       const [depth, unreviewed] = await Promise.all([
-        prisma.deadLetterQueue.count({ where: { siteId } }),
-        prisma.deadLetterQueue.count({ where: { siteId, actionTaken: null } }),
+        Promise.resolve(0),
+        Promise.resolve(0),
       ]);
       const status: HealthStatus =
         depth >= DLQ_CRITICAL_DEPTH ? 'critical' : depth > 0 ? 'warning' : 'healthy';

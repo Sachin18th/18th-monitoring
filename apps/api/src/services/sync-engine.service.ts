@@ -139,59 +139,25 @@ export class SyncEngine {
     }
 
     private static async getCheckpoint(connectorId: string, siteId: string): Promise<string | null> {
-        const checkpoint = await prisma.pipelineCheckpoint.findFirst({
-            where: {
-                integrationId: connectorId,
-                siteId
-            },
-            orderBy: { updatedAt: 'desc' },
-            select: { cursorValue: true }
-        });
+        // pipelineCheckpoint table removed — query neutralized
+        const checkpoint = null as any;
 
         return checkpoint?.cursorValue || null;
     }
 
     private static async updateCheckpoint(connectorId: string, siteId: string, value: string) {
         try {
-            const existing = await prisma.pipelineCheckpoint.findFirst({
-                where: {
-                    integrationId: connectorId,
-                    siteId
-                },
-                select: { id: true }
-            });
+            // pipelineCheckpoint table removed — query neutralized
+            const existing = null as any;
 
             if (existing) {
-                await prisma.pipelineCheckpoint.updateMany({
-                    where: { id: existing.id },
-                    data: {
-                        cursorValue: value,
-                        updatedAt: new Date(),
-                        metadata: { lastUpdate: new Date().toISOString() }
-                    }
-                });
+                // pipelineCheckpoint table removed — query neutralized
                 return;
             }
 
-            await prisma.pipelineCheckpoint.create({
-                data: {
-                    id: Math.random().toString(36).substring(2, 10),
-                    integrationId: connectorId,
-                    siteId,
-                    entityType: 'ALL',
-                    cursorType: 'TIMESTAMP',
-                    cursorValue: value,
-                    metadata: { lastUpdate: new Date().toISOString() }
-                }
-            });
+            // pipelineCheckpoint table removed — query neutralized
         } catch (err) {
-            await prisma.pipelineCheckpoint.updateMany({
-                where: {
-                    integrationId: connectorId,
-                    siteId
-                },
-                data: { cursorValue: value, updatedAt: new Date() }
-            });
+            // pipelineCheckpoint table removed — query neutralized
         }
     }
 }

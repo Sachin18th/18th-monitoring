@@ -9,7 +9,16 @@ import { z } from 'zod';
  * recipients on these channels."
  */
 
-export const METRIC_FAMILIES = ['pagespeed', 'rum_errors', 'orders', 'customer_session', 'journey'] as const;
+export const METRIC_FAMILIES = [
+  'pagespeed',
+  'rum_errors',
+  'orders',
+  'customer_session',
+  'journey',
+  'integration',
+  'payment_gateway',
+  'sms_gateway',
+] as const;
 export type MetricFamily = (typeof METRIC_FAMILIES)[number];
 
 /**
@@ -47,6 +56,16 @@ export const METRIC_CATALOG: Record<MetricFamily, { metric: string; label: strin
   journey: [
     { metric: 'checkout_abandonment', label: 'Checkout abandonment rate', unit: '%' },
     { metric: 'completion_rate', label: 'Checkout completion rate', unit: '%' },
+  ],
+  integration: [
+    { metric: 'sync_failures', label: 'Failed data syncs', unit: 'count' },
+    { metric: 'unhealthy_connectors', label: 'Unreachable / failing integrations', unit: 'count' },
+  ],
+  payment_gateway: [
+    { metric: 'degraded_gateways', label: 'Payment gateways down or degraded', unit: 'count' },
+  ],
+  sms_gateway: [
+    { metric: 'degraded_gateways', label: 'SMS gateways down or degraded', unit: 'count' },
   ],
 };
 

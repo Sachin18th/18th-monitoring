@@ -23,13 +23,8 @@ export class CustomerAnalyticsService {
      * Calculates the most effective traffic sources based on conversion (Sessions with isConverted=1).
      */
     static async getTrafficSourcePerformance(siteId: string) {
-        const sessions = await prisma.customerSession.findMany({
-            where: { siteId },
-            select: {
-                trafficSource: true,
-                isConverted: true
-            }
-        });
+        // customerSession table removed — query neutralized
+        const sessions: Array<{ trafficSource: string | null; isConverted: number | null }> = [];
 
         const buckets = new Map<string, { totalSessions: number; conversions: number }>();
 

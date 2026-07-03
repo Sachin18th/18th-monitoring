@@ -4,6 +4,8 @@ import { RuleCriteria } from '../utils/alerting/rule-criteria';
 import { AlertRuleService } from './alert-rule.service';
 import { NotificationService } from './notification.service';
 import { StorefrontTrackingService } from './storefront-tracking.service';
+import { PaymentGatewayService } from './payment-gateway.service';
+import { SmsGatewayService } from './sms-gateway.service';
 import crypto from 'crypto';
 
 export class AlertEngine {
@@ -122,7 +124,10 @@ export class AlertEngine {
       const alertType = `rule:${rule.id}`;
       const openStatuses = AlertEngine.OPEN_STATUSES;
 
-      const value = await this.computeMetricValue(siteId, criteria, connectorInstanceId);
+      // `meta.detail` lets a metric annotate the alert with which specific
+      // page / connector / gateway breached, so the email is actionable.
+      const meta: { detail?: string } = {};
+      const value = await this.computeMetricValue(siteId, criteria, connectorInstanceId, tenantId, meta);
       if (value === null) return; // no data in window → nothing to assert
 
       // Condition no longer breached → auto-resolve any open alert for this
@@ -157,7 +162,9 @@ export class AlertEngine {
       });
 
       const rounded = this.round(value);
-      const message = `${rule.name}: ${criteria.metric} is ${rounded} (threshold ${criteria.operator} ${criteria.threshold})`;
+      const message =
+        `${rule.name}: ${criteria.metric} is ${rounded} (threshold ${criteria.operator} ${criteria.threshold})` +
+        (meta.detail ? ` — ${meta.detail}` : '');
       const alertId = crypto.randomUUID();
 
       await prisma.alert.create({
@@ -186,6 +193,7 @@ export class AlertEngine {
             threshold: criteria.threshold,
             operator: criteria.operator,
             windowMinutes: criteria.windowMinutes,
+            detail: meta.detail ?? null,
           } as any,
         },
       });
@@ -252,6 +260,8 @@ export class AlertEngine {
     siteId: string,
     criteria: RuleCriteria,
     connectorInstanceId: string | null = null,
+    tenantId: string = '',
+    meta: { detail?: string } = {},
   ): Promise<number | null> {
     const windowStart = new Date(Date.now() - criteria.windowMinutes * 60_000);
     // When the rule is scoped to a store, fold the connector into every metric
@@ -280,18 +290,24 @@ export class AlertEngine {
         });
 
         // Latest value per source; skip the -1 "page unavailable" sentinel.
+        // Track the WORST-scoring source so the alert can name the offending
+        // page (e.g. "worst page: pdp (mobile)") instead of just a number.
         const seen = new Set<string>();
-        const values: number[] = [];
+        const isBelow = criteria.operator === '<' || criteria.operator === '<=';
+        let worst: { value: number; source: string } | null = null;
         for (const r of rows) {
           if (seen.has(r.source)) continue;
           seen.add(r.source);
           const v = Number(r.metricValue);
-          if (v >= 0) values.push(v);
+          if (v < 0) continue;
+          if (!worst || (isBelow ? v < worst.value : v > worst.value)) {
+            worst = { value: v, source: r.source };
+          }
         }
-        if (!values.length) return null;
+        if (!worst) return null;
 
-        const isBelow = criteria.operator === '<' || criteria.operator === '<=';
-        return isBelow ? Math.min(...values) : Math.max(...values);
+        meta.detail = `worst page: ${this.pagespeedSourceLabel(worst.source)}`;
+        return worst.value;
       }
 
       case 'rum_errors': {
@@ -368,10 +384,8 @@ export class AlertEngine {
           return agg._sum.totalAmount == null ? null : Number(agg._sum.totalAmount) / count;
         }
         // Fallback: try kpiValue snapshot
-        const row = await prisma.kpiValue.findFirst({
-          where: { siteId, kpiName: criteria.metric, timestamp: { gte: windowStart } },
-          orderBy: { timestamp: 'desc' },
-        });
+        // kpiValue table removed — query neutralized
+        const row = null as any;
         return row ? Number(row.kpiValue) : null;
       }
 
@@ -435,9 +449,89 @@ export class AlertEngine {
         return ((checkout - purchase) / checkout) * 100;
       }
 
+      case 'integration': {
+        // "Integration fail" — a store connector is failing. Two angles:
+        //   unhealthy_connectors → connectors whose latest API health probe is
+        //                          not OK (unreachable / auth-failed / degraded),
+        //                          read from the mirrored ConnectorInstance state.
+        //   sync_failures        → data-sync runs that FAILED / DEAD_LETTERED in
+        //                          the window (always fresh, no probe needed).
+        if (criteria.metric === 'unhealthy_connectors') {
+          const bad = await prisma.connectorInstance.findMany({
+            where: {
+              siteId,
+              disconnectedAt: null,
+              ...(connectorInstanceId ? { id: connectorInstanceId } : {}),
+              healthStatus: { in: ['DEGRADED', 'CRITICAL'] },
+            },
+            select: { label: true, providerId: true, healthStatus: true },
+          });
+          if (bad.length) {
+            meta.detail = `failing: ${bad
+              .map((c) => `${c.label || c.providerId} (${c.healthStatus})`)
+              .join(', ')}`;
+          }
+          return bad.length;
+        }
+        // sync_failures (default)
+        const failed = await prisma.connectorSyncRun.count({
+          where: {
+            startedAt: { gte: windowStart },
+            status: { in: ['FAILED', 'DEAD_LETTERED'] },
+            connectorInstance: {
+              siteId,
+              ...(connectorInstanceId ? { id: connectorInstanceId } : {}),
+            },
+          },
+        });
+        return failed;
+      }
+
+      case 'payment_gateway': {
+        // Count configured payment gateways whose latest recorded status is
+        // down or degraded. Snapshots are refreshed by the scheduled cycle (and
+        // on dashboard/journey reads); we read the latest here.
+        if (!tenantId) return null;
+        const snaps = await PaymentGatewayService.getLatestGatewaySnapshots(siteId, tenantId);
+        if (!snaps.length) return null; // no gateways configured → nothing to assert
+        const bad = snaps.filter((s) => s.status === 'DOWN' || s.status === 'DEGRADED');
+        if (bad.length) {
+          meta.detail = `impacted: ${bad.map((b) => `${b.label} (${b.status})`).join(', ')}`;
+        }
+        return bad.length;
+      }
+
+      case 'sms_gateway': {
+        // Live probe of the SMS providers' public status pages. Provider health
+        // is global (not per-store), so this ignores the connector scope.
+        // 'minor' = degraded, 'major'/'critical' = down; 'unknown' is ignored so
+        // a transient probe failure can't raise a false alarm.
+        const statuses = await SmsGatewayService.getAllStatuses();
+        const bad = statuses.filter(
+          (s) => s.indicator === 'minor' || s.indicator === 'major' || s.indicator === 'critical',
+        );
+        if (bad.length) {
+          meta.detail = `impacted: ${bad.map((b) => `${b.displayName} (${b.description})`).join(', ')}`;
+        }
+        return bad.length;
+      }
+
       default:
         return null;
     }
+  }
+
+  /** Human label for a PageSpeed `source` value (page type + device). */
+  private static pagespeedSourceLabel(source: string): string {
+    // Formats: `pagespeed_api:<device>` (overall) · `pagespeed_page:<device>:<pageType>`
+    const parts = source.split(':');
+    if (source.startsWith('pagespeed_page')) {
+      const device = parts[1] || 'device';
+      const pageType = parts[2] || 'page';
+      return `${pageType} (${device})`;
+    }
+    const device = parts[1] || 'device';
+    return `homepage / overall (${device})`;
   }
 
   /** Connector instances for a site, or just the rule's connector when scoped. */

@@ -20,15 +20,8 @@ export class OrderReconciliationService {
         });
 
         // Query ingestion events as the external source of truth for count comparison
-        const externalCount = await prisma.ingestionEvent.count({
-            where: {
-                projectId: siteId,
-                receivedAt: {
-                    gte: range.start,
-                    lte: range.end
-                }
-            }
-        });
+        // ingestionEvent table removed — query neutralized
+        const externalCount = 0;
 
         if (platformCount !== externalCount) {
             mismatches.push({

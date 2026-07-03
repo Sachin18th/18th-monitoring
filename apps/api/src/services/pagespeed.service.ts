@@ -783,23 +783,33 @@ export class PageSpeedService {
                     result[pageType] = { ...measured, ...coverage };
                 } else if (measured?.reason === NOT_MEASURED_REASON) {
                     // First load, nothing cached yet — a benign "click Refresh" state,
-                    // NOT a discovered-URL failure. Leave it as-is.
+                    // NOT a measurement failure. Leave it as-is.
                     result[pageType] = { ...measured, ...coverage };
                 } else {
-                    // A discovered URL that PSI could not measure (product disabled
-                    // after discovery, redirect chain, 404). Surface this distinctly
-                    // from the homepage-proxy / not-configured states.
-                    result[pageType] = { ...measured, ...coverage, measurementError: 'discovered_url_unreachable' };
+                    // PSI ran but returned no usable data (score 0 / no lab vitals —
+                    // often a blocked, password-protected, or non-rendering page).
+                    // Surface PSI's own explanation, not a generic URL-config blame.
+                    result[pageType] = {
+                        ...measured,
+                        ...coverage,
+                        measurementError: 'pagespeed_error',
+                        reason: measured?.reason || this.failureReason(pageType),
+                    };
                 }
             } catch (error) {
+                // The measurement threw — almost always the Google PageSpeed API
+                // returning an error (NO_FCP, PAGE_HUNG, timeout, rate limit, …).
+                // Translate that into a plain-language reason and show it verbatim
+                // instead of the misleading "check URL suffix config" badge.
+                const described = this.describePageSpeedError(error);
                 console.warn('[PageSpeedService] getPageTypeMetrics:discovered-url-failed', {
                     projectId, pageType, url: targetUrl,
                     error: error instanceof Error ? error.message : String(error),
                 });
                 result[pageType] = {
-                    ...this.unavailablePage(pageType, targetUrl, 'Discovered URL could not be measured.'),
+                    ...this.unavailablePage(pageType, targetUrl, described),
                     ...coverage,
-                    measurementError: 'discovered_url_unreachable',
+                    measurementError: 'pagespeed_error',
                 };
             }
         }
@@ -973,6 +983,58 @@ export class PageSpeedService {
     // when the homepage measurement itself could not be analyzed.
     private static failureReason(_pageType: PageType): string {
         return 'Unavailable – PageSpeed could not analyze this page.';
+    }
+
+    /**
+     * Translate a thrown PageSpeed/Lighthouse error into a plain-language reason that
+     * is safe to show a user. Google returns the real cause inside the error JSON
+     * (e.g. NO_FCP, PAGE_HUNG, DNS_FAILURE); we surface that instead of guessing at a
+     * URL-config problem — the URL is frequently correct and the origin is simply
+     * slow, blocking bots, or a staging/password-protected site.
+     */
+    private static describePageSpeedError(error: unknown): string {
+        const raw = error instanceof Error ? error.message : String(error || '');
+
+        // Pull the structured PSI message out of the error string when present.
+        let psiMessage = raw;
+        const jsonStart = raw.indexOf('{');
+        if (jsonStart >= 0) {
+            try {
+                const parsed = JSON.parse(raw.slice(jsonStart));
+                psiMessage = parsed?.error?.message || psiMessage;
+            } catch {
+                const match = raw.match(/"message":\s*"([^"]+)"/);
+                if (match) psiMessage = match[1];
+            }
+        }
+
+        const upper = psiMessage.toUpperCase();
+        if (upper.includes('NO_FCP')) {
+            return 'PageSpeed couldn’t measure this page — it never rendered any content (NO_FCP). The origin is usually too slow, a staging/password-protected site, or is blocking automated tools.';
+        }
+        if (upper.includes('PAGE_HUNG')) {
+            return 'PageSpeed couldn’t measure this page — the page hung while loading (PAGE_HUNG). The origin may be too slow or stuck.';
+        }
+        if (upper.includes('DNS_FAILURE')) {
+            return 'PageSpeed couldn’t reach this page — DNS lookup for the domain failed (DNS_FAILURE).';
+        }
+        if (upper.includes('FAILED_DOCUMENT_REQUEST') || upper.includes('ERRORED_DOCUMENT_REQUEST')) {
+            return 'PageSpeed couldn’t load this page — the origin refused the request or returned an error.';
+        }
+        if (upper.includes('INVALID_URL')) {
+            return 'PageSpeed rejected this URL as invalid.';
+        }
+        if (upper.includes('429') || upper.includes('RATE LIMIT')) {
+            return 'PageSpeed rate limit reached. Please wait a moment and try again.';
+        }
+        if (upper.includes('ABORT') || upper.includes('TIMEOUT') || upper.includes('TIMED OUT')) {
+            return 'PageSpeed timed out while analyzing this page — the origin took too long to respond.';
+        }
+
+        const trimmed = psiMessage.replace(/\s+/g, ' ').trim();
+        return trimmed
+            ? `PageSpeed couldn’t analyze this page: ${trimmed.slice(0, 240)}`
+            : 'PageSpeed couldn’t analyze this page.';
     }
 
     private static pageMetricStatus(key: PageMetricName, v: number): MetricStatusLabel {

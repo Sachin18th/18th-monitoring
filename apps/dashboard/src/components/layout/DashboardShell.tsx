@@ -111,7 +111,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   const params = useParams();
   const router = useRouter();
   const { user, logout, isLoading, apiFetch, token, setProject } = useAuth();
-  const { healthLevel, healthLabel, selectedStoreLabel, storeOptions, setActiveStoreId, activeStoreId, connectedStores } = useConnectorPlatform();
+  const { healthLevel, healthLabel, connectorsLoaded, selectedStoreLabel, storeOptions, setActiveStoreId, activeStoreId, connectedStores } = useConnectorPlatform();
   const { theme, toggleTheme, mounted } = useTheme();
   const { success, error: showError } = useToast();
   const resyncPollerRef = useRef<number | null>(null);
@@ -430,6 +430,18 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         resyncPollerRef.current = window.setInterval(() => {
           void pollStatus().catch((error: any) => {
             console.error('[DashboardShell] Failed to poll resync status', error);
+            if (resyncPollerRef.current) {
+              window.clearInterval(resyncPollerRef.current);
+              resyncPollerRef.current = null;
+            }
+            setResyncDialog({
+              title: 'Resync failed',
+              connectorId,
+              connectorName,
+              phase: 'failed',
+              message: error?.message || 'The resync job failed to finish.',
+            });
+            showError(error?.message || 'Failed to check resync status.', connectorName);
           });
         }, 5000);
       }
@@ -675,7 +687,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
           gap: 8px;
           padding: 8px 12px;
           border: none;
-          border-left: 3px solid transparent;
           background: transparent;
           color: var(--text-primary);
           font-size: 13px;
@@ -692,7 +703,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         .project-header-store-option[data-active='true'] {
           background: var(--bg-info, rgba(59, 130, 246, 0.15));
           color: var(--text-info, #2563eb);
-          border-left-color: var(--text-info, #2563eb);
         }
 
         .project-header-hide-below-960 {
@@ -875,10 +885,14 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
             <span className="project-header-project-name" title={selectedProjectName}>{selectedProjectName}</span>
 
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '2px 8px', borderRadius: '999px', background: healthTone.bg, color: healthTone.text, fontSize: '10px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }} title={`Store health: ${healthBadgeLabel}`}>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: healthTone.dot, flexShrink: 0 }} />
-              {healthBadgeLabel}
-            </span>
+            {/* Hold the badge until connectors have loaded — otherwise the empty-stores
+                default flashes HEALTHY before real health (e.g. CRITICAL) resolves. */}
+            {connectorsLoaded && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '2px 8px', borderRadius: '999px', background: healthTone.bg, color: healthTone.text, fontSize: '10px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }} title={`Store health: ${healthBadgeLabel}`}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: healthTone.dot, flexShrink: 0 }} />
+                {healthBadgeLabel}
+              </span>
+            )}
           </div>
 
           <div style={{ width: '1px', height: '20px', background: shellColors.borderTertiary, flexShrink: 0 }} />
@@ -1120,8 +1134,8 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
           >
             <div style={{ width: '100%', maxWidth: '420px', borderRadius: '14px', background: shellColors.sidebarBg, border: `1px solid ${shellColors.borderSecondary}`, boxShadow: '0 24px 60px rgba(0, 0, 0, 0.22)', padding: '20px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <RefreshCw style={{ width: '18px', height: '18px' }} className="animate-spin" />
+                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: resyncDialog.phase === 'failed' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(59, 130, 246, 0.12)', color: resyncDialog.phase === 'failed' ? '#ef4444' : '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <RefreshCw style={{ width: '18px', height: '18px' }} className={resyncDialog.phase === 'failed' ? undefined : 'animate-spin'} />
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: '14px', fontWeight: 600, color: shellColors.pillText }}>{resyncDialog.title}</div>
@@ -1134,9 +1148,20 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
               </div>
 
               {resyncDialog.phase === 'failed' ? (
-                <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '12px' }}>
-                  {resyncDialog.message}
-                </div>
+                <>
+                  <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '12px' }}>
+                    {resyncDialog.message}
+                  </div>
+                  <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => setResyncDialog(null)}
+                      style={{ padding: '8px 16px', borderRadius: '10px', border: `1px solid ${shellColors.borderSecondary}`, background: 'transparent', color: shellColors.pillText, fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </>
               ) : null}
             </div>
           </div>

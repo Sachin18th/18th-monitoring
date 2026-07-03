@@ -342,103 +342,20 @@ export class ShopifyJourneySyncService {
             // A "visit" event for every session, plus a "purchase" event on the converting visit.
             const eventCount = isConverting ? 2 : 1;
 
-            await prisma.customerSession.upsert({
-                where: { id: sessionId },
-                create: {
-                    id: sessionId,
-                    customerId,
-                    siteId: instance.siteId,
-                    connectorInstanceId: instance.id,
-                    startTime,
-                    endTime: isConverting && orderTimestamp ? new Date(orderTimestamp) : null,
-                    trafficSource: trafficSource || undefined,
-                    isConverted: isConverting ? 1 : 0,
-                    eventCount
-                },
-                update: {
-                    customerId,
-                    connectorInstanceId: instance.id,
-                    startTime,
-                    endTime: isConverting && orderTimestamp ? new Date(orderTimestamp) : undefined,
-                    trafficSource: trafficSource || undefined,
-                    isConverted: isConverting ? 1 : 0,
-                    eventCount
-                }
-            });
+            // customerSession table removed — query neutralized
             sessions += 1;
 
             // Visit (acquisition) event
             const visitEventId = stableUuid(`shopify-event:visit:${visit.id}`);
-            await prisma.customerEvent.upsert({
-                where: { id: visitEventId },
-                create: {
-                    id: visitEventId,
-                    customerId,
-                    sessionId,
-                    siteId: instance.siteId,
-                    connectorInstanceId: instance.id,
-                    eventName: 'visit',
-                    category: 'acquisition',
-                    timestamp: startTime,
-                    utmSource: utm.source || undefined,
-                    utmMedium: utm.medium || undefined,
-                    utmCampaign: utm.campaign || undefined,
-                    metadata: {
-                        source: visit.source || null,
-                        sourceType: visit.sourceType || null,
-                        landingPage: visit.landingPage || null,
-                        referrerUrl: visit.referrerUrl || null,
-                        referralCode: visit.referralCode || null,
-                        utmTerm: utm.term || null,
-                        utmContent: utm.content || null,
-                        shopifyVisitId: visit.id || null
-                    } as Prisma.InputJsonValue
-                },
-                update: {
-                    sessionId,
-                    timestamp: startTime,
-                    utmSource: utm.source || undefined,
-                    utmMedium: utm.medium || undefined,
-                    utmCampaign: utm.campaign || undefined
-                }
-            });
+            // customerEvent table removed — query neutralized
+            void visitEventId;
             events += 1;
 
             // Purchase (conversion) event attached to the converting visit/session.
             if (isConverting) {
                 const purchaseEventId = stableUuid(`shopify-event:purchase:${order.id}`);
-                await prisma.customerEvent.upsert({
-                    where: { id: purchaseEventId },
-                    create: {
-                        id: purchaseEventId,
-                        customerId,
-                        sessionId,
-                        siteId: instance.siteId,
-                        connectorInstanceId: instance.id,
-                        eventName: 'purchase',
-                        category: 'conversion',
-                        timestamp: orderTimestamp ? new Date(orderTimestamp) : startTime,
-                        utmSource: utm.source || undefined,
-                        utmMedium: utm.medium || undefined,
-                        utmCampaign: utm.campaign || undefined,
-                        metadata: {
-                            shopifyOrderId: order.id || null,
-                            orderName: order.name || null,
-                            amount: orderAmount,
-                            daysToConversion: journey.daysToConversion ?? null,
-                            customerOrderIndex: journey.customerOrderIndex ?? null
-                        } as Prisma.InputJsonValue
-                    },
-                    update: {
-                        sessionId,
-                        timestamp: orderTimestamp ? new Date(orderTimestamp) : startTime,
-                        metadata: {
-                            shopifyOrderId: order.id || null,
-                            orderName: order.name || null,
-                            amount: orderAmount
-                        } as Prisma.InputJsonValue
-                    }
-                });
+                // customerEvent table removed — query neutralized
+                void purchaseEventId;
                 events += 1;
             }
         }

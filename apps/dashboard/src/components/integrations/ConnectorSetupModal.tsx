@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { ExternalLink, Eye, EyeOff, HelpCircle, CheckCircle2, AlertCircle, FileSpreadsheet } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ExternalLink, Eye, EyeOff, HelpCircle, CheckCircle2, AlertCircle, FileSpreadsheet, Loader2, Store } from 'lucide-react';
 import { useConnectorPlatform } from '../../context/ConnectorPlatformContext';
 import { useToast } from '@kpi-platform/ui';
 
@@ -34,7 +34,7 @@ const sectionStyle: React.CSSProperties = {
 };
 
 export const ConnectorSetupModal: React.FC = () => {
-  const { connectorSetup, connectorCatalog, closeConnectorSetup, testConnectorConnection, saveConnectorConnection, reauthConnector, beginConnectorSetup, isSetupModalOpen, openCsvUpload } = useConnectorPlatform();
+  const { connectorSetup, connectorCatalog, closeConnectorSetup, testConnectorConnection, saveConnectorConnection, reauthConnector, beginConnectorSetup, isSetupModalOpen, openCsvUpload, getInitialSyncStatus, refreshConnectors, setActiveConnector } = useConnectorPlatform();
   const platform = connectorSetup.platform;
   const config = platform ? connectorCatalog[platform] : null;
   const reauthConnectorId = connectorSetup.reauthConnectorId;
@@ -49,6 +49,10 @@ export const ConnectorSetupModal: React.FC = () => {
   const [saveResult, setSaveResult] = useState<{ ok: true; message: string } | { ok: false; error: string } | null>(null);
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncStage, setSyncStage] = useState<'idle' | 'syncing' | 'done'>('idle');
+  const [syncConnectorId, setSyncConnectorId] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<any>(null);
+  const [syncFailed, setSyncFailed] = useState(false);
+  const [syncElapsed, setSyncElapsed] = useState(0);
   const { success, error: showError } = useToast();
 
   useEffect(() => {
@@ -59,6 +63,10 @@ export const ConnectorSetupModal: React.FC = () => {
       setSaveResult(null);
       setSyncProgress(0);
       setSyncStage('idle');
+      setSyncConnectorId(null);
+      setSyncStatus(null);
+      setSyncFailed(false);
+      setSyncElapsed(0);
       return;
     }
 
@@ -71,34 +79,85 @@ export const ConnectorSetupModal: React.FC = () => {
     setSaveResult(null);
     setSyncProgress(0);
     setSyncStage('idle');
+    setSyncConnectorId(null);
+    setSyncStatus(null);
+    setSyncFailed(false);
+    setSyncElapsed(0);
   }, [platform, config]);
 
+  // Poll the REAL initial-sync status of the connector we just created. The
+  // backend syncs orders + customers in the background and stamps
+  // metadata.initialSync; we surface live progress, then acknowledge completion
+  // and refresh the connector/orders/customers data.
+  useEffect(() => {
+    if (syncStage !== 'syncing' || !syncConnectorId) return;
+
+    let cancelled = false;
+
+    const computeProgress = (payload: any): number => {
+      const targets: string[] = Array.isArray(payload?.targets) && payload.targets.length
+        ? payload.targets
+        : ['orders', 'customers'];
+      const results = payload?.results || {};
+      const done = targets.filter((t) => {
+        const s = String(results?.[t]?.status || '').toLowerCase();
+        return s === 'completed' || s === 'partial' || s === 'failed';
+      }).length;
+      const raw = Math.round((done / targets.length) * 100);
+      // Never show a full bar until the job itself reports terminal.
+      return Math.min(raw, 95);
+    };
+
+    const poll = async () => {
+      try {
+        const res = await getInitialSyncStatus(syncConnectorId);
+        const payload = res?.data ?? res;
+        if (cancelled || !payload) return;
+
+        setSyncStatus(payload);
+        const status = String(payload?.status || '').toLowerCase();
+
+        if (status === 'completed' || status === 'failed') {
+          setSyncProgress(100);
+          setSyncFailed(status === 'failed');
+          setSyncStage('done');
+          // Pull fresh connector health + canonical datasets into context, and
+          // select the new store so the Orders/Customers pages re-fetch (their
+          // effects key off the connector-selection tick).
+          try { await refreshConnectors(); } catch {}
+          try { setActiveConnector(syncConnectorId); } catch {}
+          // Nudge pages that load their own data (e.g. Integrations) to refetch.
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('kpi:sync:completed', { detail: { connectorId: syncConnectorId } }));
+          }
+        } else {
+          setSyncProgress((current) => Math.max(current, computeProgress(payload)));
+        }
+      } catch {
+        // Transient poll error — keep trying; the interval will retry.
+      }
+    };
+
+    poll();
+    const interval = window.setInterval(poll, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+    // getInitialSyncStatus/refreshConnectors/setActiveConnector are stable enough;
+    // depending on them would recreate the poll interval on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncStage, syncConnectorId]);
+
+  // Elapsed-time ticker while the initial sync is running.
   useEffect(() => {
     if (syncStage !== 'syncing') return;
-    const interval = window.setInterval(() => {
-      setSyncProgress((current) => {
-        const next = Math.min(current + 12, 100);
-        if (next >= 100) {
-          setSyncStage('done');
-        }
-        return next;
-      });
-    }, 800);
+    const startedAt = Date.now();
+    const tick = () => setSyncElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    tick();
+    const interval = window.setInterval(tick, 1000);
     return () => window.clearInterval(interval);
   }, [syncStage]);
-
-  const syncTypes = useMemo(() => {
-    if (platform === 'shopify') {
-      return ['Orders', 'Customers', 'Products', 'Sessions', 'Webhooks'];
-    }
-    if (platform === 'adobe_commerce') {
-      return ['Orders', 'Customers', 'Products', 'Invoices', 'Polling'];
-    }
-    if (platform === 'bigcommerce') {
-      return ['Orders', 'Customers', 'Products', 'Webhooks', 'Polling'];
-    }
-    return [];
-  }, [platform]);
 
   if (!isSetupModalOpen) return null;
 
@@ -201,9 +260,12 @@ export const ConnectorSetupModal: React.FC = () => {
         success(message, `${config.name} re-authenticated`);
       } else {
         const store = await saveConnectorConnection(platform, values);
+        setSyncConnectorId((store as any)?.connectorId || null);
+        setSyncProgress(0);
+        setSyncFailed(false);
+        setSyncStatus(null);
         setSyncStage('syncing');
-        setSyncProgress(store.syncProgress);
-        const message = 'Integration details saved successfully. Initial sync has started.';
+        const message = 'Integration saved. Syncing orders & customers in the background…';
         setSaveResult({ ok: true, message });
         success(message, `${config.name} saved`);
       }
@@ -272,6 +334,24 @@ export const ConnectorSetupModal: React.FC = () => {
           </div>
 
           <div style={{ display: 'grid', gap: '14px' }}>
+            {!isReauth && (
+              <label style={sectionStyle}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', minWidth: 0 }}>
+                  <span style={{ width: '30px', height: '30px', borderRadius: '10px', background: 'rgba(99,102,241,0.12)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Store style={{ width: '16px', height: '16px', color: '#818cf8' }} />
+                  </span>
+                  <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text-primary)' }}>Store Name</span>
+                </div>
+                <input
+                  type="text"
+                  value={values.storeName || ''}
+                  onChange={(event) => updateField('storeName', event.target.value)}
+                  placeholder="e.g. My store"
+                  style={{ marginTop: '10px', width: '100%', borderRadius: '10px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '12px 14px', fontSize: '14px', outline: 'none' }}
+                />
+                <div style={{ marginTop: '8px', color: 'var(--text-muted)', fontSize: '12px', lineHeight: 1.5 }}>A friendly name shown across the dashboard. Leave blank to auto-name from the store domain.</div>
+              </label>
+            )}
             {config.fields.map((field) => {
               const FieldIcon = field.icon;
               const isPassword = field.type === 'password';
@@ -323,44 +403,105 @@ export const ConnectorSetupModal: React.FC = () => {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <button type="button" onClick={handleTest} disabled={isTesting || isSaving} style={{ borderRadius: '10px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '10px 16px', cursor: 'pointer' }}>
-              {isTesting ? 'Testing...' : 'Test Connection'}
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving || !(testResult && testResult.ok)}
-              style={{ borderRadius: '10px', border: '1px solid #6366f1', background: '#4f46e5', color: 'white', padding: '10px 16px', cursor: isSaving || !(testResult && testResult.ok) ? 'not-allowed' : 'pointer', opacity: isSaving || !(testResult && testResult.ok) ? 0.6 : 1 }}
-            >
-              {isSaving ? 'Saving...' : isReauth ? 'Update Token' : 'Save & Connect'}
-            </button>
-          </div>
-
-          {syncStage !== 'idle' && (
-            <div style={{ ...sectionStyle, background: 'rgba(129,140,248,0.08)', borderColor: 'rgba(129,140,248,0.22)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
-                <div>
-                  <div style={{ color: 'var(--text-primary)', fontSize: '14px', fontWeight: 700 }}>Initial sync in progress...</div>
-                  <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '4px' }}>Estimated time: 10-15 minutes</div>
-                </div>
-                <div style={{ color: '#a5b4fc', fontSize: '14px', fontWeight: 700 }}>{syncProgress}%</div>
-              </div>
-              <div style={{ marginTop: '12px', width: '100%', height: '8px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-                <div style={{ width: `${syncProgress}%`, height: '100%', background: 'linear-gradient(90deg, #818cf8, #22c55e)' }} />
-              </div>
-              <div style={{ marginTop: '14px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {syncTypes.map((label) => (
-                  <span key={label} style={{ padding: '4px 10px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', color: 'var(--text-secondary)', fontSize: '12px' }}>{label}</span>
-                ))}
-              </div>
-              {syncStage === 'done' && (
-                <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '8px', color: '#4ade80', fontSize: '13px', fontWeight: 700 }}>
-                  <CheckCircle2 style={{ width: '16px', height: '16px' }} /> Initial sync completed
-                </div>
-              )}
+          {syncStage === 'idle' && (
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button type="button" onClick={handleTest} disabled={isTesting || isSaving} style={{ borderRadius: '10px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '10px 16px', cursor: 'pointer' }}>
+                {isTesting ? 'Testing...' : 'Test Connection'}
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isSaving || !(testResult && testResult.ok)}
+                style={{ borderRadius: '10px', border: '1px solid #6366f1', background: '#4f46e5', color: 'white', padding: '10px 16px', cursor: isSaving || !(testResult && testResult.ok) ? 'not-allowed' : 'pointer', opacity: isSaving || !(testResult && testResult.ok) ? 0.6 : 1 }}
+              >
+                {isSaving ? 'Saving...' : isReauth ? 'Update Token' : 'Save & Connect'}
+              </button>
             </div>
           )}
+
+          {syncStage !== 'idle' && (() => {
+            const results = (syncStatus?.results || {}) as Record<string, any>;
+            const recordsByType = (syncStatus?.recordsByType || {}) as Record<string, number>;
+            const isDone = syncStage === 'done';
+            const minutes = Math.floor(syncElapsed / 60);
+            const seconds = syncElapsed % 60;
+            const elapsedLabel = `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+            const targetLabels: Record<string, string> = { orders: 'Orders', customers: 'Customers' };
+            const targets = ['orders', 'customers'];
+
+            const headerTitle = !isDone
+              ? 'Syncing your store data…'
+              : syncFailed
+                ? 'Initial sync finished with errors'
+                : 'Initial sync completed';
+            const headerColor = !isDone ? 'var(--text-primary)' : syncFailed ? '#fbbf24' : '#4ade80';
+
+            return (
+              <div style={{ ...sectionStyle, background: 'rgba(129,140,248,0.08)', borderColor: 'rgba(129,140,248,0.22)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {!isDone
+                      ? <Loader2 className="animate-spin" style={{ width: '16px', height: '16px', color: '#818cf8' }} />
+                      : syncFailed
+                        ? <AlertCircle style={{ width: '16px', height: '16px', color: '#fbbf24' }} />
+                        : <CheckCircle2 style={{ width: '16px', height: '16px', color: '#4ade80' }} />}
+                    <div>
+                      <div style={{ color: headerColor, fontSize: '14px', fontWeight: 700 }}>{headerTitle}</div>
+                      <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '4px' }}>
+                        {isDone ? `Finished in ${elapsedLabel}` : `Fetching from your store · ${elapsedLabel} elapsed`}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ color: '#a5b4fc', fontSize: '14px', fontWeight: 700 }}>{syncProgress}%</div>
+                </div>
+                <div style={{ marginTop: '12px', width: '100%', height: '8px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                  <div style={{ width: `${syncProgress}%`, height: '100%', background: syncFailed ? 'linear-gradient(90deg, #f59e0b, #f87171)' : 'linear-gradient(90deg, #818cf8, #22c55e)', transition: 'width 0.4s ease' }} />
+                </div>
+                <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {targets.map((t) => {
+                    const r = results[t];
+                    const status = String(r?.status || '').toLowerCase();
+                    const count = Number(r?.upserted ?? recordsByType?.[t] ?? 0);
+                    const targetDone = status === 'completed' || status === 'partial' || status === 'failed';
+                    return (
+                      <div key={t} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '8px 12px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600 }}>
+                          {status === 'failed'
+                            ? <AlertCircle style={{ width: '14px', height: '14px', color: '#f87171' }} />
+                            : targetDone
+                              ? <CheckCircle2 style={{ width: '14px', height: '14px', color: '#4ade80' }} />
+                              : <Loader2 className="animate-spin" style={{ width: '14px', height: '14px', color: '#818cf8' }} />}
+                          {targetLabels[t]}
+                        </span>
+                        <span style={{ color: status === 'failed' ? '#f87171' : 'var(--text-muted)', fontSize: '12px' }}>
+                          {status === 'failed'
+                            ? 'failed'
+                            : targetDone
+                              ? `${count.toLocaleString()} synced`
+                              : 'syncing…'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {isDone && (
+                  <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: syncFailed ? '#fbbf24' : '#4ade80', fontSize: '13px', fontWeight: 700 }}>
+                      {syncFailed ? <AlertCircle style={{ width: '16px', height: '16px' }} /> : <CheckCircle2 style={{ width: '16px', height: '16px' }} />}
+                      {syncFailed ? 'Some data could not be synced — check the connector health.' : 'Your orders & customers are ready.'}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeConnectorSetup}
+                      style={{ borderRadius: '10px', border: 'none', background: '#4f46e5', color: 'white', padding: '10px 16px', cursor: 'pointer', fontWeight: 600 }}
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

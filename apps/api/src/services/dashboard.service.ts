@@ -629,19 +629,15 @@ export class DashboardService {
             : {};
 
         // Real journey data backfilled from Shopify customer_sessions / customer_events.
-        const [journeySessions, convertedSessions, productViewEvents, sessionsBySource] = await Promise.all([
-            prisma.customerSession.count({ where: { siteId, ...connectorFilter } }),
-            prisma.customerSession.count({ where: { siteId, isConverted: 1, ...connectorFilter } }),
-            prisma.customerEvent.count({
-                where: { siteId, eventName: { in: ['product_viewed', 'product_view'] }, ...connectorFilter }
-            }),
-            prisma.customerSession.groupBy({
-                by: ['trafficSource'],
-                where: { siteId, ...connectorFilter },
-                _count: { _all: true },
-                _sum: { isConverted: true }
-            })
-        ]);
+        // customerSession / customerEvent tables removed — queries neutralized
+        const journeySessions = 0;
+        const convertedSessions = 0;
+        const productViewEvents = 0;
+        const sessionsBySource: Array<{
+            trafficSource: string | null;
+            _count?: { _all: number };
+            _sum?: { isConverted: number | null };
+        }> = [];
 
         const hasJourneyData = journeySessions > 0;
 
@@ -1492,12 +1488,8 @@ export class DashboardService {
     static async getMetricsCatalog(filters: MetricFilterDto) {
         const { siteId } = filters;
         
-        // Get distinct KPI names from database
-        const kpiNames = await prisma.kpiValue.findMany({
-            where: { siteId },
-            select: { kpiName: true },
-            distinct: ['kpiName']
-        });
+        // kpiValue table removed — query neutralized
+        const kpiNames: Array<{ kpiName: string }> = [];
 
         const catalogDef: Record<string, { name: string; category: string; type: string; unit: string }> = {
             pageLoadTime:     { name: 'Page Load Time',    category: 'Performance',  type: 'latency',    unit: 'ms' },
@@ -1525,15 +1517,8 @@ export class DashboardService {
         const windowMs = range === '1h' ? 3600000 : 86400000 * 7;
         const startDate = new Date(now.getTime() - windowMs);
 
-        const records = await prisma.kpiValue.findMany({
-            where: {
-                siteId,
-                kpiName: kpi,
-                timestamp: { gte: startDate }
-            },
-            orderBy: { timestamp: 'asc' },
-            select: { timestamp: true, kpiValue: true }
-        });
+        // kpiValue table removed — query neutralized
+        const records: Array<{ timestamp: Date; kpiValue: number }> = [];
 
         if (records.length === 0) return [];
 

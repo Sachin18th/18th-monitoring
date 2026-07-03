@@ -55,27 +55,7 @@ export class IngestionPipeline {
 
     eventRecord.artifactId = artifactId;
 
-    await prisma.ingestionEvent.create({
-      data: {
-        id: eventRecord.id,
-        tenantId: envelope.tenantId,
-        projectId: envelope.projectId,
-        integrationId: envelope.integrationId,
-
-        mode: envelope.mode,
-        status: "PENDING",
-
-        correlationId: envelope.id, 
-        sourceReferenceId: envelope.sourceEventId, 
-
-        validationReport: eventRecord.validation as any,
-
-        dedupeKey: envelope.sourceEventId || null,
-
-        receivedAt: new Date(envelope.receivedAt),
-        updatedAt: new Date(),
-      },
-    });
+    // ingestionEvent table removed — query neutralized
 
     // 4. Traceability & Deduplication Check
     if (eventRecord.validation.isValid) {
@@ -111,10 +91,7 @@ export class IngestionPipeline {
     }
 
     // 6. Update final status in database
-    await prisma.ingestionEvent.update({
-      where: { id: eventRecord.id },
-      data: { status: eventRecord.status as any },
-    });
+    // ingestionEvent table removed — query neutralized
 
     console.log(
       `[Ingestion] ✓ Processed ${envelope.mode} | Result: ${eventRecord.status} | eventId=${eventRecord.id}`,
@@ -190,15 +167,8 @@ private static async checkDeduplication(
 
   if (!envelope.sourceEventId) return false;
 
-  const existing = await prisma.ingestionEvent.findFirst({
-    where: {
-      sourceReferenceId: envelope.sourceEventId, 
-      integrationId: envelope.integrationId,      
-      receivedAt: {                             
-        gte: new Date(Date.now() - 24 * 60 * 60 * 1000)
-      }
-    }
-  });
+  // ingestionEvent table removed — query neutralized
+  const existing = null;
 
   return !!existing;
 }

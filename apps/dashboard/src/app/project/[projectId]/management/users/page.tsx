@@ -19,12 +19,23 @@ const ROLE_OPTIONS_BY_ACCESS = {
     { value: 'analyst', label: 'Analyst', description: 'Read-only access to the assigned project.' },
   ],
   admin: [
+    { value: 'admin', label: 'Admin', description: 'Can manage project users, access, and governance settings.' },
     { value: 'ops_lead', label: 'Ops Lead', description: 'Can work the project without changing governance settings.' },
     { value: 'analyst', label: 'Analyst', description: 'Read-only access to the assigned project.' },
   ],
 } as const;
 
 type EditableRole = 'super_admin' | 'admin' | 'ops_lead' | 'analyst';
+
+// Display priority for the access roster: Super Admin → Admin → Operator → Viewer
+const ROLE_SORT_ORDER: Record<string, number> = {
+  super_admin: 0,
+  admin: 1,
+  ops_lead: 2,
+  analyst: 3,
+};
+
+const roleRank = (role: string | null | undefined) => ROLE_SORT_ORDER[normalizeRole(role)] ?? 99;
 
 const toStoredRole = (role: string) => {
   switch (normalizeRole(role)) {
@@ -311,7 +322,7 @@ export default function UserManagementPage() {
 
     return users.filter((entry) => {
       const normalizedUserRole = normalizeRole(entry.role);
-      return normalizedUserRole === 'ops_lead' || normalizedUserRole === 'analyst';
+      return normalizedUserRole === 'admin' || normalizedUserRole === 'ops_lead' || normalizedUserRole === 'analyst';
     });
   }, [isSuperAdmin, users]);
 
@@ -331,20 +342,27 @@ export default function UserManagementPage() {
   const filteredUsers = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
-    return visibleUsers.filter((entry) => {
-      const matchesQuery =
-        !query ||
-        String(entry.name || '').toLowerCase().includes(query) ||
-        String(entry.email || '').toLowerCase().includes(query);
-      const matchesRole = roleFilter === 'all' || normalizeRole(entry.role) === roleFilter;
-      const matchesStatus =
-        statusFilter === 'all' ||
-        (statusFilter === 'active'
-          ? normalizeStatus(entry.status) === 'ACTIVE'
-          : normalizeStatus(entry.status) !== 'ACTIVE');
+    return visibleUsers
+      .filter((entry) => {
+        const matchesQuery =
+          !query ||
+          String(entry.name || '').toLowerCase().includes(query) ||
+          String(entry.email || '').toLowerCase().includes(query);
+        const matchesRole = roleFilter === 'all' || normalizeRole(entry.role) === roleFilter;
+        const matchesStatus =
+          statusFilter === 'all' ||
+          (statusFilter === 'active'
+            ? normalizeStatus(entry.status) === 'ACTIVE'
+            : normalizeStatus(entry.status) !== 'ACTIVE');
 
-      return matchesQuery && matchesRole && matchesStatus;
-    });
+        return matchesQuery && matchesRole && matchesStatus;
+      })
+      // Order by role: Super Admin → Admin → Operator → Viewer, then by name
+      .sort((a, b) => {
+        const rankDiff = roleRank(a.role) - roleRank(b.role);
+        if (rankDiff !== 0) return rankDiff;
+        return String(a.name || '').localeCompare(String(b.name || ''));
+      });
   }, [visibleUsers, searchQuery, roleFilter, statusFilter]);
 
   const openCreateModal = () => {
@@ -379,6 +397,13 @@ export default function UserManagementPage() {
 
   const saveUser = async (event: React.FormEvent) => {
     event.preventDefault();
+
+    const emailValue = String(formUser.email || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) {
+      setFormError('Please enter a valid email address.');
+      return;
+    }
+
     setIsSaving(true);
     setFormError(null);
 
@@ -723,19 +748,22 @@ export default function UserManagementPage() {
                     align: 'right',
                     render: (_value, row) => {
                       const isSuperAdminRow = String(row.role || '').trim().toUpperCase() === 'SUPER_ADMIN';
+                      const isAdminRow = normalizeRole(row.role) === 'admin';
+                      // An admin cannot edit/deactivate/delete admin (or super admin) users; only super admins can.
+                      const disableActions = isSuperAdminRow || (!isSuperAdmin && isAdminRow);
                       return (
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
-                        <Button variant="outline" size="sm" onClick={() => handleEditAccess(row)} disabled={isSuperAdminRow}>
+                        <Button variant="outline" size="sm" onClick={() => handleEditAccess(row)} disabled={disableActions}>
                           Edit
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => toggleStatus(row.id, row.status)} disabled={isSuperAdminRow}>
+                        <Button variant="outline" size="sm" onClick={() => toggleStatus(row.id, row.status)} disabled={disableActions}>
                           {normalizeStatus(row.status) === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}
                         </Button>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => handleDeleteUser(row)}
-                          disabled={deletingUserId === row.id || isSuperAdminRow}
+                          disabled={deletingUserId === row.id || disableActions}
                         >
                           {deletingUserId === row.id ? 'Deleting…' : 'Delete'}
                         </Button>

@@ -15,17 +15,7 @@ export class ObservabilityService {
      */
     static async log(entry: Omit<StructuredLog, 'timestamp'>) {
         // Migrated from Drizzle ORM to Prisma
-        await prisma.systemLog.create({
-            data: {
-                level: entry.level,
-                module: entry.module,
-                message: entry.message,
-                siteId: entry.siteId,
-                tenantId: (entry as any).tenantId || 'tenant_001',
-                correlationId: entry.correlationId,
-                metadata: entry.metadata || {}
-            }
-        });
+        // systemLog table removed — query neutralized
 
         // If ERROR or FATAL, automatically check if we should trigger an alert
         if (entry.level === 'ERROR' || entry.level === 'FATAL') {

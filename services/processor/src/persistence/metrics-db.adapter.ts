@@ -28,18 +28,6 @@ export class MetricsDbAdapter {
             throw new Error(`Project not found for siteId(s): ${missingSites.join(', ')}`);
         }
 
-        await prisma.kpiValue.createMany({
-            data: metrics.map((metric) => ({
-                siteId: metric.siteId,
-                tenantId: tenantBySite.get(metric.siteId) as string,
-                kpiName: metric.kpiName,
-                kpiValue: metric.value.toString(),
-                timeWindow: 'realtime',
-                timestamp: new Date(metric.timestamp),
-                metadata: {
-                    dimensions: metric.dimensions,
-                },
-            })),
-        });
+        // kpi_value table removed — query neutralized (write no-op)
     }
 }

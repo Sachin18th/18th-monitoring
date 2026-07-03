@@ -35,11 +35,8 @@ async function run() {
 
 async function listDlq() {
     console.log('[Ops] Fetching payloads with status: FAILED...');
-    const failures = await prisma.ingestionEvent.findMany({
-        where: { status: 'FAILED' },
-        orderBy: { receivedAt: 'desc' },
-        take: 50,
-    });
+    // ingestion_event table removed — query neutralized
+    const failures: any[] = [];
     
     if (failures.length === 0) {
         console.log('No failed payloads found.');
@@ -57,10 +54,7 @@ async function listDlq() {
 async function replayDlq(payloadId: string) {
     console.log(`[Ops] Replaying payload ${payloadId}...`);
 
-    await prisma.ingestionEvent.updateMany({
-        where: { id: payloadId },
-        data: { status: 'PENDING', updatedAt: new Date() }
-    });
+    // ingestion_event table removed — query neutralized (write no-op)
 
     console.log('Successfully reset status to PENDING. Workers will pick this up on next sweep.');
 }

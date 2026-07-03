@@ -5,6 +5,8 @@ import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
 import { PageRestricted } from '../../../../../components/PageRestricted';
 import PageSpeedCharts from '../../../../../components/rum/PageSpeedCharts';
+import { PaymentGatewayPanel } from '../../../../../components/observability/PaymentGatewayPanel';
+import { SmsGatewayPanel } from '../../../../../components/observability/SmsGatewayPanel';
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -13,7 +15,7 @@ import {
   BarChart3, TrendingUp, Activity, CheckCircle2,
   Wifi, WifiOff, Users, ShoppingCart, Zap, AlertTriangle,
   RefreshCw, Package, DollarSign, Globe, Target, ArrowUpRight,
-  Clock
+  Clock, CreditCard, MessageSquare
 } from 'lucide-react';
 
 const TIME_PERIODS = [
@@ -23,6 +25,20 @@ const TIME_PERIODS = [
   { label: '90 days', value: '90d' },
   { label: 'All time', value: 'all' },
 ];
+
+/* ─── theme-aware accent palette ─────────────────────────────────
+   The previous palette hardcoded dark-tuned hex values (#60a5fa, #fbbf24 …)
+   that wash out on the white light-theme surface. These map to the shared
+   semantic tokens instead:
+     · base variant  (var(--info))       → vivid fills: icons, dots, bars, chart strokes
+     · text variant  (var(--info-text))  → legible numbers/labels on both light & dark  */
+const C = {
+  blue: 'var(--info)',            blueText: 'var(--info-text)',
+  green: 'var(--success)',        greenText: 'var(--success-text)',
+  purple: 'var(--processing)',    purpleText: 'var(--processing-text)',
+  amber: 'var(--warning)',        amberText: 'var(--warning-text)',
+  red: 'var(--error)',            redText: 'var(--error-text)',
+};
 
 const PAGE: React.CSSProperties = {
   padding: '24px 28px',
@@ -88,9 +104,10 @@ const fmtPct = (n: any) => {
 const VITAL_THRESH: Record<string, [number, number]> = {
   lcp: [2500, 4000], fid: [100, 300], cls: [0.1, 0.25], ttfb: [800, 1800],
 };
+// Returns a text-legible token so the value + status label read cleanly on white.
 const vitalColor = (key: string, val: number) => {
   const [good, poor] = VITAL_THRESH[key] ?? [0, Infinity];
-  return val <= good ? '#22c55e' : val <= poor ? '#fbbf24' : '#f87171';
+  return val <= good ? C.greenText : val <= poor ? C.amberText : C.redText;
 };
 const vitalLabel = (key: string, val: number) => {
   const [good, poor] = VITAL_THRESH[key] ?? [0, Infinity];
@@ -110,16 +127,16 @@ const formatAgo = (ts: string | null | undefined): string | null => {
 };
 
 const CAT_STYLE: Record<string, { color: string; border: string; bg: string }> = {
-  BUSINESS:    { color: '#22c55e', border: '1px solid rgba(34,197,94,0.2)',   bg: 'rgba(34,197,94,0.08)' },
-  OPERATIONAL: { color: '#60a5fa', border: '1px solid rgba(96,165,250,0.2)',  bg: 'rgba(96,165,250,0.08)' },
-  EXPERIENCE:  { color: '#a78bfa', border: '1px solid rgba(167,139,250,0.2)', bg: 'rgba(167,139,250,0.08)' },
-  TECHNICAL:   { color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)',  bg: 'rgba(251,191,36,0.08)' },
+  BUSINESS:    { color: C.green,  border: '1px solid rgba(34,197,94,0.2)',   bg: 'rgba(34,197,94,0.08)' },
+  OPERATIONAL: { color: C.blue,   border: '1px solid rgba(96,165,250,0.2)',  bg: 'rgba(96,165,250,0.08)' },
+  EXPERIENCE:  { color: C.purple, border: '1px solid rgba(167,139,250,0.2)', bg: 'rgba(167,139,250,0.08)' },
+  TECHNICAL:   { color: C.amber,  border: '1px solid rgba(251,191,36,0.2)',  bg: 'rgba(251,191,36,0.08)' },
 };
 const catColor = (cat: string) => CAT_STYLE[cat]?.color ?? 'var(--text-muted)';
 
 /* ─── badge component ────────────────────────────────────────── */
 const IconBox = ({ color, children }: { color: string; children: React.ReactNode }) => (
-  <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: `${color}1a`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+  <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: `color-mix(in srgb, ${color} 12%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
     {children}
   </div>
 );
@@ -265,12 +282,12 @@ export default function KpiAnalyticsPage() {
     const degraded = (pr != null && pr < 95) || resyncFailed > 0;
 
     if (critical) {
-      return { label: 'Critical', color: '#f87171', bg: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)', detail: reasons.join(' · ') };
+      return { label: 'Critical', color: C.redText, bg: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)', detail: reasons.join(' · ') };
     }
     if (degraded) {
-      return { label: 'Degraded', color: '#fbbf24', bg: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)', detail: reasons.join(' · ') };
+      return { label: 'Degraded', color: C.amberText, bg: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)', detail: reasons.join(' · ') };
     }
-    return { label: 'Nominal', color: '#22c55e', bg: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)', detail: 'Real-time event-driven engine' };
+    return { label: 'Nominal', color: C.greenText, bg: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)', detail: 'Real-time event-driven engine' };
   })();
 
   // Funnel from custIntel (real storefront sessions, time-range filtered)
@@ -326,7 +343,7 @@ export default function KpiAnalyticsPage() {
             </div>
             <div style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>
               KPI Analytics Engine
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#22c55e', display: 'inline-block', marginLeft: '10px', verticalAlign: 'middle' }} />
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: C.green, display: 'inline-block', marginLeft: '10px', verticalAlign: 'middle' }} />
             </div>
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
               Unified business, operational, and experience intelligence across all connected data sources.
@@ -347,7 +364,7 @@ export default function KpiAnalyticsPage() {
                     borderRight: i < TIME_PERIODS.length - 1 ? '1px solid var(--border-card)' : 'none',
                     cursor: 'pointer',
                     background: timeRange === p.value ? 'rgba(96,165,250,0.12)' : 'transparent',
-                    color: timeRange === p.value ? '#60a5fa' : 'var(--text-muted)',
+                    color: timeRange === p.value ? C.blueText : 'var(--text-muted)',
                     fontWeight: timeRange === p.value ? 600 : 400,
                     transition: 'all 0.15s',
                     whiteSpace: 'nowrap',
@@ -377,30 +394,30 @@ export default function KpiAnalyticsPage() {
               label="Total Revenue"
               value={fmtCur(revenue)}
               sub={<span>from <strong>{fmt(orderCount)}</strong> orders</span>}
-              accentColor="#22c55e"
-              icon={<DollarSign style={{ width: '14px', height: '14px', color: '#22c55e' }} />}
+              accentColor={C.green}
+              icon={<DollarSign style={{ width: '14px', height: '14px', color: C.green }} />}
             />
             <HeroCard
               label="Total Orders"
               value={fmt(orderCount)}
               sub={
                 delayedOrd != null
-                  ? <span style={{ color: '#fbbf24' }}>{fmt(delayedOrd)} delayed orders</span>
+                  ? <span style={{ color: C.amberText }}>{fmt(delayedOrd)} delayed orders</span>
                   : <span>across all channels</span>
               }
-              accentColor="#60a5fa"
-              icon={<ShoppingCart style={{ width: '14px', height: '14px', color: '#60a5fa' }} />}
+              accentColor={C.blue}
+              icon={<ShoppingCart style={{ width: '14px', height: '14px', color: C.blue }} />}
             />
             <HeroCard
               label="Total Customers"
               value={fmt(custCount)}
               sub={
                 identPct != null
-                  ? <span style={{ color: '#a78bfa' }}>{fmtPct(identPct)} identified</span>
+                  ? <span style={{ color: C.purpleText }}>{fmtPct(identPct)} identified</span>
                   : <span>unique profiles</span>
               }
-              accentColor="#a78bfa"
-              icon={<Users style={{ width: '14px', height: '14px', color: '#a78bfa' }} />}
+              accentColor={C.purple}
+              icon={<Users style={{ width: '14px', height: '14px', color: C.purple }} />}
             />
             <HeroCard
               label="Avg Page Load"
@@ -410,8 +427,8 @@ export default function KpiAnalyticsPage() {
                   ? <span style={{ color: vitalColor('lcp', Number(avgLcp)) }}>● {vitalLabel('lcp', Number(avgLcp))}</span>
                   : <span>LCP signal</span>
               }
-              accentColor="#fbbf24"
-              icon={<Zap style={{ width: '14px', height: '14px', color: '#fbbf24' }} />}
+              accentColor={C.amber}
+              icon={<Zap style={{ width: '14px', height: '14px', color: C.amber }} />}
             />
           </div>
         </div>
@@ -435,8 +452,8 @@ export default function KpiAnalyticsPage() {
                     : fmt(kpi.value)}
                 </span>
                 {kpi.freshnessStatus === 'live'
-                  ? <Wifi style={{ width: '10px', height: '10px', color: '#22c55e' }} />
-                  : <WifiOff style={{ width: '10px', height: '10px', color: '#94a3b8' }} />}
+                  ? <Wifi style={{ width: '10px', height: '10px', color: C.green }} />
+                  : <WifiOff style={{ width: '10px', height: '10px', color: 'var(--text-muted)' }} />}
               </div>
             ))}
           </div>
@@ -450,21 +467,21 @@ export default function KpiAnalyticsPage() {
             {/* Stats column */}
             <div style={CARD}>
               <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                <Package style={{ width: '13px', height: '13px', color: '#60a5fa' }} /> Order Summary
+                <Package style={{ width: '13px', height: '13px', color: C.blue }} /> Order Summary
               </div>
               {orderSummary ? (
                 <>
-                  <StatRow label="Total Orders"        value={fmt(orderSummary.totalOrders)}        color="#60a5fa" />
-                  <StatRow label="Total Revenue"       value={fmtCur(orderSummary.totalRevenue)}    color="#22c55e" />
-                  <StatRow label="Avg Order Value"     value={fmtCur(orderSummary.averageOrderValue)} color="#a78bfa" />
+                  <StatRow label="Total Orders"        value={fmt(orderSummary.totalOrders)}        color={C.blueText} />
+                  <StatRow label="Total Revenue"       value={fmtCur(orderSummary.totalRevenue)}    color={C.greenText} />
+                  <StatRow label="Avg Order Value"     value={fmtCur(orderSummary.averageOrderValue)} color={C.purpleText} />
                   <StatRow label="Orders This Hour"    value={fmt(orderSummary.ordersThisHour)}     color="var(--text-secondary)" />
-                  <StatRow label="Delayed Orders"      value={fmt(orderSummary.delayedCount)}       color="#fbbf24" />
+                  <StatRow label="Delayed Orders"      value={fmt(orderSummary.delayedCount)}       color={C.amberText} />
                   {orderSummary.failedCount > 0 && (
-                    <StatRow label="Failed / Cancelled" value={fmt(orderSummary.failedCount)} color="#f87171" />
+                    <StatRow label="Failed / Cancelled" value={fmt(orderSummary.failedCount)} color={C.redText} />
                   )}
                   <div style={{ ...ROW, borderBottom: 'none' }}>
                     <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Revenue at Risk</span>
-                    <span style={{ fontSize: '14px', fontWeight: 600, color: '#f87171' }}>{fmtCur(orderSummary.revenueAtRisk)}</span>
+                    <span style={{ fontSize: '14px', fontWeight: 600, color: C.redText }}>{fmtCur(orderSummary.revenueAtRisk)}</span>
                   </div>
                 </>
               ) : (
@@ -478,7 +495,7 @@ export default function KpiAnalyticsPage() {
             {/* Trends chart */}
             <div style={CARD}>
               <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                <TrendingUp style={{ width: '13px', height: '13px', color: '#22c55e' }} /> Order Volume & Revenue Trend
+                <TrendingUp style={{ width: '13px', height: '13px', color: C.green }} /> Order Volume & Revenue Trend
               </div>
               {orderTrends.length > 0 ? (
                 <>
@@ -486,15 +503,15 @@ export default function KpiAnalyticsPage() {
                     <AreaChart data={orderTrends} margin={{ top: 4, right: 8, bottom: 0, left: -10 }}>
                       <defs>
                         <linearGradient id="gOrders" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor="#60a5fa" stopOpacity={0.22} />
-                          <stop offset="95%" stopColor="#60a5fa" stopOpacity={0} />
+                          <stop offset="5%"  stopColor={C.blue} stopOpacity={0.22} />
+                          <stop offset="95%" stopColor={C.blue} stopOpacity={0} />
                         </linearGradient>
                         <linearGradient id="gRevenue" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.22} />
-                          <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                          <stop offset="5%"  stopColor={C.green} stopOpacity={0.22} />
+                          <stop offset="95%" stopColor={C.green} stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border-card)" />
                       <XAxis dataKey="timestamp" tick={TICK_STYLE} tickLine={false} axisLine={false}
                         tickFormatter={(v: string) => v.length === 10 ? v.slice(5) : v} />
                       <YAxis yAxisId="left"  tick={TICK_STYLE} tickLine={false} axisLine={false} />
@@ -502,12 +519,12 @@ export default function KpiAnalyticsPage() {
                         tickFormatter={(v: number) => `₹${v}`} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: 'var(--text-secondary)' }}
                         formatter={(v: any, name: string) => name === 'Revenue (₹)' ? [`₹${Number(v).toLocaleString('en-IN')}`, name] : [v, name]} />
-                      <Area yAxisId="left"  type="monotone" dataKey="orders"  stroke="#60a5fa" fill="url(#gOrders)"  strokeWidth={2} dot={false} name="Orders" />
-                      <Area yAxisId="right" type="monotone" dataKey="revenue" stroke="#22c55e" fill="url(#gRevenue)" strokeWidth={2} dot={false} name="Revenue (₹)" />
+                      <Area yAxisId="left"  type="monotone" dataKey="orders"  stroke={C.blue} fill="url(#gOrders)"  strokeWidth={2} dot={false} name="Orders" />
+                      <Area yAxisId="right" type="monotone" dataKey="revenue" stroke={C.green} fill="url(#gRevenue)" strokeWidth={2} dot={false} name="Revenue (₹)" />
                     </AreaChart>
                   </ResponsiveContainer>
                   <div style={{ display: 'flex', gap: '18px', marginTop: '10px' }}>
-                    {[{ color: '#60a5fa', label: 'Orders' }, { color: '#22c55e', label: 'Revenue (₹)' }].map(l => (
+                    {[{ color: C.blue, label: 'Orders' }, { color: C.green, label: 'Revenue (₹)' }].map(l => (
                       <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <span style={{ width: '10px', height: '3px', borderRadius: '2px', background: l.color, display: 'inline-block' }} />
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{l.label}</span>
@@ -534,23 +551,23 @@ export default function KpiAnalyticsPage() {
             <div style={CARD}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                  <Users style={{ width: '13px', height: '13px', color: '#a78bfa' }} /> Customer Summary
+                  <Users style={{ width: '13px', height: '13px', color: C.purple }} /> Customer Summary
                 </div>
-                <span style={{ fontSize: '10px', color: '#a78bfa', background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.25)', borderRadius: '999px', padding: '2px 8px', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: '10px', color: C.purpleText, background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.25)', borderRadius: '999px', padding: '2px 8px', whiteSpace: 'nowrap' }}>
                   Platform sync
                 </span>
               </div>
               {custIntel ? (
                 <>
-                  <StatRow label="Total Customers"          value={fmt(custIntel.totalProfiles)} color="#a78bfa" />
-                  <StatRow label="Identified (email known)" value={fmt(custIntel.identifiedCount)} color="#60a5fa" />
-                  <StatRow label="Identified %"             value={fmtPct(identPct)} color="#60a5fa" />
+                  <StatRow label="Total Customers"          value={fmt(custIntel.totalProfiles)} color={C.purpleText} />
+                  <StatRow label="Identified (email known)" value={fmt(custIntel.identifiedCount)} color={C.blueText} />
+                  <StatRow label="Identified %"             value={fmtPct(identPct)} color={C.blueText} />
                   <StatRow label="Anonymous Profiles"       value={fmt(Math.max(0, (custIntel.totalProfiles ?? 0) - (custIntel.identifiedCount ?? 0)))} color="var(--text-secondary)" />
-                  
-                  <StatRow label="Repeated Buyers"          value={custIntel.repeatedBuyers != null ? fmt(custIntel.repeatedBuyers) : '—'} color="#fbbf24" />
+
+                  <StatRow label="Repeated Buyers"          value={custIntel.repeatedBuyers != null ? fmt(custIntel.repeatedBuyers) : '—'} color={C.amberText} />
                   <div style={{ ...ROW, borderBottom: 'none' }}>
                     <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Repeat Buy Rate</span>
-                    <span style={{ fontSize: '14px', fontWeight: 600, color: custIntel.repeatBuyerRate != null ? '#fbbf24' : 'var(--text-muted)' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 600, color: custIntel.repeatBuyerRate != null ? C.amberText : 'var(--text-muted)' }}>
                       {custIntel.repeatBuyerRate != null ? `${custIntel.repeatBuyerRate}%` : '—'}
                     </span>
                   </div>
@@ -567,17 +584,20 @@ export default function KpiAnalyticsPage() {
             <div style={CARD}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                  <Target style={{ width: '13px', height: '13px', color: '#60a5fa' }} /> Purchase Journey Funnel
+                  <Target style={{ width: '13px', height: '13px', color: C.blue }} /> Purchase Journey Funnel
                 </div>
-                <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: '999px', padding: '2px 8px', whiteSpace: 'nowrap' }}>
+                <span style={{ fontSize: '10px', color: C.blueText, background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)', borderRadius: '999px', padding: '2px 8px', whiteSpace: 'nowrap' }}>
                   Storefront tracker
                 </span>
               </div>
               {funnelStages.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {funnelStages.map((stage: any, i: number) => {
-                    const colors = ['#60a5fa', '#a78bfa', '#22c55e', '#fbbf24', '#f87171'];
-                    const c = colors[i % colors.length];
+                    // Two palettes: vivid bar fills + legible percent text (readable on white)
+                    const barColors  = [C.blue, C.purple, C.green, C.amber, C.red];
+                    const textColors = [C.blueText, C.purpleText, C.greenText, C.amberText, C.redText];
+                    const bar  = barColors[i % barColors.length];
+                    const txt  = textColors[i % textColors.length];
                     const prev = i > 0 ? funnelStages[i - 1] : null;
                     const dropOff = prev ? Math.round(100 - stage.percent) : null;
                     return (
@@ -587,13 +607,13 @@ export default function KpiAnalyticsPage() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{fmt(stage.count)} sessions</span>
                             {dropOff !== null && dropOff > 0 && (
-                              <span style={{ fontSize: '11px', color: '#f87171' }}>↓{dropOff}%</span>
+                              <span style={{ fontSize: '11px', color: C.redText }}>↓{dropOff}%</span>
                             )}
-                            <span style={{ fontSize: '13px', fontWeight: 600, color: c, minWidth: '42px', textAlign: 'right' }}>{fmtPct(stage.percent)}</span>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: txt, minWidth: '42px', textAlign: 'right' }}>{fmtPct(stage.percent)}</span>
                           </div>
                         </div>
                         <div style={{ height: '7px', borderRadius: '999px', background: 'var(--bg-input)', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${Math.min(stage.percent, 100)}%`, background: c, borderRadius: '999px', transition: 'width 0.6s ease' }} />
+                          <div style={{ height: '100%', width: `${Math.min(stage.percent, 100)}%`, background: bar, borderRadius: '999px', transition: 'width 0.6s ease' }} />
                         </div>
                       </div>
                     );
@@ -602,8 +622,8 @@ export default function KpiAnalyticsPage() {
                   {/* Tracker session intelligence metrics */}
                   <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                     {[
-                      { label: 'Cart Abandonment',     value: fmtPct(custIntel?.sessionIntelligence?.cart_abandonment_rate),     color: '#fbbf24' },
-                      { label: 'Checkout Abandonment', value: fmtPct(custIntel?.sessionIntelligence?.checkout_abandonment_rate), color: '#f87171' },
+                      { label: 'Cart Abandonment',     value: fmtPct(custIntel?.sessionIntelligence?.cart_abandonment_rate),     color: C.amberText },
+                      { label: 'Checkout Abandonment', value: fmtPct(custIntel?.sessionIntelligence?.checkout_abandonment_rate), color: C.redText },
                     ].map(m => (
                       <div key={m.label} style={{ padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-input)', border: '1px solid var(--border-card)' }}>
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '3px' }}>{m.label}</div>
@@ -615,7 +635,7 @@ export default function KpiAnalyticsPage() {
                   {convRate != null && convRate > 0 && (
                     <div style={{ padding: '12px 16px', background: 'rgba(34,197,94,0.06)', borderRadius: '8px', border: '1px solid rgba(34,197,94,0.15)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>End-to-end Conversion Rate</span>
-                      <span style={{ fontSize: '18px', fontWeight: 700, color: '#22c55e' }}>{fmtPct(convRate)}</span>
+                      <span style={{ fontSize: '18px', fontWeight: 700, color: C.greenText }}>{fmtPct(convRate)}</span>
                     </div>
                   )}
                 </div>
@@ -638,10 +658,10 @@ export default function KpiAnalyticsPage() {
             <div style={CARD}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                  <AlertTriangle style={{ width: '13px', height: '13px', color: '#f87171' }} /> Storefront Errors
+                  <AlertTriangle style={{ width: '13px', height: '13px', color: C.red }} /> Storefront Errors
                 </div>
                 {digestData?.storefrontErrors != null && (
-                  <span style={{ fontSize: '10px', color: '#f87171', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: '999px', padding: '2px 8px' }}>
+                  <span style={{ fontSize: '10px', color: C.redText, background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: '999px', padding: '2px 8px' }}>
                     {digestData.storefrontErrors.total} total
                   </span>
                 )}
@@ -654,16 +674,16 @@ export default function KpiAnalyticsPage() {
                 </div>
               ) : digestData.storefrontErrors.total === 0 ? (
                 <div style={EMPTY}>
-                  <CheckCircle2 style={{ width: '22px', height: '22px', color: '#22c55e', opacity: 0.7 }} />
-                  <span style={{ color: '#22c55e' }}>No storefront errors in this period</span>
+                  <CheckCircle2 style={{ width: '22px', height: '22px', color: C.green, opacity: 0.7 }} />
+                  <span style={{ color: C.greenText }}>No storefront errors in this period</span>
                 </div>
               ) : (
                 <>
                   {/* Critical vs total highlight */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '14px' }}>
                     {[
-                      { label: 'Total Errors',    value: digestData.storefrontErrors.total,    color: '#f87171' },
-                      { label: 'Critical',         value: digestData.storefrontErrors.critical,  color: '#ef4444' },
+                      { label: 'Total Errors',    value: digestData.storefrontErrors.total,    color: C.redText },
+                      { label: 'Critical',         value: digestData.storefrontErrors.critical,  color: C.redText },
                     ].map(m => (
                       <div key={m.label} style={{ padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-input)', border: '1px solid var(--border-card)' }}>
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '3px' }}>{m.label}</div>
@@ -676,7 +696,7 @@ export default function KpiAnalyticsPage() {
                   {digestData.storefrontErrors.byType.map((e: any) => (
                     <div key={e.type} style={ROW}>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>{e.type}</span>
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: '#f87171' }}>{fmt(e.count)}</span>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: C.redText }}>{fmt(e.count)}</span>
                     </div>
                   ))}
 
@@ -690,7 +710,7 @@ export default function KpiAnalyticsPage() {
                         {digestData.storefrontErrors.recent.map((err: any, i: number) => (
                           <div key={i} style={{ padding: '10px 12px', borderRadius: '8px', background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                              <span style={{ fontSize: '10px', color: '#f87171', fontFamily: 'monospace' }}>{err.type}</span>
+                              <span style={{ fontSize: '10px', color: C.redText, fontFamily: 'monospace' }}>{err.type}</span>
                               <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>{formatAgo(err.occurredAt)}</span>
                             </div>
                             <div style={{ fontSize: '11px', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -712,10 +732,10 @@ export default function KpiAnalyticsPage() {
             <div style={CARD}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                  <RefreshCw style={{ width: '13px', height: '13px', color: '#60a5fa' }} /> Integration Resync
+                  <RefreshCw style={{ width: '13px', height: '13px', color: C.blue }} /> Integration Resync
                 </div>
                 {digestData?.resyncFailures != null && digestData.resyncFailures.total > 0 && (
-                  <span style={{ fontSize: '10px', color: digestData.resyncFailures.failed > 0 ? '#f87171' : '#22c55e', background: digestData.resyncFailures.failed > 0 ? 'rgba(248,113,113,0.1)' : 'rgba(34,197,94,0.1)', border: `1px solid ${digestData.resyncFailures.failed > 0 ? 'rgba(248,113,113,0.25)' : 'rgba(34,197,94,0.25)'}`, borderRadius: '999px', padding: '2px 8px' }}>
+                  <span style={{ fontSize: '10px', color: digestData.resyncFailures.failed > 0 ? C.redText : C.greenText, background: digestData.resyncFailures.failed > 0 ? 'rgba(248,113,113,0.1)' : 'rgba(34,197,94,0.1)', border: `1px solid ${digestData.resyncFailures.failed > 0 ? 'rgba(248,113,113,0.25)' : 'rgba(34,197,94,0.25)'}`, borderRadius: '999px', padding: '2px 8px' }}>
                     {digestData.resyncFailures.failed > 0 ? `${digestData.resyncFailures.failed} failed` : 'All passing'}
                   </span>
                 )}
@@ -736,8 +756,8 @@ export default function KpiAnalyticsPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '14px' }}>
                     {[
                       { label: 'Total Jobs',  value: fmt(digestData.resyncFailures.total),  color: 'var(--text-primary)' },
-                      { label: 'Failed',       value: fmt(digestData.resyncFailures.failed), color: digestData.resyncFailures.failed > 0 ? '#f87171' : '#22c55e' },
-                      { label: 'Success Rate', value: digestData.resyncFailures.successRate != null ? `${digestData.resyncFailures.successRate}%` : '—', color: (digestData.resyncFailures.successRate ?? 100) >= 95 ? '#22c55e' : (digestData.resyncFailures.successRate ?? 100) >= 80 ? '#fbbf24' : '#f87171' },
+                      { label: 'Failed',       value: fmt(digestData.resyncFailures.failed), color: digestData.resyncFailures.failed > 0 ? C.redText : C.greenText },
+                      { label: 'Success Rate', value: digestData.resyncFailures.successRate != null ? `${digestData.resyncFailures.successRate}%` : '—', color: (digestData.resyncFailures.successRate ?? 100) >= 95 ? C.greenText : (digestData.resyncFailures.successRate ?? 100) >= 80 ? C.amberText : C.redText },
                     ].map(m => (
                       <div key={m.label} style={{ padding: '10px 12px', borderRadius: '8px', background: 'var(--bg-input)', border: '1px solid var(--border-card)' }}>
                         <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '3px' }}>{m.label}</div>
@@ -762,7 +782,7 @@ export default function KpiAnalyticsPage() {
                                 <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>{j.connectorInstanceId.slice(0, 8)}…</span>
                                 <span style={{ fontSize: '10px', color: 'var(--text-muted)', flexShrink: 0 }}>{formatAgo(j.initiatedAt)}</span>
                               </div>
-                              <span style={{ fontSize: '11px', color: '#f87171', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>{errMsg}</span>
+                              <span style={{ fontSize: '11px', color: C.redText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%' }}>{errMsg}</span>
                             </div>
                           );
                         })}
@@ -770,12 +790,35 @@ export default function KpiAnalyticsPage() {
                     </>
                   ) : digestData.resyncFailures.failed === 0 ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 16px', borderRadius: '10px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
-                      <CheckCircle2 style={{ width: '14px', height: '14px', color: '#22c55e' }} />
-                      <span style={{ fontSize: '12px', color: '#22c55e' }}>All resync jobs completed successfully.</span>
+                      <CheckCircle2 style={{ width: '14px', height: '14px', color: C.green }} />
+                      <span style={{ fontSize: '12px', color: C.greenText }}>All resync jobs completed successfully.</span>
                     </div>
                   ) : null}
                 </>
               )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── BACKEND API · PAYMENT & SMS GATEWAYS ────────────────── */}
+        <div>
+          <div style={SECTION_LABEL}>Backend API · Payment & SMS Gateways · Live checks (not period-based)</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Payment gateway health — probes each configured gateway's API
+               (Razorpay / Stripe / PayU) for live status and scheduled maintenance. */}
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <CreditCard style={{ width: '13px', height: '13px', color: C.green }} /> Payment Gateway
+              </div>
+              <PaymentGatewayPanel projectId={String(projectId)} readOnly />
+            </div>
+            {/* SMS gateway health — live probe of each provider's public status page
+               (Twilio / GupShup / ClickSend / Infobip). */}
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <MessageSquare style={{ width: '13px', height: '13px', color: C.blue }} /> SMS Gateway
+              </div>
+              <SmsGatewayPanel projectId={String(projectId)} />
             </div>
           </div>
         </div>
@@ -789,7 +832,10 @@ export default function KpiAnalyticsPage() {
             <div style={CARD}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
                 <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                  <Zap style={{ width: '13px', height: '13px', color: '#fbbf24' }} /> Core Web Vitals (PageSpeed API)
+                  <Zap style={{ width: '13px', height: '13px', color: C.amber }} /> Core Web Vitals (PageSpeed API)
+                  <span style={{ fontSize: '10px', fontWeight: 600, color: C.greenText, background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '999px', padding: '2px 8px', whiteSpace: 'nowrap' }}>
+                    Live · on-demand
+                  </span>
                 </div>
                 <div style={{ display: 'flex', background: 'var(--bg-input)', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--border-card)' }}>
                   {(['all', 'mobile', 'desktop'] as const).map((d, i) => (
@@ -798,7 +844,7 @@ export default function KpiAnalyticsPage() {
                       borderRight: i < 2 ? '1px solid var(--border-card)' : 'none',
                       cursor: 'pointer', textTransform: 'capitalize',
                       background: rumDevice === d ? 'rgba(251,191,36,0.12)' : 'transparent',
-                      color: rumDevice === d ? '#fbbf24' : 'var(--text-muted)',
+                      color: rumDevice === d ? C.amberText : 'var(--text-muted)',
                       fontWeight: rumDevice === d ? 600 : 400,
                     }}>
                       {d === 'all' ? 'All' : d === 'mobile' ? 'Mobile' : 'Desktop'}
@@ -814,7 +860,7 @@ export default function KpiAnalyticsPage() {
               ) : vitals.every(m => m.value == null) ? (
                 <div style={EMPTY}>
                   <Activity style={{ width: '22px', height: '22px', opacity: 0.35 }} />
-                  <span>No PageSpeed scan found for the selected period.</span>
+                  <span>No PageSpeed scan yet. Trigger a scan to populate.</span>
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -844,9 +890,9 @@ export default function KpiAnalyticsPage() {
                   <Clock style={{ width: '11px', height: '11px', flexShrink: 0 }} />
                   {lastScanAgo
                     ? <span>Last scanned <strong style={{ color: 'var(--text-secondary)' }}>{lastScanAgo}</strong></span>
-                    : <span>No scan in this period</span>
+                    : <span>Not yet scanned</span>
                   }
-                  {rumDevice !== 'all' && <span style={{ color: '#fbbf24' }}>· {rumDevice}</span>}
+                  {rumDevice !== 'all' && <span style={{ color: C.amberText }}>· {rumDevice}</span>}
                   <span>· Google PageSpeed API</span>
                 </div>
               )}
@@ -855,7 +901,7 @@ export default function KpiAnalyticsPage() {
             {/* System Health */}
             <div style={CARD}>
               <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                <AlertTriangle style={{ width: '13px', height: '13px', color: '#f87171' }} /> KPI System Health
+                <AlertTriangle style={{ width: '13px', height: '13px', color: C.red }} /> KPI System Health
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
@@ -878,7 +924,7 @@ export default function KpiAnalyticsPage() {
                     <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Active registered signals</div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: '22px', fontWeight: 600, color: '#60a5fa' }}>{catalog.available.length}</div>
+                    <div style={{ fontSize: '22px', fontWeight: 600, color: C.blueText }}>{catalog.available.length}</div>
                     <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>available</div>
                   </div>
                 </div>
@@ -891,7 +937,7 @@ export default function KpiAnalyticsPage() {
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>Connector sync health</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '22px', fontWeight: 600, color: Number(pipelineRate) >= 95 ? '#22c55e' : Number(pipelineRate) >= 80 ? '#fbbf24' : '#f87171' }}>{pipelineRate}%</div>
+                      <div style={{ fontSize: '22px', fontWeight: 600, color: Number(pipelineRate) >= 95 ? C.greenText : Number(pipelineRate) >= 80 ? C.amberText : C.redText }}>{pipelineRate}%</div>
                     </div>
                   </div>
                 )}
@@ -900,18 +946,18 @@ export default function KpiAnalyticsPage() {
                 {catalog.unavailable.length > 0 ? (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderRadius: '10px', background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
                     <div>
-                      <div style={{ fontSize: '12px', fontWeight: 500, color: '#fbbf24' }}>Coverage Gaps</div>
+                      <div style={{ fontSize: '12px', fontWeight: 500, color: C.amberText }}>Coverage Gaps</div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>KPIs awaiting data sources</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '22px', fontWeight: 600, color: '#fbbf24' }}>{catalog.unavailable.length}</div>
+                      <div style={{ fontSize: '22px', fontWeight: 600, color: C.amberText }}>{catalog.unavailable.length}</div>
                       <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>gaps</div>
                     </div>
                   </div>
                 ) : catalog.available.length > 0 ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 16px', borderRadius: '10px', background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
-                    <CheckCircle2 style={{ width: '15px', height: '15px', color: '#22c55e' }} />
-                    <span style={{ fontSize: '12px', color: '#22c55e' }}>Full KPI coverage — all signals active.</span>
+                    <CheckCircle2 style={{ width: '15px', height: '15px', color: C.green }} />
+                    <span style={{ fontSize: '12px', color: C.greenText }}>Full KPI coverage — all signals active.</span>
                   </div>
                 ) : null}
               </div>

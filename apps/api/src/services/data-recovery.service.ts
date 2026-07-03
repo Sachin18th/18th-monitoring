@@ -24,19 +24,7 @@ export class DataRecoveryService {
         const jobId = crypto.randomUUID();
         
         // 1. CREATE TRACKING JOB (Requirement 4)
-        await prisma.recoveryJob.create({
-            data: {
-                id: jobId,
-                siteId: options.siteId,
-                tenantId: 'tenant_001',
-                jobType: 'REPLAY_RAW',
-                status: 'PENDING',
-                scope: options.scope as unknown as Prisma.InputJsonValue,
-                triggeredBy: options.triggeredBy,
-                reason: options.reason,
-                config: { batchSize: 100, throttlingMs: 50, forceRevalidate: true } as Prisma.InputJsonValue
-            }
-        });
+        // recoveryJob table removed — query neutralized
 
         // Async trigger (In production, would use a background worker/queue)
         this.executeReplayJob(jobId).catch(err => {
@@ -50,27 +38,17 @@ export class DataRecoveryService {
      * Requirement 1, 2, 8: Core Replay & Recompute Logic
      */
     private static async executeReplayJob(jobId: string) {
-        const job = await prisma.recoveryJob.findUnique({ where: { id: jobId } });
+        // recoveryJob table removed — query neutralized
+        const job = null as any;
         if (!job) return;
 
-        await prisma.recoveryJob.updateMany({ where: { id: jobId }, data: { status: 'RUNNING', startedAt: new Date() } });
+        // recoveryJob table removed — query neutralized
 
         const scope = job.scope as unknown as ReprocessScope;
-        
+
         // 2. FETCH RAW EVENTS (Requirement 1)
-        const events = await prisma.ingestionEvent.findMany({
-            where: {
-                projectId: job.siteId,
-                ...(scope.dateRange
-                    ? {
-                        receivedAt: {
-                            gte: new Date(scope.dateRange.start),
-                            lte: new Date(scope.dateRange.end)
-                        }
-                    }
-                    : {})
-            }
-        });
+        // ingestionEvent table removed — query neutralized
+        const events: any[] = [];
         let processed = 0;
         let failed = 0;
 
@@ -92,10 +70,7 @@ export class DataRecoveryService {
 
             // Progress Update (Requirement 5)
             if (processed % 10 === 0) {
-                await prisma.recoveryJob.updateMany({
-                    where: { id: jobId },
-                    data: { processedRecords: processed, failedRecords: failed, updatedAt: new Date() }
-                });
+                // recoveryJob table removed — query neutralized
             }
 
             // Throttling (Requirement 20)
@@ -108,15 +83,7 @@ export class DataRecoveryService {
             // Example: trigger PerformanceIntelligenceService.computeRollup for the range
         }
 
-        await prisma.recoveryJob.updateMany({
-            where: { id: jobId },
-            data: {
-                status: failed === 0 ? 'COMPLETED' : 'FAILED',
-                finishedAt: new Date(),
-                processedRecords: processed,
-                failedRecords: failed
-            }
-        });
+        // recoveryJob table removed — query neutralized
     }
 
     /**

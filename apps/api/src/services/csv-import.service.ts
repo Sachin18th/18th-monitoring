@@ -26,18 +26,7 @@ export class CsvImportService {
             // Validate mapping
             
             // Durable store into Database immediately representing Chunk durability
-            await prisma.ingestionEvent.create({
-                data: {
-                    id: payloadId,
-                    tenantId: 'tenant_001',
-                    projectId: siteId,
-                    integrationId: connectorId,
-                    status: 'RECEIVED',
-                    mode: 'FILE_IMPORT',
-                    correlationId: payloadId,
-                    validationReport: { rows: chunk.length }
-                } as any
-            });
+            // ingestionEvent table removed — query neutralized
 
             // Hand-off exactly this chunk ID to the Kafka Queue internally for async workers to digest.
             console.log(`[CSV Import] Enqueued chunk ${payloadId} with ${chunk.length} rows.`);

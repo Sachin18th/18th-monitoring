@@ -296,8 +296,11 @@ export default function RumMetricsPanel() {
     if (result.measuredAgainstHomepage) {
       return { tone: 'muted', text: 'Proxied from homepage — no dedicated URL discovered' };
     }
-    if (result.measurementError === 'discovered_url_unreachable') {
-      return { tone: 'warning', text: 'Discovered URL unreachable — check URL suffix config' };
+    // A real PageSpeed/Lighthouse failure (NO_FCP, PAGE_HUNG, timeout, rate limit…).
+    // The detailed cause is shown in the note above the grid; keep the badge concise
+    // and never blame URL config, which is usually correct.
+    if (result.measurementError === 'pagespeed_error' || result.measurementError === 'discovered_url_unreachable') {
+      return { tone: 'warning', text: 'PageSpeed couldn’t measure this page' };
     }
     // Real measurement, but the achievable sample was below target. Label honestly so
     // the panel never implies full-catalog sampling occurred.
@@ -449,8 +452,8 @@ export default function RumMetricsPanel() {
           // single message — and surface the reason as a small note above the grid.
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             <div style={{ borderRadius: '12px', border: '1px dashed var(--border-card)', padding: '12px 16px', color: 'var(--text-muted)', fontSize: '13px' }}>
-              {result?.measurementError === 'discovered_url_unreachable'
-                ? (result.reason || 'The discovered URL could not be measured. Check the store’s URL suffix configuration.')
+              {result?.measurementError
+                ? (result.reason || 'PageSpeed couldn’t measure this page.')
                 : (result?.reason || 'Not measured yet — click “Refresh” on this section to run PageSpeed for this page.')}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px' }}>

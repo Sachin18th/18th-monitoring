@@ -2,6 +2,8 @@ import { prisma, decryptSecret } from '@kpi-platform/db';
 import { HealthEngine } from './health-engine.service';
 import { AlertEngine } from './alert-engine.service';
 import { NotificationService } from './notification.service';
+import { StoreHealthService } from './store-health.service';
+import { PaymentGatewayService } from './payment-gateway.service';
 import { registerShopifyPixel, verifyShopifyPixelExists } from '../../../../packages/connectors/src/commerce/shopify-pixel.service';
 
 /**
@@ -58,6 +60,19 @@ export class ScheduledMonitor {
             } catch {
                 /* best-effort */
             }
+
+            // Refresh the signals the newer alert families read so they
+            // evaluate against current state, not stale snapshots:
+            //   · store-API health  → integration:unhealthy_connectors
+            //   · payment gateways   → payment_gateway:degraded_gateways
+            // Both are best-effort; a probe failure must not block the cycle.
+            // (SMS gateway status is probed live inside the alert engine.)
+            await StoreHealthService.checkProject(siteId).catch((err: any) =>
+                console.error(`[ScheduledMonitor] store-health probe failed for ${siteId}:`, err?.message),
+            );
+            await PaymentGatewayService.syncConfiguredGateways(siteId, tenantId).catch((err: any) =>
+                console.error(`[ScheduledMonitor] gateway refresh failed for ${siteId}:`, err?.message),
+            );
 
             try {
                 // 1. Evaluate alert rules → raise/resolve alerts.

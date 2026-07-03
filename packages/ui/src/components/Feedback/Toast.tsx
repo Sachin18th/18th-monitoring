@@ -189,17 +189,6 @@ const ICON_CONFIG = {
 >;
 
 /* ────────────────────────────────────────────────────────────── */
-/* Progress colors */
-/* ────────────────────────────────────────────────────────────── */
-
-const PROGRESS_COLOR: Record<ToastType, string> = {
-    success: 'bg-emerald-500',
-    error: 'bg-red-500',
-    info: 'bg-blue-500',
-    loading: 'bg-violet-500',
-};
-
-/* ────────────────────────────────────────────────────────────── */
 /* Toast Item */
 /* ────────────────────────────────────────────────────────────── */
 
@@ -242,7 +231,7 @@ export const ToastItem: React.FC<ToastItemProps> = ({
             className={cn(
                 '!relative !grid !w-full',
                 '!min-w-[340px] !max-w-[min(560px,calc(100vw-24px))] !grid-cols-[auto_minmax(0,1fr)] !items-center !gap-4',
-                '!border !border-zinc-700/80 !bg-zinc-950/95 !text-zinc-50',
+                '!border !border-border-subtle !bg-surface-overlay !text-text-primary',
                 '!rounded-[18px] !overflow-hidden',
                 '!px-4 !py-4 !pr-14',
                 '!shadow-[0_18px_50px_rgba(0,0,0,0.35)]',
@@ -266,12 +255,12 @@ export const ToastItem: React.FC<ToastItemProps> = ({
             {/* Content */}
             <div className="!min-w-0 !self-center !pt-0">
                 {toast.title && (
-                    <p className="!mb-1.5 !break-words !text-[12px] !font-semibold !leading-none !text-zinc-50">
+                    <p className="!mb-1.5 !break-words !text-[12px] !font-semibold !leading-none !text-text-primary">
                         {toast.title}
                     </p>
                 )}
 
-                <p className="!break-words !text-[13px] !leading-[1.45] !text-zinc-300">
+                <p className="!break-words !text-[13px] !leading-[1.45] !text-text-secondary">
                     {toast.message}
                 </p>
             </div>
@@ -283,28 +272,13 @@ export const ToastItem: React.FC<ToastItemProps> = ({
                     aria-label="Dismiss"
                     className={cn(
                         '!absolute !right-3 !top-1/2 !flex !h-8 !w-8 !-translate-y-1/2 !items-center !justify-center !rounded-full',
-                        '!text-zinc-400 hover:!text-white',
-                        'hover:!bg-white/10',
+                        '!text-text-muted hover:!text-text-primary',
+                        'hover:!bg-bg-muted',
                         '!transition-all !duration-200'
                     )}
                 >
                     <X size={14} strokeWidth={2.5} />
                 </button>
-            )}
-
-            {/* Progress Bar */}
-            {toast.type !== 'loading' && (
-                <div className="!absolute !bottom-0 !left-0 !right-0 !h-[3px] !bg-white/8">
-                    <div
-                        className={cn(
-                            '!h-full !origin-left',
-                            PROGRESS_COLOR[toast.type]
-                        )}
-                        style={{
-                            animation: `toast-progress ${duration}ms linear forwards`,
-                        }}
-                    />
-                </div>
             )}
         </div>
     );

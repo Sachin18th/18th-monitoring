@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../context/AuthContext';
 import { Button, Card, Input, Typography } from '@kpi-platform/ui';
-import { ArrowRight, Command, Lock, Mail, AlertTriangle, ArrowLeft, KeyRound } from 'lucide-react';
+import { ArrowRight, Command, Lock, Mail, AlertTriangle, ArrowLeft } from 'lucide-react';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 const RESEND_COOLDOWN_SECONDS = 30;
@@ -99,21 +99,22 @@ export default function LoginPage() {
       </div>
     ) : null;
 
+    
   return (
     <div className="login-shell flex min-h-screen items-center justify-center bg-[#f6f8fa] px-4 py-12">
       <div className="w-full max-w-[420px]">
         {/* Brand */}
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#2563eb] text-white shadow-lg shadow-blue-500/20">
-            <Command size={26} />
+        <div className="flex flex-col items-center text-center" style={{ marginBottom: '40px' }}>
+          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-[14px] bg-[#2563eb] text-white shadow-md shadow-blue-500/20">
+            <Command size={22} />
           </div>
-          <span className="text-xl font-black tracking-tight text-[#0f1724]">KPI</span>
-          <span className="mt-1 text-[10px] font-bold uppercase tracking-[0.3em] text-[#2563eb]">
+          <span className="text-lg font-black tracking-tight text-[#0f1724]">KPI</span>
+          <span className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.2em] text-[#2563eb]">
             Monitoring Platform
           </span>
         </div>
 
-        <Card className="!rounded-2xl border border-[rgba(15,23,42,0.06)] bg-white" style={{ padding: '32px 28px' }}>
+        <Card className="!rounded-2xl border border-[rgba(15,23,42,0.06)] bg-white" style={{ padding: '28px 28px' }}>
           {/* ── EMAIL STEP ──────────────────────────────────────────── */}
           {step === 'email' && (
             <>
@@ -186,16 +187,22 @@ export default function LoginPage() {
                 </form>
               )}
 
-              <div className="mt-6 text-center">
+              <div className="my-5 flex items-center gap-3">
+                <div className="h-px flex-1 bg-[rgba(15,23,42,0.08)]" />
+                <span className="text-xs text-[#94a3b8]">or</span>
+                <div className="h-px flex-1 bg-[rgba(15,23,42,0.08)]" />
+              </div>
+
+              <div className="text-center">
                 <button
                   type="button"
                   onClick={() => {
                     setUsePassword((v) => !v);
                     setError('');
                   }}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#2563eb] hover:underline"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0f1724]"
                 >
-                  <KeyRound size={14} />
+                  <Lock size={14} />
                   {usePassword ? 'Sign in with a code instead' : 'Sign in with password instead'}
                 </button>
               </div>
@@ -263,7 +270,7 @@ export default function LoginPage() {
           )}
         </Card>
 
-        <p className="mt-8 text-center text-xs text-[#94a3b8]">
+        <p className="text-center text-xs text-[#94a3b8]" style={{ marginTop: '40px' }}>
           © {new Date().getFullYear()} Gravity Monitoring Platform. All rights reserved.
         </p>
       </div>
@@ -280,11 +287,12 @@ export default function LoginPage() {
           color: #94a3b8;
         }
         .login-shell .input-label {
-          color: #475569;
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
+          color: #334155;
+          font-size: 13px;
+          font-weight: 500;
+          letter-spacing: 0;
+          text-transform: none;
+          margin-bottom: 6px;
         }
       `}</style>
     </div>

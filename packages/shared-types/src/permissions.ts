@@ -119,6 +119,8 @@ export const ROLE_ACCESS: Record<AppRole, RoleAccess> = {
       'observability/alerts',
       'observability/incidents',
       'performance',
+      'rum',
+      'observability/backend',
       'observability/journeys',
       'customers',
       'orders',
@@ -138,6 +140,8 @@ export const ROLE_ACCESS: Record<AppRole, RoleAccess> = {
     sidebar: [
       'overview',
       'performance',
+      'rum',
+      'observability/journeys',
       'customers',
       'orders',
       'question',

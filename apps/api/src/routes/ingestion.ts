@@ -21,12 +21,8 @@ export const ingestionRoutes = async (fastify: FastifyInstance) => {
     fastify.get('/tenants/:tenantId/projects/:siteId/ingestion/events', async (req, reply) => {
         const { siteId } = req.params as any;
 
-        const events = await prisma.ingestionEvent.findMany({
-            where: { projectId: siteId },
-            orderBy: { receivedAt: 'desc' },
-            take: 200,
-            include: { artifacts: { select: { id: true }, take: 1 } }
-        });
+        // ingestionEvent table removed — query neutralized
+        const events: any[] = [];
 
         const shaped = events.map((e) => ({
             id: e.id,
@@ -49,7 +45,8 @@ export const ingestionRoutes = async (fastify: FastifyInstance) => {
     fastify.get('/tenants/:tenantId/projects/:siteId/ingestion/artifacts/:artifactId', async (req, reply) => {
         const { artifactId } = req.params as any;
 
-        const artifact = await prisma.ingestionArtifact.findUnique({ where: { id: artifactId } });
+        // ingestionArtifact table removed — query neutralized
+        const artifact = null;
 
         if (!artifact) {
             return reply.code(404).send(ResponseUtil.error([{ code: 'ARTIFACT_NOT_FOUND', message: 'Raw payload not found' }], req.id as string));

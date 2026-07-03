@@ -79,21 +79,7 @@ export class CustomerIntelligenceService {
 
         // 2. STORE EVENT (Requirement 4)
         const eventId = crypto.randomUUID();
-        await prisma.customerEvent.create({
-            data: {
-                id: eventId,
-                customerId,
-                sessionId,
-                siteId: event.siteId,
-                eventName: event.eventName,
-                category: event.eventCategory,
-                timestamp: new Date(event.timestamp),
-                utmSource: event.utm?.source,
-                utmMedium: event.utm?.medium,
-                utmCampaign: event.utm?.campaign,
-                metadata: event.metadata
-            }
-        });
+        // customerEvent table removed — query neutralized
 
         // 3. COMPUTE LIFECYCLE PROGRESSION (Requirement 14)
         await this.updateLifecycle(customerId, event.eventCategory);
@@ -103,13 +89,8 @@ export class CustomerIntelligenceService {
 
     private static async getOrCreateSession(customerId: string, siteId: string): Promise<string> {
         // Simple 30-minute timeout logic (Requirement 7)
-        const lastSession = await prisma.customerSession.findFirst({
-            where: {
-                customerId,
-                siteId
-            },
-            orderBy: { startTime: 'desc' }
-        });
+        // customerSession table removed — query neutralized
+        const lastSession = null as unknown as { id: string; endTime: Date | null } | null;
 
         const timeoutMs = 30 * 60 * 1000;
         if (lastSession && lastSession.endTime && (Date.now() - new Date(lastSession.endTime).getTime() < timeoutMs)) {
@@ -117,16 +98,7 @@ export class CustomerIntelligenceService {
         }
 
         const newSessionId = crypto.randomUUID();
-        await prisma.customerSession.create({
-            data: {
-                id: newSessionId,
-                customerId,
-                siteId,
-                startTime: new Date(),
-                device: 'Unknown',
-                browser: 'Unknown'
-            }
-        });
+        // customerSession table removed — query neutralized
         return newSessionId;
     }
 

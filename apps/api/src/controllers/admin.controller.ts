@@ -29,7 +29,7 @@ const getAllowedInviteRoles = (role: string | null | undefined) => {
     }
 
     if (requesterRole === 'admin') {
-        return new Set(['ops_lead', 'analyst']);
+        return new Set(['admin', 'ops_lead', 'analyst']);
     }
 
     return new Set<string>();
@@ -111,7 +111,7 @@ export const listPlatformUsers = async (req: any, reply: any) => {
     if (requesterRole === 'admin') {
         return normalizedUsers.filter((user) => {
             const role = normalizeRequesterRole(user.role);
-            return role === 'ops_lead' || role === 'analyst';
+            return role === 'admin' || role === 'ops_lead' || role === 'analyst';
         });
     }
 
@@ -162,6 +162,12 @@ export const invitePlatformUser = async (req: any, reply: any) => {
         return reply.code(400).send({ error: 'Missing fields' });
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+        return reply.code(400).send({ error: 'Invalid email', message: 'Please provide a valid email address.' });
+    }
+
     if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
         return reply.code(403).send({ error: 'Forbidden', message: 'You do not have access to this project administration.' });
     }
@@ -179,7 +185,7 @@ export const invitePlatformUser = async (req: any, reply: any) => {
     try {
         const user = await prisma.$transaction(async (tx) => {
             const existingUser = await tx.user.findUnique({
-                where: { email }
+                where: { email: normalizedEmail }
             });
 
             const passwordHash = await AuthService.hashPassword(password);
@@ -198,7 +204,7 @@ export const invitePlatformUser = async (req: any, reply: any) => {
                 : await tx.user.create({
                     data: {
                         id: crypto.randomUUID(),
-                        email,
+                        email: normalizedEmail,
                         name,
                         tenantId,
                         passwordHash,
@@ -629,8 +635,8 @@ export const purgeDemoData = async (req: any, reply: any) => {
         // Delete all demo data from database (orders, events, logs)
         await Promise.all([
             prisma.canonicalOrder.deleteMany({}),
-            prisma.ingestionEvent.deleteMany({}),
-            prisma.kpiValue.deleteMany({})
+            // ingestionEvent table removed — query neutralized
+            // kpiValue table removed — query neutralized
         ]);
         
         return { success: true, message: 'Demo data purged successfully.' };

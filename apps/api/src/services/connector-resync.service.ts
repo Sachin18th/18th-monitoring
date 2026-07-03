@@ -884,55 +884,8 @@ export class ConnectorResyncService {
     const priceValue = Number(rawProduct?.price ?? rawProduct?.final_price ?? rawProduct?.regular_price ?? 0);
     const sourceUpdatedAt = new Date(rawProduct?.updated_at || rawProduct?.updatedAt || new Date());
 
-    const existing = await prisma.canonicalProduct.findFirst({
-      where: {
-        siteId: connector.siteId,
-        tenantId: connector.tenantId,
-        sourceSystem,
-        productId: externalId
-      },
-      select: { id: true }
-    });
-
-    const data: Prisma.CanonicalProductUncheckedCreateInput = {
-      id: existing?.id || crypto.randomUUID(),
-      siteId: connector.siteId,
-      tenantId: connector.tenantId,
-      productId: externalId,
-      sourceSystem,
-      name,
-      sku: sku || undefined,
-      inventory: Number.isFinite(inventoryValue) ? Math.trunc(inventoryValue) : 0,
-      price: Number.isFinite(priceValue) ? priceValue : undefined,
-      sourceUpdatedAt,
-      metadata: {
-        connectorInstanceId: connector.id,
-        connectorLabel: connector.label,
-        sourceSystem,
-        rawProduct,
-        lastSyncedAt: new Date().toISOString()
-      } as Prisma.InputJsonValue
-    };
-
-    if (existing) {
-      await prisma.canonicalProduct.update({
-        where: { id: existing.id },
-        data: {
-          name: data.name,
-          sku: data.sku,
-          inventory: data.inventory,
-          price: data.price,
-          sourceUpdatedAt: data.sourceUpdatedAt,
-          metadata: data.metadata,
-          updatedAt: new Date()
-        }
-      });
-      return;
-    }
-
-    await prisma.canonicalProduct.create({
-      data
-    });
+    // canonical_products table removed — persistence neutralized (no-op)
+    return;
   }
 
   private static extractNextLink(linkHeader: string | null): string | null {

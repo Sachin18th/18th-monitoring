@@ -74,7 +74,8 @@ export function SmsGatewayPanel({ projectId }: SmsGatewayPanelProps) {
   // Cached probe results keyed by gateway slug — reused when a gateway is
   // toggled back on so we don't refetch unnecessarily.
   const [statuses, setStatuses] = useState<Record<string, SmsGatewayStatus>>({});
-  const [selected, setSelected] = useState<Set<GatewaySlug>>(new Set(GATEWAYS.map((g) => g.slug)));
+  // Nothing selected by default — the user picks which gateway(s) to inspect.
+  const [selected, setSelected] = useState<Set<GatewaySlug>>(new Set());
   const [loading, setLoading] = useState(true);
   const [synced, setSynced] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,8 +136,7 @@ export function SmsGatewayPanel({ projectId }: SmsGatewayPanelProps) {
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(slug)) {
-        // Never let the last selected gateway be removed.
-        if (next.size <= 1) return current;
+        // Selection may go all the way back to zero (the default state).
         next.delete(slug);
       } else {
         next.add(slug);
@@ -152,6 +152,16 @@ export function SmsGatewayPanel({ projectId }: SmsGatewayPanelProps) {
   const visibleGateways = GATEWAYS.filter((g) => selected.has(g.slug));
   const showSkeletons = loading && Object.keys(statuses).length === 0;
 
+  // Most recent probe timestamp across all checked gateways — SMS status is a
+  // live, on-demand probe (no background history), so this "last fetch" is the
+  // meaningful freshness signal, not a time-period filter.
+  const lastChecked = (() => {
+    const times = Object.values(statuses)
+      .map((s) => new Date(s.checkedAt).getTime())
+      .filter((n) => !Number.isNaN(n));
+    return times.length ? new Date(Math.max(...times)).toISOString() : null;
+  })();
+
   return (
     <div style={cardStyle}>
       {/* Header — mirrors the Payment Gateway Status header. */}
@@ -159,8 +169,13 @@ export function SmsGatewayPanel({ projectId }: SmsGatewayPanelProps) {
         <div>
           <h3 style={sectionTitleStyle}>SMS Gateway Status</h3>
           <p style={{ ...sectionSubStyle, lineHeight: 1.6, maxWidth: '640px' }}>
-            Check live status from each gateway&apos;s public status page.
+            Live, on-demand check from each gateway&apos;s public status page (not filtered by the dashboard time period).
           </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
+            <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--success-text, #15803d)', flexShrink: 0 }} />
+            <span style={{ fontWeight: 600, color: 'var(--success-text, #15803d)' }}>Live</span>
+            <span>· Last checked {lastChecked ? relativeTime(lastChecked) : 'never'}</span>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
           <button
@@ -209,23 +224,20 @@ export function SmsGatewayPanel({ projectId }: SmsGatewayPanelProps) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
         {GATEWAYS.map((g) => {
           const isSelected = selected.has(g.slug);
-          const isLast = isSelected && selected.size <= 1;
           return (
             <button
               key={g.slug}
               type="button"
               onClick={() => toggleGateway(g.slug)}
-              disabled={isLast}
               style={{
                 padding: '6px 14px',
                 borderRadius: '999px',
                 fontSize: '12px',
                 fontWeight: 600,
-                cursor: isLast ? 'default' : 'pointer',
+                cursor: 'pointer',
                 border: `1px solid ${isSelected ? 'rgba(59,130,246,0.4)' : 'var(--border-card)'}`,
                 background: isSelected ? 'rgba(59,130,246,0.12)' : 'transparent',
                 color: isSelected ? '#3b82f6' : 'var(--text-muted)',
-                opacity: isLast ? 0.7 : 1,
                 whiteSpace: 'nowrap',
               }}
             >
@@ -253,6 +265,23 @@ export function SmsGatewayPanel({ projectId }: SmsGatewayPanelProps) {
         >
           <AlertCircle style={{ width: '16px', height: '16px', flexShrink: 0 }} />
           {error}
+        </div>
+      )}
+
+      {/* Empty state — nothing selected (the default). */}
+      {!error && visibleGateways.length === 0 && (
+        <div
+          style={{
+            borderRadius: '10px',
+            border: '1px dashed var(--border-card)',
+            background: 'rgba(15,23,42,0.02)',
+            padding: '24px 16px',
+            textAlign: 'center',
+            fontSize: '13px',
+            color: 'var(--text-muted)',
+          }}
+        >
+          Select a gateway above to view its live status.
         </div>
       )}
 

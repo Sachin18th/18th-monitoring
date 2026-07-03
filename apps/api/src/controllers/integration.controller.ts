@@ -248,7 +248,10 @@ export class IntegrationController {
 
         await connector.validateCredentials(config || {}, credentials || {});
 
-        // Create ConnectorInstance in database
+        // Create ConnectorInstance in database. The initial sync runs in the
+        // background (see runInitialSetup), so we stamp an authoritative
+        // `metadata.initialSync` marker the UI can poll to show real progress
+        // and a completion acknowledgement.
         const instance = await prisma.connectorInstance.create({
             data: {
                 id,
@@ -261,7 +264,16 @@ export class IntegrationController {
                 status: 'ACTIVE',
                 healthStatus: 'HEALTHY',
                 healthScore: 100,
-                syncConfig: config || {}
+                syncConfig: config || {},
+                metadata: {
+                    initialSync: {
+                        status: 'running',
+                        startedAt: new Date().toISOString(),
+                        completedAt: null,
+                        targets: ['orders', 'customers'],
+                        results: {}
+                    }
+                }
             }
         });
 
@@ -350,23 +362,87 @@ export class IntegrationController {
             : type === 'bigcommerce' ? () => BigCommerceCustomerSyncService.syncConnectorInstance(id)
             : null;
 
+        const startedAt = new Date().toISOString();
+        const results: Record<string, any> = {};
+        const failedTargets: string[] = [];
+
+        // Persist the running initialSync marker so the UI can show real,
+        // incremental progress (orders finish → 50%, customers finish → 100%)
+        // rather than a single jump at the end. Merges into existing metadata so
+        // other keys (e.g. pixelConfig lives separately) are never clobbered.
+        const persistInitialSync = async (status: 'running' | 'completed' | 'failed') => {
+            try {
+                const current = await prisma.connectorInstance.findUnique({
+                    where: { id },
+                    select: { metadata: true }
+                });
+                const existingMetadata = (current?.metadata && typeof current.metadata === 'object')
+                    ? current.metadata as Record<string, any>
+                    : {};
+                const existingInitialSync = (existingMetadata.initialSync && typeof existingMetadata.initialSync === 'object')
+                    ? existingMetadata.initialSync as Record<string, any>
+                    : {};
+
+                await prisma.connectorInstance.update({
+                    where: { id },
+                    data: {
+                        metadata: {
+                            ...existingMetadata,
+                            initialSync: {
+                                ...existingInitialSync,
+                                status,
+                                startedAt: existingInitialSync.startedAt || startedAt,
+                                completedAt: status === 'running' ? null : new Date().toISOString(),
+                                targets: ['orders', 'customers'],
+                                failedTargets: [...failedTargets],
+                                results: { ...results }
+                            }
+                        } as any
+                    }
+                });
+            } catch (metaErr: any) {
+                console.error('[Integration] failed to persist initialSync metadata', { id, status, error: metaErr?.message || metaErr });
+            }
+        };
+
         if (orderSync) {
             try {
                 const result = await orderSync();
+                results.orders = {
+                    status: (result?.failed ?? 0) > 0 ? 'partial' : 'completed',
+                    fetched: result?.fetched ?? 0,
+                    upserted: (result?.created ?? 0) + (result?.updated ?? 0),
+                    failed: result?.failed ?? 0
+                };
                 console.log('[Integration] initial order sync done', { id, siteId, ...result });
             } catch (err: any) {
+                results.orders = { status: 'failed', error: err?.message || String(err) };
+                failedTargets.push('orders');
                 console.error('[Integration] initial order sync failed', { id, siteId, error: err?.message || err });
             }
+            // Checkpoint after orders so the UI advances to ~50% mid-run.
+            await persistInitialSync('running');
         }
 
         if (customerSync) {
             try {
                 const result = await customerSync();
+                results.customers = {
+                    status: (result?.failed ?? 0) > 0 ? 'partial' : 'completed',
+                    fetched: result?.fetched ?? 0,
+                    upserted: (result?.created ?? 0) + (result?.updated ?? 0),
+                    failed: result?.failed ?? 0
+                };
                 console.log('[Integration] initial customer sync done', { id, siteId, ...result });
             } catch (err: any) {
+                results.customers = { status: 'failed', error: err?.message || String(err) };
+                failedTargets.push('customers');
                 console.error('[Integration] initial customer sync failed', { id, siteId, error: err?.message || err });
             }
         }
+
+        // Stamp the terminal marker the UI polls for completion.
+        await persistInitialSync(failedTargets.length > 0 ? 'failed' : 'completed');
 
         // ─── Shopify Web Pixel registration ──────────────────────────────────
         // Best-effort: register a Web Pixel on the connected store so checkout
@@ -701,6 +777,71 @@ export class IntegrationController {
                 { code: 'RESYNC_STATUS_FAILED', message: err.message }
             ], req.id as string));
         }
+    }
+
+    /**
+     * Returns the status of a connector's initial (post-create) background sync.
+     * The authoritative marker lives in `metadata.initialSync` (stamped by
+     * runInitialSetup). For connectors created before that marker existed we
+     * fall back to deriving state from their connector_sync_runs rows.
+     */
+    public static async initialSyncStatus(req: FastifyRequest, reply: FastifyReply) {
+        const { tenantId, siteId, id: routeConnectorInstanceId } = req.params as any;
+        const effectiveTenantId = IntegrationController.resolveTenantId(tenantId, req);
+
+        const instance = await prisma.connectorInstance.findFirst({
+            where: { id: routeConnectorInstanceId, tenantId: effectiveTenantId, siteId },
+            select: {
+                id: true,
+                metadata: true,
+                recordsByType: true,
+                lastSyncAt: true,
+                healthStatus: true
+            }
+        });
+
+        if (!instance) {
+            return reply.code(404).send(ResponseUtil.error([
+                { code: 'CONNECTOR_INSTANCE_NOT_FOUND', message: 'Unable to resolve connector instance for this project.' }
+            ], req.id as string));
+        }
+
+        const metadata = (instance.metadata && typeof instance.metadata === 'object')
+            ? instance.metadata as Record<string, any>
+            : {};
+        let initialSync = (metadata.initialSync && typeof metadata.initialSync === 'object')
+            ? metadata.initialSync as Record<string, any>
+            : null;
+
+        // Fallback for connectors created before the metadata marker existed.
+        if (!initialSync) {
+            const runs = await prisma.connectorSyncRun.findMany({
+                where: { connectorInstanceId: instance.id },
+                orderBy: { startedAt: 'desc' },
+                take: 10
+            });
+            const anyRunning = runs.some((r) => String(r.status).toUpperCase() === 'RUNNING');
+            initialSync = {
+                status: anyRunning ? 'running' : (runs.length > 0 ? 'completed' : 'not_started'),
+                startedAt: runs[runs.length - 1]?.startedAt ?? null,
+                completedAt: anyRunning ? null : (runs[0]?.finishedAt ?? null),
+                targets: ['orders', 'customers'],
+                results: {}
+            };
+        }
+
+        return reply.send(ResponseUtil.success({
+            connectorInstanceId: instance.id,
+            status: initialSync.status,
+            startedAt: initialSync.startedAt ?? null,
+            completedAt: initialSync.completedAt ?? null,
+            targets: initialSync.targets ?? ['orders', 'customers'],
+            failedTargets: initialSync.failedTargets ?? [],
+            results: initialSync.results ?? {},
+            recordsByType: instance.recordsByType ?? {},
+            lastSyncAt: instance.lastSyncAt,
+            healthStatus: instance.healthStatus
+        }, { tenantId: effectiveTenantId, siteId }, req.id as string));
     }
 
     private static extractErrorMessage(error: any): string | null {

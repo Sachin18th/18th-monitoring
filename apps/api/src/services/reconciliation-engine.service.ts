@@ -90,15 +90,8 @@ export class ReconciliationEngine {
 
     private static async reconcileOrderCounts(siteId: string, start: Date, end: Date) {
         const [raw, normalized] = await Promise.all([
-            prisma.ingestionEvent.count({
-                where: {
-                    projectId: siteId,
-                    receivedAt: {
-                        gte: start,
-                        lte: end
-                    }
-                }
-            }),
+            // ingestionEvent table removed — query neutralized
+            Promise.resolve(0),
             prisma.canonicalOrder.count({
                 where: {
                     siteId,

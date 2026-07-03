@@ -90,6 +90,7 @@ type ConnectorPlatformContextValue = {
     platform: EcommercePlatform,
     values: ConnectorSetupValues,
   ) => Promise<ConnectedStore>;
+  getInitialSyncStatus: (connectorId: string) => Promise<any>;
   disconnectConnector: (connectorId: string) => void;
   reconnectConnector: (connectorId: string) => void;
   openReauthSetup: (connectorInstanceId: string, platform: EcommercePlatform) => void;
@@ -102,6 +103,9 @@ type ConnectorPlatformContextValue = {
   healthLevel: "healthy" | "warning" | "critical";
   healthLabel: string;
   healthScore: number;
+  // False until the first connector fetch resolves; consumers use it to avoid
+  // rendering health UI against the empty-stores default.
+  connectorsLoaded: boolean;
   storeOptions: StoreOption[];
   selectedStoreLabel: string;
   filteredOrders: CanonicalOrder[];
@@ -228,6 +232,11 @@ export const ConnectorPlatformProvider: React.FC<{
   // const snapshot = useMemo(() => createInitialConnectorSnapshot(), []);
 
   const [isLoading, setIsLoading] = useState(true);
+  // Once-only flag: flips true after the first connector fetch resolves and stays
+  // true. The health badge keys off this so it renders nothing until the real
+  // store health is known — otherwise the empty-stores default (healthScore=100)
+  // flashes "HEALTHY" for a beat before the fetched offline store flips it to CRITICAL.
+  const [connectorsLoaded, setConnectorsLoaded] = useState(false);
 
   // const [connectedStores, setConnectedStores] = useState<ConnectedStore[]>(snapshot.stores);
   // const [canonicalOrders, setCanonicalOrders] = useState<CanonicalOrder[]>(snapshot.orders);
@@ -327,6 +336,7 @@ export const ConnectorPlatformProvider: React.FC<{
         console.error("[ConnectorPlatform] Failed to load connector data", err);
       } finally {
         setIsLoading(false);
+        setConnectorsLoaded(true);
       }
     };
 
@@ -596,12 +606,15 @@ export const ConnectorPlatformProvider: React.FC<{
     values: ConnectorSetupValues,
     projectId?: string,
   ) => {
+    // User-provided store name wins; falls back to the auto-derived label.
+    const storeName = values.storeName?.trim();
+
     if (platform === "shopify") {
       const normalizedShopDomain = normalizeShopDomain(values.shopDomain || "");
 
       return {
         type: "shopify",
-        label: normalizedShopDomain || "Shopify Store",
+        label: storeName || normalizedShopDomain || "Shopify Store",
         family: "commerce",
         config: {
           shopDomain: normalizedShopDomain,
@@ -615,7 +628,7 @@ export const ConnectorPlatformProvider: React.FC<{
     }
 
     if (platform === "bigcommerce") {
-      const label = (values.storeHash || "BigCommerce Store").toString();
+      const label = storeName || (values.storeHash || "BigCommerce Store").toString();
       return {
         type: "bigcommerce",
         label,
@@ -633,9 +646,11 @@ export const ConnectorPlatformProvider: React.FC<{
 
     return {
       type: "adobe_commerce",
-      label: values.storeCode?.trim()
-        ? `${values.storeCode.trim()} Store`
-        : "Adobe Commerce Store",
+      label: storeName
+        ? storeName
+        : values.storeCode?.trim()
+          ? `${values.storeCode.trim()} Store`
+          : "Adobe Commerce Store",
       family: "commerce",
       config: {
         storeUrl: values.storeUrl?.trim() || "",
@@ -771,9 +786,19 @@ export const ConnectorPlatformProvider: React.FC<{
       },
       ...current,
     ]);
-    setConnectorSetup({ platform: null, open: false });
+    // NOTE: We intentionally do NOT close the setup modal here. The modal keeps
+    // itself open to poll and display the real initial-sync progress + a
+    // completion acknowledgement (see ConnectorSetupModal).
 
     return hydratedStore;
+  };
+
+  const getInitialSyncStatus = async (connectorId: string): Promise<any> => {
+    const projectId = currentProject || "default-project";
+    const tenantId = user?.tenantId || "current";
+    return apiFetch(
+      `/api/v1/tenants/${tenantId}/projects/${projectId}/integrations/${connectorId}/initial-sync/status`,
+    );
   };
 
   const disconnectConnector = (connectorId: string) => {
@@ -1033,6 +1058,7 @@ export const ConnectorPlatformProvider: React.FC<{
     refreshConnectors,
     testConnectorConnection,
     saveConnectorConnection,
+    getInitialSyncStatus,
     disconnectConnector,
     reconnectConnector,
     openReauthSetup,
@@ -1046,6 +1072,7 @@ export const ConnectorPlatformProvider: React.FC<{
           ? "WARNING"
           : "CRITICAL",
     healthScore,
+    connectorsLoaded,
     storeOptions,
     selectedStoreLabel,
     connectorSelectionTick,

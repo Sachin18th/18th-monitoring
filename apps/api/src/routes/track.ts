@@ -111,19 +111,26 @@ async function detectPixelActivation(connectorInstanceId: string | null, body: a
 
 export const trackRoutes = async (fastify: FastifyInstance) => {
   // ── Storefront capture script (CDN-servable) ──────────────────────────────
+  // In-memory cache with a short TTL so a rebuilt tracker.js is picked up
+  // without an API restart. Browser cache is kept short too (the script is
+  // ~20kb) so tracker updates reach storefronts within minutes, not an hour.
   let cachedScript: string | null = null;
+  let cachedScriptAt = 0;
+  const SCRIPT_CACHE_MS = 60_000;
   fastify.get('/tracker.js', async (_req, reply) => {
-    if (cachedScript === null) {
+    const now = Date.now();
+    if (cachedScript === null || now - cachedScriptAt > SCRIPT_CACHE_MS) {
       try {
         cachedScript = readFileSync(join(__dirname, '../public/tracker.js'), 'utf8');
       } catch (err) {
         console.error('[TRACK] failed to read tracker.js', err);
-        cachedScript = '/* tracker.js unavailable */';
+        cachedScript = cachedScript ?? '/* tracker.js unavailable */';
       }
+      cachedScriptAt = now;
     }
     reply
       .header('Content-Type', 'application/javascript; charset=utf-8')
-      .header('Cache-Control', 'public, max-age=3600')
+      .header('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600')
       .send(cachedScript);
   });
 

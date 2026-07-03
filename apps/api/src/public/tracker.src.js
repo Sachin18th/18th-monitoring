@@ -21,7 +21,11 @@
  *                    log every anchor/button click — that would bloat the DB)
  *   + window.track(type, props) for any custom event you want.
  *
- * No cookies, no PII, no input values are ever read.
+ * No cookies and no input values are ever read. The only identity captured is
+ * what the platform itself exposes for an already-logged-in customer (Magento's
+ * customer-data cache, Shopify's analytics customer id, a theme-exposed
+ * BigCommerce customer object) — the email is encrypted server-side on ingest
+ * and never stored in plaintext.
  */
 (function () {
   'use strict';
@@ -313,8 +317,273 @@
       return 'other';
     }
 
+    // ── Logged-in customer identity (per platform, best-effort) ─────────────
+    // Reads ONLY what the platform itself exposes to every script on the page —
+    // never form inputs. The email is sent to the ingest where it is immediately
+    // AES-encrypted + hashed (normalizeEvent) and never persisted in plaintext;
+    // the name/id let the dashboard label sessions with the real customer.
+    //   • Adobe Commerce / Magento: the customer-data cache in localStorage
+    //     (mage-cache-storage → customer: { fullname, firstname, email? }) and,
+    //     on checkout pages, window.checkoutConfig.customerData (has email).
+    //   • Shopify: the numeric customer id from ShopifyAnalytics/__st (resolved
+    //     to a synced customer profile server-side) and the hosted-checkout
+    //     email (window.Shopify.checkout.email).
+    //   • BigCommerce: a theme-exposed window.customer / BCData.customer object,
+    //     when present (Stencil themes commonly inject it).
+    // Anonymous visitors yield nothing — no fingerprinting, no guessing.
+    var MAGE_ID_KEY = '__plat_mid'; // sessionStorage — cached Magento identity (JSON)
+    var BC_ID_KEY = '__plat_bid';   // sessionStorage — cached BigCommerce identity (JSON)
+    var IDS_KEY = '__plat_ids';     // sessionStorage — identity signal emitted this session
+    var ID_FETCH_TIMEOUT_MS = 3000; // abandon a probe fetch after 3s (next page retries)
+    var _identity = null;
+    var _identityAt = 0;
+    var _identitySent = false;      // an outgoing event on THIS page carried identity
+    var _mageFetchAt = 0;
+    var _bcFetchAt = 0;
+    // Probe outcome marker, stamped into event properties as `id_probe` so the
+    // backend can see WHY identity did or didn't resolve on a given storefront
+    // (invaluable when debugging a store we can't log into ourselves).
+    var _idProbe = '';
+
+    function cacheIdentity(key, out, probeTag) {
+      _identity = out;
+      _identityAt = nowMs();
+      _idProbe = probeTag;
+      try { store('s', key, JSON.stringify(out)); } catch (e) {}
+    }
+
+    // The async probes resolve AFTER the page's first (often only) event has
+    // been enveloped — on single-pageview visits the identity/diagnostic was
+    // computed but never transmitted. Fix: once per session, fire one small
+    // synthetic event (element_click / track:"identity_resolved" — an ingest-
+    // whitelisted, funnel-neutral type) the moment a probe completes, carrying
+    // the resolved identity and the id_probe outcome. Envelope() attaches the
+    // identity fields automatically.
+    function emitIdentitySignal() {
+      try {
+        if (store('s', IDS_KEY)) return;       // once per session
+        if (!_identity && !_idProbe) return;   // nothing resolved AND nothing to report
+        if (_identitySent && !_idProbe) return;
+        store('s', IDS_KEY, '1');
+        emitNow('element_click', {
+          track: 'identity_resolved',
+          // Explicit page_type keeps classifyEvent() on the 'visit' path, so
+          // this synthetic event can never bump the session's funnel stage.
+          page_type: pageType(),
+          id_probe: _idProbe || 'sync:ok'
+        });
+      } catch (e) {}
+    }
+
+    // fetch with a hard timeout: a hanging probe must never outlive the page's
+    // usefulness. On timeout the next page load retries fresh.
+    function fetchWithTimeout(url, opts, onTimeout) {
+      var ctrl = null;
+      try {
+        if (window.AbortController) {
+          ctrl = new AbortController();
+          opts.signal = ctrl.signal;
+          setTimeout(function () {
+            try { if (onTimeout) onTimeout(); ctrl.abort(); } catch (e) {}
+          }, ID_FETCH_TIMEOUT_MS);
+        }
+      } catch (e) {}
+      return window.fetch(url, opts);
+    }
+
+    // Async fallback for Magento themes that don't populate mage-cache-storage:
+    // ask Magento itself via its section-load endpoint (the same call the theme
+    // uses to render "Hi, <name>" in the header; authenticated by the session
+    // cookie, same-origin). Result is cached in sessionStorage; identity flows
+    // into events emitted after it resolves. Logged-out shoppers get {} → no-op.
+    function fetchMagentoIdentity() {
+      try {
+        if (_identity || !window.fetch) return;
+        var t = nowMs();
+        if (t - _mageFetchAt < 60000) return; // at most one probe per minute
+        _mageFetchAt = t;
+        var timedOut = false;
+        fetchWithTimeout(location.origin + '/customer/section/load/?sections=customer', {
+          credentials: 'same-origin',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        }, function () { timedOut = true; }).then(function (r) {
+          if (!r || !r.ok) { _idProbe = 'mage_section:http_' + (r ? r.status : 0); return null; }
+          return r.json();
+        }).then(function (j) {
+          try {
+            if (j) {
+              var cust = j.customer;
+              if (cust && (cust.fullname || cust.firstname)) {
+                var out = { customer_name: String(cust.fullname || cust.firstname).slice(0, 200) };
+                if (cust.email) out.email = String(cust.email).slice(0, 320);
+                cacheIdentity(MAGE_ID_KEY, out, 'mage_section:ok');
+              } else {
+                // 200 with no name → shopper is not logged in (guest section data).
+                _idProbe = 'mage_section:guest';
+              }
+            }
+          } catch (e) { _idProbe = 'mage_section:parse_error'; }
+          emitIdentitySignal();
+        }, function () {
+          _idProbe = timedOut ? 'mage_section:timeout' : 'mage_section:fetch_error';
+          emitIdentitySignal();
+        });
+      } catch (e) {}
+    }
+
+    // Async BigCommerce identity: Stencil themes rarely expose window.customer,
+    // but the Storefront Cart API is cookie-authenticated and same-origin — a
+    // logged-in shopper's cart carries their customerId + email. Guests (or no
+    // cart yet) yield nothing; once they add to cart, identity resolves.
+    function fetchBigcommerceIdentity() {
+      try {
+        if (_identity || !window.fetch) return;
+        var t = nowMs();
+        if (t - _bcFetchAt < 60000) return; // at most one probe per minute
+        _bcFetchAt = t;
+        var timedOut = false;
+        fetchWithTimeout('/api/storefront/carts', {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' }
+        }, function () { timedOut = true; }).then(function (r) {
+          if (!r || !r.ok) { _idProbe = 'bc_cart:http_' + (r ? r.status : 0); return null; }
+          return r.json();
+        }).then(function (j) {
+          try {
+            if (j) {
+              var cart = (j && j.length) ? j[0] : null;
+              if (!cart) { _idProbe = 'bc_cart:no_cart'; }
+              else {
+                var out = {};
+                if (cart.email) out.email = String(cart.email).slice(0, 320);
+                if (cart.customerId) out.customer_id = String(cart.customerId).slice(0, 100);
+                if (out.email || out.customer_id) cacheIdentity(BC_ID_KEY, out, 'bc_cart:ok');
+                else _idProbe = 'bc_cart:guest';
+              }
+            }
+          } catch (e) { _idProbe = 'bc_cart:parse_error'; }
+          emitIdentitySignal();
+        }, function () {
+          _idProbe = timedOut ? 'bc_cart:timeout' : 'bc_cart:fetch_error';
+          emitIdentitySignal();
+        });
+      } catch (e) {}
+    }
+
+    function identityInfo() {
+      var t = nowMs();
+      if (_identityAt && t - _identityAt < 15000) return _identity; // probe at most every 15s
+      var out = {};
+      try {
+        var p = platform();
+        if (p === 'adobe_commerce') {
+          // Identity already resolved this session (by any Magento probe)?
+          try {
+            var sc = store('s', MAGE_ID_KEY);
+            if (sc) {
+              var pj = JSON.parse(sc);
+              if (pj && (pj.customer_name || pj.email)) {
+                if (pj.customer_name) out.customer_name = pj.customer_name;
+                if (pj.email) out.email = pj.email;
+              }
+            }
+          } catch (e) {}
+          try {
+            var mc = JSON.parse(window.localStorage.getItem('mage-cache-storage') || 'null');
+            var cust = mc && mc.customer;
+            if (cust && (cust.fullname || cust.firstname)) {
+              out.customer_name = String(cust.fullname || cust.firstname).slice(0, 200);
+              if (cust.email) out.email = String(cust.email).slice(0, 320);
+            }
+          } catch (e) {}
+          // RequireJS customer-data service (same cache, but authoritative —
+          // covers themes that rename/relocate the localStorage key).
+          try {
+            if (!out.customer_name && window.require && window.require.defined &&
+                window.require.defined('Magento_Customer/js/customer-data')) {
+              var cds = window.require('Magento_Customer/js/customer-data');
+              var cobs = cds && cds.get && cds.get('customer');
+              var cval = typeof cobs === 'function' ? cobs() : null;
+              if (cval && (cval.fullname || cval.firstname)) {
+                out.customer_name = String(cval.fullname || cval.firstname).slice(0, 200);
+                if (cval.email) out.email = String(cval.email).slice(0, 320);
+              }
+            }
+          } catch (e) {}
+          try {
+            var cc = window.checkoutConfig && window.checkoutConfig.customerData;
+            if (cc && cc.email) {
+              out.email = String(cc.email).slice(0, 320);
+              var mn = [cc.firstname, cc.lastname].filter(Boolean).join(' ');
+              if (mn) out.customer_name = mn.slice(0, 200);
+            }
+          } catch (e) {}
+        } else if (p === 'shopify') {
+          try {
+            var a = window.ShopifyAnalytics;
+            var cid = (a && a.meta && a.meta.page && a.meta.page.customerId) ||
+              (window.__st && window.__st.cid);
+            if (cid) { out.customer_id = String(cid).slice(0, 100); _idProbe = 'shopify_cid:ok'; }
+            else if (!_idProbe) _idProbe = 'shopify_cid:none';
+          } catch (e) {}
+          try {
+            var sco = window.Shopify && window.Shopify.checkout;
+            if (sco && sco.email) out.email = String(sco.email).slice(0, 320);
+          } catch (e) {}
+        } else if (p === 'bigcommerce') {
+          // Cached from an earlier cart-API probe this session?
+          try {
+            var bsc = store('s', BC_ID_KEY);
+            if (bsc) {
+              var bpj = JSON.parse(bsc);
+              if (bpj && (bpj.email || bpj.customer_id)) {
+                if (bpj.email) out.email = bpj.email;
+                if (bpj.customer_id) out.customer_id = bpj.customer_id;
+              }
+            }
+          } catch (e) {}
+          try {
+            var bc = window.customer || (window.BCData && window.BCData.customer);
+            if (bc && typeof bc === 'object') {
+              if (bc.email) out.email = String(bc.email).slice(0, 320);
+              var bn = bc.name || [bc.first_name, bc.last_name].filter(Boolean).join(' ');
+              if (bn) out.customer_name = String(bn).slice(0, 200);
+              if (bc.id != null && bc.id !== 0) out.customer_id = String(bc.id).slice(0, 100);
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+      _identity = (out.email || out.customer_name || out.customer_id) ? out : null;
+      _identityAt = t;
+      // Nothing found synchronously → ask the platform directly (async; the
+      // result attaches to the events that follow and is cached per session).
+      try {
+        if (!_identity) {
+          var pf = platform();
+          if (pf === 'adobe_commerce') fetchMagentoIdentity();
+          else if (pf === 'bigcommerce') fetchBigcommerceIdentity();
+        }
+      } catch (e) {}
+      return _identity;
+    }
+
     // ── Event envelope + queue ─────────────────────────────────────────────
     function envelope(type, props) {
+      var p = props || {};
+      // Stamp the logged-in identity (when known) on every event so at least
+      // one persisted row per session carries it — the dashboard resolves the
+      // visitor's name/email from these server-side.
+      try {
+        var idn = identityInfo();
+        if (idn) {
+          if (idn.email && p.email == null) p.email = idn.email;
+          if (idn.customer_name && p.customer_name == null) p.customer_name = idn.customer_name;
+          if (idn.customer_id && p.customer_id == null) p.customer_id = idn.customer_id;
+          _identitySent = true;
+        }
+        // Diagnostic breadcrumb: which identity probe ran and how it ended.
+        if (_idProbe && p.id_probe == null) p.id_probe = _idProbe;
+      } catch (e) {}
       return {
         event_type: type,
         session_id: sessionId(),
@@ -322,7 +591,7 @@
         page_url: scrubUrl(location.href),
         page_title: (document.title || '').slice(0, 300) || null,
         occurred_at: new Date().toISOString(),
-        properties: props || {}
+        properties: p
       };
     }
 
@@ -418,7 +687,10 @@
         page_type: pageType(),
         referrer: document.referrer ? scrubUrl(document.referrer) : null,
         platform: platform(),
-        path: location.pathname
+        path: location.pathname,
+        // Tracker build marker — lets the backend tell which script version a
+        // storefront is actually running (stale CDN/browser caches).
+        tracker_v: 4
       });
     }
 
@@ -1076,6 +1348,23 @@
       document.addEventListener('visibilitychange', function () {
         try { if (document.visibilityState === 'hidden') { flush(true); rumFlush(true); } } catch (e) {}
       });
+    } catch (e) {}
+
+    // Identity probes start immediately, in parallel with normal tracking —
+    // page_view is never delayed. The async probes emit the once-per-session
+    // identity signal themselves when they complete; this 3s late check covers
+    // the sync-only probes (Shopify's analytics globals often load AFTER our
+    // first events) and any timed-out fetch, forcing one re-probe then
+    // delivering whatever was found.
+    try { identityInfo(); } catch (e) {}
+    try {
+      setTimeout(function () {
+        try {
+          if (!_identity) _identityAt = 0; // bypass the 15s TTL — force a re-probe
+          identityInfo();
+          emitIdentitySignal();
+        } catch (e) {}
+      }, 3000);
     } catch (e) {}
 
     // 500ms poll backstop for SPA frameworks that bypass history hooks.

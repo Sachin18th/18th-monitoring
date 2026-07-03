@@ -98,6 +98,46 @@ try {
   await p.evaluate(() => { window.dispatchEvent(new Event('pagehide')); });
   await sleep(400);
 
+  // ── Scenario 2: Magento single-pageview visit — identity must still arrive ──
+  // A fresh tab loads ONE page (no clicks, no navigation). The tracker's async
+  // section-load probe resolves AFTER the page_view is enveloped; the fix emits
+  // a synthetic identity event (element_click / track:"identity_resolved") the
+  // moment the probe completes, so even a bounce session carries identity.
+  const captured2 = [];
+  const p2 = await browser.newPage();
+  p2.on('pageerror', (e) => console.log('  [p2 pageerror]', e.message));
+  await p2.setRequestInterception(true);
+  p2.on('request', (req) => {
+    const url = req.url();
+    if (url === INGEST && req.method() === 'OPTIONS') {
+      return req.respond({ status: 204, headers: cors, body: '' });
+    }
+    if (url === INGEST && req.method() === 'POST') {
+      try { captured2.push(JSON.parse(req.postData() || '{}')); } catch { captured2.push({ parseError: true }); }
+      return req.respond({ status: 200, headers: cors, contentType: 'application/json', body: '{"accepted":1,"rejected":0}' });
+    }
+    if (url.startsWith('http://localhost.test/customer/section/load/')) {
+      return req.respond({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ customer: { fullname: 'Jane Smith', firstname: 'Jane', websiteId: '1' } }),
+      });
+    }
+    if (url.startsWith('http://localhost.test/')) {
+      const html = `<!doctype html><html><head><title>Home</title></head>
+        <body class="cms-index-index">
+        <script data-connector-id="conn_smoke_123" data-ingest-url="${INGEST}">${trackerJs}</script></body></html>`;
+      return req.respond({ status: 200, contentType: 'text/html', body: html });
+    }
+    return req.continue();
+  });
+  await p2.goto('http://localhost.test/', { waitUntil: 'domcontentloaded' });
+  await sleep(900); // probe fetch + emitNow flush — no user interaction at all
+  const events2 = captured2.flatMap((b) => b.events || []);
+  const idSignal = events2.find(
+    (e) => e.event_type === 'element_click' && e.properties && e.properties.track === 'identity_resolved'
+  );
+
   const events = captured.flatMap((b) => b.events || []);
   const types = events.map((e) => e.event_type);
   const connectorOk = captured.every((b) => b.connector_instance_id === 'conn_smoke_123');
@@ -118,6 +158,11 @@ try {
     'custom window.track event emitted': types.includes('custom_demo'),
     'page_view carries page_type property': !!(pv && pv.properties && pv.properties.page_type),
     'visitor_id stable across events': visitorStable,
+    'identity signal emitted on single-pageview visit (name + id_probe)': !!(
+      idSignal &&
+      idSignal.properties.customer_name === 'Jane Smith' &&
+      idSignal.properties.id_probe === 'mage_section:ok'
+    ),
   };
 
   let ok = true;

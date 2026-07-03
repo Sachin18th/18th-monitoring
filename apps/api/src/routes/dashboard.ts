@@ -75,9 +75,9 @@ export const dashboardRoutes = async (fastify: any) => {
     fastify.get('/customers/trends', { preHandler: [requirePageAccess(['customers', 'rum', 'observability/journeys'])] }, getUserTrends);
     fastify.get('/customers/analytics', { preHandler: [requirePageAccess(['customers', 'rum', 'observability/journeys'])] }, getUserAnalytics);
     fastify.get('/customers/intelligence', { preHandler: [requirePageAccess(['customers', 'observability/journeys'])] }, getCustomerIntelligence);
-    fastify.get('/customers/payment-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend'])] }, getPaymentGatewayStatuses);
-    fastify.post('/customers/payment-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend'])] }, savePaymentGatewayConfig);
-    fastify.get('/customers/sms-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend'])] }, getSmsGatewayStatuses);
+    fastify.get('/customers/payment-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend', 'management/kpi'])] }, getPaymentGatewayStatuses);
+    fastify.post('/customers/payment-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend', 'management/kpi'])] }, savePaymentGatewayConfig);
+    fastify.get('/customers/sms-gateways', { preHandler: [requirePageAccess(['customers', 'observability/journeys', 'observability/backend', 'management/kpi'])] }, getSmsGatewayStatuses);
     fastify.get('/customers/list', getCustomerList);
     fastify.get('/customers/top-pages', { preHandler: [requirePageAccess(['customers', 'rum', 'observability/journeys'])] }, getTopPages);
     fastify.get('/customers/funnel', { preHandler: [requirePageAccess(['customers', 'rum', 'observability/journeys'])] }, getFunnelData);

@@ -148,10 +148,8 @@ export const pipelineRoutes = async (fastify: FastifyInstance) => {
     fastify.get('/tenants/:tenantId/projects/:siteId/pipeline/checkpoints', async (req, reply) => {
         const { siteId } = req.params as any;
 
-        const checkpoints = await prisma.pipelineCheckpoint.findMany({
-            where: { siteId },
-            orderBy: { updatedAt: 'desc' }
-        });
+        // pipelineCheckpoint table removed — query neutralized
+        const checkpoints: any[] = [];
 
         return reply.send(ResponseUtil.success({ checkpoints }, {}, req.id as string));
     });
@@ -164,10 +162,8 @@ export const pipelineRoutes = async (fastify: FastifyInstance) => {
     fastify.get('/tenants/:tenantId/projects/:siteId/pipeline/dlq', async (req, reply) => {
         const { siteId } = req.params as any;
 
-        const deadLetters = await prisma.deadLetterQueue.findMany({
-            where: { siteId, actionTaken: null },
-            orderBy: { createdAt: 'desc' }
-        });
+        // deadLetterQueue table removed — query neutralized
+        const deadLetters: any[] = [];
 
         return reply.send(ResponseUtil.success({ DLQ: deadLetters }, {}, req.id as string));
     });

@@ -85,23 +85,7 @@ export class PerformanceIntelligenceService {
         };
 
         // 3. STORE ROLLUP (Requirement 4)
-        await prisma.performanceRollup.create({
-            data: {
-                siteId: rollup.siteId,
-                metricName: rollup.metricName,
-                bucketSize: rollup.bucketSize,
-                timestamp: new Date(rollup.timestamp),
-                count: rollup.count,
-                min: rollup.min.toString(),
-                max: rollup.max.toString(),
-                avg: rollup.avg.toString(),
-                sum: sum.toString(),
-                p50: rollup.p50.toString(),
-                p90: rollup.p90.toString(),
-                p99: rollup.p99.toString(),
-                dimensions: rollup.dimensions
-            }
-        });
+        // performanceRollup table removed — query neutralized
 
         return rollup;
     }

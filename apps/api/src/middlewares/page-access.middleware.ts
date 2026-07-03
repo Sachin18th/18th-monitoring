@@ -5,7 +5,9 @@ export const requirePageAccess = (required: ProjectPageKey | ProjectPageKey[]) =
   const requiredKeys = Array.isArray(required) ? required : [required];
 
   return async (req: any, reply: any) => {
-    const projectId = String(req.params?.siteId || req.query?.projectId || req.body?.projectId || '').trim();
+    const projectId = String(
+      req.params?.siteId || req.query?.siteId || req.query?.projectId || req.siteId || req.body?.projectId || ''
+    ).trim();
 
     if (!projectId) {
       return reply.code(400).send({ error: 'Missing projectId' });

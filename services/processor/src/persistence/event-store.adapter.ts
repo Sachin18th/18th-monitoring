@@ -3,9 +3,8 @@
 export class EventStoreAdapter {
     // Migrated from Drizzle ORM to Prisma
     static async getEventById(eventId: string): Promise<any | null> {
-        const event = await prisma.ingestionEvent.findUnique({
-            where: { id: eventId },
-        });
+        // ingestion_event table removed — query neutralized
+        const event: any | null = null;
 
         if (!event) {
             return null;

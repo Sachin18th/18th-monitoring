@@ -22,6 +22,22 @@ const C = {
 const sectionTitleStyle: React.CSSProperties = { fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', margin: 0 };
 const sectionSubStyle: React.CSSProperties = { fontSize: '12px', color: 'var(--text-muted)', margin: '2px 0 0' };
 
+// Payment gateway status is a live, on-demand probe (synced on refresh / by the
+// scheduled monitor) — it is NOT a time-period aggregate. So instead of a date
+// filter we surface WHEN it was last checked.
+const relativeTime = (iso: string | null): string => {
+  if (!iso) return 'never';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 'never';
+  const diff = Math.max(0, Date.now() - then);
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+};
+
 type GatewayType = 'razorpay' | 'stripe' | 'payu';
 
 type GatewayFieldDefinition = {
@@ -101,9 +117,12 @@ const normalizeGatewayDraft = (draft: any): GatewayDraft => {
 
 interface PaymentGatewayPanelProps {
   projectId: string;
+  /** Read-only mode (e.g. KPI Engine): hides the "Configure/Manage Gateway" actions
+   *  and the "Payment Gateway Missing" prompt — only already-configured gateways render. */
+  readOnly?: boolean;
 }
 
-export function PaymentGatewayPanel({ projectId }: PaymentGatewayPanelProps) {
+export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGatewayPanelProps) {
   const { apiFetch, token } = useAuth();
   const gatewayStorageKey = useMemo(() => (projectId ? `journeys-payment-gateways:${projectId}` : null), [projectId]);
 
@@ -318,6 +337,17 @@ export function PaymentGatewayPanel({ projectId }: PaymentGatewayPanelProps) {
     };
   }, [paymentGateways]);
 
+  // Most recent probe timestamp across all configured gateways — this is the
+  // "last fetch" surfaced in the header (live check, not a period aggregate).
+  const lastChecked = useMemo(() => {
+    const times = paymentGateways
+      .map((g) => g.checkedAt)
+      .filter(Boolean)
+      .map((t: string) => new Date(t).getTime())
+      .filter((n: number) => !Number.isNaN(n));
+    return times.length ? new Date(Math.max(...times)).toISOString() : null;
+  }, [paymentGateways]);
+
   return (
     <>
       {loading && paymentGateways.length === 0 ? (
@@ -347,6 +377,7 @@ export function PaymentGatewayPanel({ projectId }: PaymentGatewayPanelProps) {
           Checking payment gateways…
         </div>
       ) : paymentGateways.length === 0 ? (
+        readOnly ? null : (
         <div
           style={{
             display: 'flex',
@@ -407,14 +438,20 @@ export function PaymentGatewayPanel({ projectId }: PaymentGatewayPanelProps) {
             <ArrowRight style={{ width: '15px', height: '15px' }} />
           </button>
         </div>
+        )
       ) : (
       <div style={cardStyle}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '16px', flexWrap: 'wrap' }}>
           <div>
             <h3 style={sectionTitleStyle}>Payment Gateway Status</h3>
             <p style={{ ...sectionSubStyle, lineHeight: 1.6, maxWidth: '640px' }}>
-              Gateway checks are synced on refresh. Right now the status is stored at project scope, so there is no user-level attribution for who configured the gateway yet.
+              Live, on-demand health check — synced on refresh (not filtered by the dashboard time period).
             </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--success-text, #15803d)', flexShrink: 0 }} />
+              <span style={{ fontWeight: 600, color: 'var(--success-text, #15803d)' }}>Live</span>
+              <span>· Last checked {lastChecked ? relativeTime(lastChecked) : 'never'}</span>
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
             <button
@@ -440,6 +477,7 @@ export function PaymentGatewayPanel({ projectId }: PaymentGatewayPanelProps) {
               <RefreshCw style={{ width: '13px', height: '13px', flexShrink: 0, animation: loading ? 'spin 1s linear infinite' : undefined }} />
               {loading ? 'Refreshing…' : 'Refresh'}
             </button>
+            {!readOnly && (
             <button
               type="button"
               onClick={openGatewayConfig}
@@ -457,6 +495,7 @@ export function PaymentGatewayPanel({ projectId }: PaymentGatewayPanelProps) {
             >
               Manage Gateways
             </button>
+            )}
             <span
               style={{
                 padding: '4px 10px',
