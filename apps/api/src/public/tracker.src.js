@@ -333,6 +333,7 @@
     // Anonymous visitors yield nothing — no fingerprinting, no guessing.
     var MAGE_ID_KEY = '__plat_mid'; // sessionStorage — cached Magento identity (JSON)
     var BC_ID_KEY = '__plat_bid';   // sessionStorage — cached BigCommerce identity (JSON)
+    var SHOP_ID_KEY = '__plat_shid';// sessionStorage — cached Shopify identity (JSON)
     var IDS_KEY = '__plat_ids';     // sessionStorage — identity signal emitted this session
     var ID_FETCH_TIMEOUT_MS = 3000; // abandon a probe fetch after 3s (next page retries)
     var _identity = null;
@@ -340,6 +341,7 @@
     var _identitySent = false;      // an outgoing event on THIS page carried identity
     var _mageFetchAt = 0;
     var _bcFetchAt = 0;
+    var _shopFetchAt = 0;
     // Probe outcome marker, stamped into event properties as `id_probe` so the
     // backend can see WHY identity did or didn't resolve on a given storefront
     // (invaluable when debugging a store we can't log into ourselves).
@@ -470,10 +472,122 @@
       } catch (e) {}
     }
 
+    // Read the logged-in Shopify shopper's signals from the storefront globals
+    // into `out`. Shopify exposes only the numeric customer id on normal pages
+    // (ShopifyAnalytics.meta.page.customerId / __st.cid) — the id is resolved to
+    // the synced customer profile (name/email) server-side. The hosted checkout
+    // additionally exposes the email directly. Mutates + returns `out`.
+    function readShopifyIdentity(out) {
+      // Preferred: a theme-injected identity global. Shopify does NOT expose a
+      // logged-in shopper's name/email to storefront JS, so the only way to get
+      // them client-side is a Liquid snippet the merchant adds to theme.liquid:
+      //   {% if customer %}<script>window.__PLAT_CUSTOMER__={
+      //     name:{{ customer.name | json }}, email:{{ customer.email | json }},
+      //     id:{{ customer.id | json }}};</script>{% endif %}
+      // When present it yields full name+email; otherwise we fall back to the
+      // numeric id below (resolved to a synced profile server-side).
+      try {
+        var pc = window.__PLAT_CUSTOMER__;
+        if (pc && typeof pc === 'object') {
+          if (pc.email) out.email = String(pc.email).slice(0, 320);
+          if (pc.name) out.customer_name = String(pc.name).slice(0, 200);
+          else {
+            var nm = [pc.first_name || pc.firstName, pc.last_name || pc.lastName].filter(Boolean).join(' ');
+            if (nm) out.customer_name = nm.slice(0, 200);
+          }
+          if (pc.id != null && pc.id !== 0 && pc.id !== '') out.customer_id = String(pc.id).slice(0, 100);
+          if (out.email || out.customer_name || out.customer_id) _idProbe = 'shopify_liquid:ok';
+        }
+      } catch (e) {}
+      try {
+        if (!out.customer_id) {
+          var a = window.ShopifyAnalytics;
+          var cid = (a && a.meta && a.meta.page && a.meta.page.customerId) ||
+            (window.__st && window.__st.cid);
+          if (cid) { out.customer_id = String(cid).slice(0, 100); if (!_idProbe) _idProbe = 'shopify_cid:ok'; }
+          else if (!_idProbe) _idProbe = 'shopify_cid:none';
+        }
+      } catch (e) {}
+      try {
+        var sco = window.Shopify && window.Shopify.checkout;
+        if (sco && sco.email && !out.email) out.email = String(sco.email).slice(0, 320);
+      } catch (e) {}
+      return out;
+    }
+
+    // Async fallback for Shopify: ShopifyAnalytics / window.__st often populate
+    // AFTER our first (frequently only) event has been enveloped, so a logged-in
+    // shopper's id would be missed on single-pageview visits. Re-read the globals
+    // on a short delay; the moment the id appears, cache it and fire the identity
+    // signal so the id reaches the ingest even without a second pageview. There is
+    // no same-origin Shopify JSON endpoint for a shopper's email/name, so this is
+    // a global re-read on a timer rather than a network probe.
+    function fetchShopifyIdentity() {
+      try {
+        if (_identity) return;
+        var t = nowMs();
+        if (t - _shopFetchAt < 60000) return; // at most one retry cycle per minute
+        _shopFetchAt = t;
+        var tries = 0;
+        var poll = function () {
+          try {
+            tries += 1;
+            var out = readShopifyIdentity({});
+            if (out.customer_id || out.email) {
+              cacheIdentity(SHOP_ID_KEY, out, 'shopify_cid:ok');
+              emitIdentitySignal();
+              return;
+            }
+            if (tries < 4) { setTimeout(poll, 800); return; }
+            _idProbe = 'shopify_cid:none';
+            emitIdentitySignal();
+          } catch (e) {}
+        };
+        setTimeout(poll, 800);
+      } catch (e) {}
+    }
+
+    // Identity rendered by the store's server directly onto our own <script> tag,
+    // e.g. (Shopify Liquid, but works on any platform that can template the tag):
+    //   <script src=".../tracker.js" data-connector-id="..." data-ingest-url="..."
+    //     {% if customer %}
+    //     data-customer-id="{{ customer.id }}"
+    //     data-customer-name="{{ customer.name | escape }}"
+    //     data-customer-email="{{ customer.email }}"
+    //     {% endif %} async></script>
+    // This is the most authoritative source (the platform's own server knows who
+    // is logged in) and needs no platform-specific probe — so it wins outright.
+    function readTagIdentity(out) {
+      try {
+        if (ds.customerEmail) out.email = String(ds.customerEmail).slice(0, 320);
+        if (ds.customerName) out.customer_name = String(ds.customerName).slice(0, 200);
+        if (ds.customerId != null && ds.customerId !== '' && ds.customerId !== '0') {
+          out.customer_id = String(ds.customerId).slice(0, 100);
+        }
+        if (out.email || out.customer_name || out.customer_id) _idProbe = 'tag_attr:ok';
+      } catch (e) {}
+      return out;
+    }
+
     function identityInfo() {
       var t = nowMs();
       if (_identityAt && t - _identityAt < 15000) return _identity; // probe at most every 15s
       var out = {};
+      // Prefer server-templated identity on our own tag (all platforms) before
+      // falling back to per-platform DOM/global/endpoint probes.
+      readTagIdentity(out);
+      if (out.email || out.customer_name || out.customer_id) {
+        _identity = out;
+        _identityAt = t;
+        // Mirror into the Shopify identity cache so it's visible in session
+        // storage (__plat_shid) just like the platform-probe path.
+        try {
+          if (platform() === 'shopify' && !store('s', SHOP_ID_KEY)) {
+            store('s', SHOP_ID_KEY, JSON.stringify(out));
+          }
+        } catch (e) {}
+        return _identity;
+      }
       try {
         var p = platform();
         if (p === 'adobe_commerce') {
@@ -519,17 +633,19 @@
             }
           } catch (e) {}
         } else if (p === 'shopify') {
+          // Identity already resolved this session (cached by an earlier read)?
           try {
-            var a = window.ShopifyAnalytics;
-            var cid = (a && a.meta && a.meta.page && a.meta.page.customerId) ||
-              (window.__st && window.__st.cid);
-            if (cid) { out.customer_id = String(cid).slice(0, 100); _idProbe = 'shopify_cid:ok'; }
-            else if (!_idProbe) _idProbe = 'shopify_cid:none';
+            var ssc = store('s', SHOP_ID_KEY);
+            if (ssc) {
+              var spj = JSON.parse(ssc);
+              if (spj && (spj.email || spj.customer_id || spj.customer_name)) {
+                if (spj.customer_name) out.customer_name = spj.customer_name;
+                if (spj.email) out.email = spj.email;
+                if (spj.customer_id) out.customer_id = spj.customer_id;
+              }
+            }
           } catch (e) {}
-          try {
-            var sco = window.Shopify && window.Shopify.checkout;
-            if (sco && sco.email) out.email = String(sco.email).slice(0, 320);
-          } catch (e) {}
+          readShopifyIdentity(out);
         } else if (p === 'bigcommerce') {
           // Cached from an earlier cart-API probe this session?
           try {
@@ -555,6 +671,14 @@
       } catch (e) {}
       _identity = (out.email || out.customer_name || out.customer_id) ? out : null;
       _identityAt = t;
+      // Persist a resolved Shopify identity to sessionStorage (mirroring the
+      // Magento/BigCommerce caches) so it survives across this session's page
+      // loads and is inspectable in devtools just like __plat_mid.
+      try {
+        if (_identity && platform() === 'shopify' && !store('s', SHOP_ID_KEY)) {
+          store('s', SHOP_ID_KEY, JSON.stringify(_identity));
+        }
+      } catch (e) {}
       // Nothing found synchronously → ask the platform directly (async; the
       // result attaches to the events that follow and is cached per session).
       try {
@@ -562,6 +686,7 @@
           var pf = platform();
           if (pf === 'adobe_commerce') fetchMagentoIdentity();
           else if (pf === 'bigcommerce') fetchBigcommerceIdentity();
+          else if (pf === 'shopify') fetchShopifyIdentity();
         }
       } catch (e) {}
       return _identity;

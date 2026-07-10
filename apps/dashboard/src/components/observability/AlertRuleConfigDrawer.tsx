@@ -304,7 +304,31 @@ export function AlertRuleConfigDrawer({
   // Step 1 → pick a template gallery item.
   const startCreate = () => setView('pick');
 
+  // Is this template already configured for the current store scope? A rule is
+  // uniquely identified by metricFamily + metric within a connector scope, so
+  // the same template can't be added twice — return the existing rule if so.
+  const configuredRuleFor = useCallback(
+    (t: Template) => {
+      const scope = connectorInstanceId ?? null;
+      return rules.find(
+        (r) =>
+          (r.connectorInstanceId ?? null) === scope &&
+          r.criteria?.metricFamily === t.family &&
+          r.criteria?.metric === t.metric,
+      );
+    },
+    [rules, connectorInstanceId],
+  );
+
   const chooseTemplate = (t: Template) => {
+    // Already configured → open the existing rule for editing rather than
+    // silently creating a duplicate (the backend rejects duplicates anyway).
+    const existing = configuredRuleFor(t);
+    if (existing) {
+      success('This alert is already configured — opening it to edit.');
+      startEdit(existing);
+      return;
+    }
     setForm({
       ...emptyForm,
       templateId: t.id,
@@ -512,15 +536,26 @@ export function AlertRuleConfigDrawer({
                   <span style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{cat.label}</span>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                  {items.map((t) => (
-                    <button key={t.id} onClick={() => chooseTemplate(t)} style={{
-                      textAlign: 'left', border: '1px solid var(--border-card)', borderRadius: '10px',
-                      background: 'var(--bg-input)', padding: '12px 14px', cursor: 'pointer',
+                  {items.map((t) => {
+                    const configured = configuredRuleFor(t);
+                    return (
+                    <button key={t.id} onClick={() => chooseTemplate(t)} title={configured ? 'Already configured — click to edit' : undefined} style={{
+                      textAlign: 'left', borderRadius: '10px',
+                      border: `1px solid ${configured ? 'rgba(16,185,129,0.5)' : 'var(--border-card)'}`,
+                      background: configured ? 'rgba(16,185,129,0.08)' : 'var(--bg-input)', padding: '12px 14px', cursor: 'pointer',
                     }}>
-                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '3px' }}>{t.title}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{t.title}</span>
+                        {configured && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '1px 7px', borderRadius: '999px', fontSize: '10px', fontWeight: 700, background: 'rgba(16,185,129,0.15)', color: '#10b981', flexShrink: 0 }}>
+                            <Check size={10} /> Configured
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.4 }}>{t.desc}</div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );

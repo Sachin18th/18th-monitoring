@@ -394,6 +394,14 @@ const isLongRunningMutationRequest = (url: string, method?: string) => {
     return /\/(?:re)?sync(?:\/|\?|$)/.test(url) || /\/integrations(?:\/|$)/.test(url);
 };
 
+// Large dashboard list fetches (orders/customers with big `limit`s) can take
+// well over the default 10s on stores with thousands of records — the backend
+// loads every row plus its metadata blob. Give these the long-running budget so
+// they actually complete instead of aborting with "Request timed out…" (which
+// also left LTV / repeat-buyer headline stats showing 0).
+const isLargeDashboardListRequest = (url: string) =>
+    /\/dashboard\/(?:orders|customers)\/list(?:\?|$)/.test(url);
+
 // Endpoints whose failures are feature-specific and must NOT flip the whole app into
 // the global "Real-time Feed Interrupted" outage banner. PageSpeed in particular is
 // slow and frequently 502s / times out when Google's API is rate-limited — that is a
@@ -714,7 +722,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const requestTimeout =
                 typeof options.timeout === 'number' && Number.isFinite(options.timeout)
                     ? options.timeout
-                    : isLongRunningMutationRequest(url, options.method)
+                    : isLongRunningMutationRequest(url, options.method) || isLargeDashboardListRequest(url)
                         ? LONG_RUNNING_REQUEST_TIMEOUT_MS
                         : DEFAULT_REQUEST_TIMEOUT_MS;
 
@@ -770,7 +778,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const isLongRunningMutation = isLongRunningMutationRequest(url, options.method);
             const isExpectedSyncDelay = isLongRunningMutation && (requestTimedOut || isRateLimited || !status);
             const suppressUnauthorizedRedirect = options?.suppressUnauthorizedRedirect === true;
-            const shouldWarnInsteadOfError = requestTimedOut || isRateLimited || !status || isConflict || (status === 403 && suppressUnauthorizedRedirect);
+            // PageSpeed and other outage-exempt endpoints are slow and routinely return
+            // 502/504 (gateway timeout) when the upstream / Google's API is busy. A 504
+            // has a real HTTP status (so it isn't ECONNABORTED), which would otherwise fall
+            // into the red [API ERROR] branch below. Treat 5xx on these endpoints as an
+            // expected, quiet warning — not a frontend error.
+            const isSlowFeatureUpstreamTimeout = isOutageExemptRequest(url) && (!status || status >= 500 || requestTimedOut);
+            const shouldWarnInsteadOfError = requestTimedOut || isRateLimited || !status || isConflict || isSlowFeatureUpstreamTimeout || (status === 403 && suppressUnauthorizedRedirect);
 
             // Once a redirect is underway, every other failing request (including ones
             // aborted by the navigation itself) should hang silently rather than throw.
@@ -830,7 +844,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                             ? backendMessage || 'Duplicate resource already exists.'
                             : isExpectedSyncDelay
                                 ? `[API WARN] ${options.method || 'GET'} ${url} is still syncing; ${requestTimedOut ? 'timeout' : isRateLimited ? 'rate limited' : 'no response'} received.`
-                                : `[API WARN] ${options.method || 'GET'} ${url} failed with ${requestTimedOut ? 'timeout' : isRateLimited ? 'rate limit' : 'no response'}.`;
+                                : isSlowFeatureUpstreamTimeout
+                                    ? `[API WARN] ${options.method || 'GET'} ${url} timed out upstream (${status || 'no response'}); this is expected for slow PageSpeed runs.`
+                                    : `[API WARN] ${options.method || 'GET'} ${url} failed with ${requestTimedOut ? 'timeout' : isRateLimited ? 'rate limit' : 'no response'}.`;
 
                         console.warn(warningMessage);
                     } else {

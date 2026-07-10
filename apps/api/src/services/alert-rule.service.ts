@@ -45,6 +45,31 @@ export class AlertRuleService {
 
   static async create(siteId: string, tenantId: string, input: AlertRuleInput) {
     const data = alertRuleInputSchema.parse(input);
+
+    // One rule per metric per store scope. The same condition (metricFamily +
+    // metric for a given connector, null = project-wide) must not be configured
+    // twice — a duplicate would double-alert and clutter the Alert Center. If a
+    // matching rule already exists we reject; editing that rule is the intended
+    // path. Prisma can't reliably query JSON criteria across DB engines, so we
+    // scan the (small) per-site rule set in memory.
+    const scope = data.connectorInstanceId ?? null;
+    const existing = await prisma.alertRule.findMany({ where: { siteId } });
+    const dup = existing.find((r: any) => {
+      const c = (r.criteria ?? {}) as RuleCriteria;
+      return (
+        (r.connectorInstanceId ?? null) === scope &&
+        c.metricFamily === data.criteria.metricFamily &&
+        c.metric === data.criteria.metric
+      );
+    });
+    if (dup) {
+      const e: any = new Error(
+        `This alert is already configured${scope ? ' for the selected store' : ''}. Edit the existing rule instead of creating a new one.`
+      );
+      e.code = 'DUPLICATE_RULE';
+      throw e;
+    }
+
     const id = crypto.randomUUID();
     const now = new Date();
     const row = await prisma.alertRule.create({

@@ -8,8 +8,6 @@ import {
   AlertCircle,
   TrendingUp,
   TrendingDown,
-  History,
-  RefreshCw,
   ArrowDown,
   ArrowRight,
   AlertTriangle,
@@ -436,43 +434,6 @@ export default function JourneyIntelligencePage() {
                 <option value="30d">Last 30 days</option>
                 <option value="90d">Last 90 days</option>
               </select>
-              <button
-                onClick={loadData}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  borderRadius: '10px',
-                  border: '1px solid var(--border-card)',
-                  background: 'var(--bg-card)',
-                  padding: '10px 14px',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer'
-                }}
-              >
-                <RefreshCw style={{ width: '16px', height: '16px', flexShrink: 0, animation: loading ? 'spin 1s linear infinite' : undefined }} />
-                Refresh
-              </button>
-              <button
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  borderRadius: '10px',
-                  border: '1px solid var(--border-card)',
-                  background: 'var(--bg-card)',
-                  padding: '10px 14px',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer'
-                }}
-              >
-                <History style={{ width: '16px', height: '16px', flexShrink: 0 }} />
-                Compare
-              </button>
               </div>
             </div>
           </div>
