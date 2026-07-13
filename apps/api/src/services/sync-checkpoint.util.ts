@@ -107,9 +107,10 @@ export function toAdobeDateTime(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-// Resource-scoped sync types so a connector's order and customer checkpoints never collide.
+// Resource-scoped sync types so a connector's order/customer/product checkpoints never collide.
 export const ORDER_SYNC_TYPE = 'ORDER_RESYNC';
 export const CUSTOMER_SYNC_TYPE = 'CUSTOMER_RESYNC';
+export const PRODUCT_SYNC_TYPE = 'PRODUCT_RESYNC';
 
 // Safety cap on pagination loops; if hit, the sync logs a warning rather than silently truncating.
 export const MAX_SYNC_PAGES = 200;

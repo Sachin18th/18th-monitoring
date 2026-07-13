@@ -35,6 +35,20 @@ import {
 } from "../../../../components/integrations/ConnectorCard";
 import { SyncTrendChart } from "../../../../components/ui/SyncTrendChart";
 
+/* ─── theme-aware accent palette (mirrors the KPI Engine page) ────
+   Maps to the shared semantic tokens so colours resolve correctly on
+   both the light and dark surfaces instead of hardcoded dark-tuned hex:
+     · base variant  (var(--info))       → vivid fills: icons, dots
+     · text variant  (var(--info-text))  → legible labels on both themes
+     · bg variant     (var(--info-bg))    → tinted panel/badge backgrounds */
+const C = {
+  blue: "var(--info)",       blueText: "var(--info-text)",       blueBg: "var(--info-bg)",
+  green: "var(--success)",   greenText: "var(--success-text)",   greenBg: "var(--success-bg)",
+  amber: "var(--warning)",   amberText: "var(--warning-text)",   amberBg: "var(--warning-bg)",
+  red: "var(--error)",       redText: "var(--error-text)",       redBg: "var(--error-bg)",
+  primary: "var(--primary)", primaryFg: "var(--primary-foreground)",
+};
+
 const pageStyle: React.CSSProperties = {
   padding: "24px 28px",
   maxWidth: "1280px",
@@ -64,10 +78,10 @@ const errorBannerStyle: React.CSSProperties = {
   justifyContent: "space-between",
   gap: "12px",
   borderRadius: "8px",
-  border: "1px solid rgba(244,63,94,0.2)",
-  background: "rgba(244,63,94,0.1)",
+  border: "1px solid color-mix(in srgb, var(--error) 20%, transparent)",
+  background: C.redBg,
   padding: "12px 16px",
-  color: "#fb7185",
+  color: C.redText,
 };
 
 export default function IntegrationsPage() {
@@ -502,7 +516,7 @@ export default function IntegrationsPage() {
         `/api/v1/tenants/current/projects/${projectId}/integrations/${connectorInstanceId}/resync`,
         {
           method: "POST",
-          body: JSON.stringify({ syncTargets: ["orders", "customers"] }),
+          body: JSON.stringify({ syncTargets: ["orders", "customers", "products"] }),
         },
       );
 
@@ -728,7 +742,6 @@ export default function IntegrationsPage() {
   return (
     <>
       <div
-        className="integrations-backend-theme"
         style={{
           ...pageStyle,
           ...sectionSpacingStyle,
@@ -780,8 +793,8 @@ export default function IntegrationsPage() {
                 gap: "8px",
                 padding: "8px 16px",
                 borderRadius: "8px",
-                background: "#2563EB",
-                color: "#fff",
+                background: C.primary,
+                color: C.primaryFg,
                 border: "none",
                 fontSize: "13px",
                 fontWeight: 500,
@@ -805,11 +818,11 @@ export default function IntegrationsPage() {
                 width: "40px",
                 height: "40px",
                 borderRadius: "999px",
-                background: "rgba(244,63,94,0.1)",
+                background: C.redBg,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "#f87171",
+                color: C.redText,
                 flexShrink: 0,
               }}
             >
@@ -820,14 +833,14 @@ export default function IntegrationsPage() {
                 style={{
                   fontSize: "14px",
                   fontWeight: 700,
-                  color: "#fecdd3",
+                  color: C.redText,
                   margin: 0,
                   marginBottom: "4px",
                 }}
               >
                 Critical System Failure Detected
               </p>
-              <p style={{ fontSize: "12px", color: "#fda4af", margin: 0 }}>
+              <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
                 {summary.critical} connectors are currently offline or failing
                 critical heartbeats.
               </p>
@@ -840,8 +853,8 @@ export default function IntegrationsPage() {
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
                 whiteSpace: "nowrap",
-                background: "#450a0a",
-                color: "#f87171",
+                background: C.redBg,
+                color: C.redText,
                 flexShrink: 0,
               }}
             >
@@ -931,7 +944,7 @@ export default function IntegrationsPage() {
                         width: "48px",
                         height: "48px",
                         borderRadius: "12px",
-                        background: "var(--bg-secondary)",
+                        background: "var(--bg-input)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -964,8 +977,8 @@ export default function IntegrationsPage() {
                       style={{
                         padding: "8px 20px",
                         borderRadius: "8px",
-                        background: "#2563EB",
-                        color: "#fff",
+                        background: C.primary,
+                        color: C.primaryFg,
                         border: "none",
                         fontSize: "13px",
                         fontWeight: 500,
@@ -1028,7 +1041,7 @@ export default function IntegrationsPage() {
                       width: "8px",
                       height: "8px",
                       borderRadius: "999px",
-                      background: "var(--accent-green, #22c55e)",
+                      background: C.green,
                     }}
                   />
                   Success
@@ -1039,7 +1052,7 @@ export default function IntegrationsPage() {
                       width: "8px",
                       height: "8px",
                       borderRadius: "999px",
-                      background: "var(--accent-red, #f43f5e)",
+                      background: C.red,
                     }}
                   />
                   Failure
@@ -1078,7 +1091,7 @@ export default function IntegrationsPage() {
                   style={{
                     width: "18px",
                     height: "18px",
-                    color: failedSyncs.length > 0 ? "#f87171" : "rgba(255,255,255,0.45)",
+                    color: failedSyncs.length > 0 ? C.red : "var(--text-muted)",
                   }}
                 />
                 <p
@@ -1100,11 +1113,8 @@ export default function IntegrationsPage() {
                   textTransform: "uppercase",
                   letterSpacing: "0.08em",
                   whiteSpace: "nowrap",
-                  background:
-                    failedSyncs.length > 0
-                      ? "rgba(244,63,94,0.15)"
-                      : "rgba(34,197,94,0.15)",
-                  color: failedSyncs.length > 0 ? "#fca5a5" : "#4ade80",
+                  background: failedSyncs.length > 0 ? C.redBg : C.greenBg,
+                  color: failedSyncs.length > 0 ? C.redText : C.greenText,
                 }}
               >
                 {failedSyncs.length} Errors
@@ -1134,12 +1144,12 @@ export default function IntegrationsPage() {
                       height: "52px",
                       borderRadius: "14px",
                       margin: "0 auto 16px",
-                      background: "rgba(34,197,94,0.1)",
-                      border: "1px solid rgba(34,197,94,0.25)",
+                      background: C.greenBg,
+                      border: "1px solid color-mix(in srgb, var(--success) 25%, transparent)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      color: "#4ade80",
+                      color: C.greenText,
                     }}
                   >
                     <CheckCircle2 style={{ width: "24px", height: "24px" }} />
@@ -1236,21 +1246,19 @@ export default function IntegrationsPage() {
                 style={{
                   borderRadius: "12px",
                   border: "1px solid var(--border-input)",
-                  background: "rgba(37,99,235,0.08)",
+                  background: C.blueBg,
                   padding: "14px 16px",
                   display: "flex",
                   alignItems: "center",
                   gap: "12px",
                 }}
               >
-                {/* <RefreshCw style={{ width: '18px', height: '18px', color: '#60a5fa', flexShrink: 0, animation: 'spin 1s linear infinite' }} /> */}
-
                 {resyncDialog.phase === "running" && (
                   <RefreshCw
                     style={{
                       width: "18px",
                       height: "18px",
-                      color: "#60a5fa",
+                      color: C.blueText,
                       flexShrink: 0,
                       animation: "spin 1s linear infinite",
                     }}
@@ -1287,7 +1295,7 @@ export default function IntegrationsPage() {
                         margin: "6px 0 0",
                         fontSize: "12px",
                         fontWeight: 600,
-                        color: "#60a5fa",
+                        color: C.blueText,
                         lineHeight: 1.5,
                         display: "flex",
                         alignItems: "center",
@@ -1303,7 +1311,7 @@ export default function IntegrationsPage() {
                       style={{
                         margin: "6px 0 0",
                         fontSize: "12px",
-                        color: "#fca5a5",
+                        color: C.redText,
                         lineHeight: 1.5,
                       }}
                     >
@@ -1343,8 +1351,8 @@ export default function IntegrationsPage() {
                         padding: "10px 16px",
                         borderRadius: "10px",
                         border: "none",
-                        background: "#2563EB",
-                        color: "#fff",
+                        background: C.primary,
+                        color: C.primaryFg,
                         cursor: "pointer",
                         fontWeight: 600,
                       }}
@@ -1360,8 +1368,8 @@ export default function IntegrationsPage() {
                       padding: "10px 16px",
                       borderRadius: "10px",
                       border: "none",
-                      background: "#1d4ed8",
-                      color: "#fff",
+                      background: C.primary,
+                      color: C.primaryFg,
                       cursor: "not-allowed",
                       fontWeight: 600,
                       opacity: 0.9,
@@ -1375,33 +1383,6 @@ export default function IntegrationsPage() {
           </div>
         </div>
       )}
-
-      <style jsx global>{`
-        .integrations-backend-theme [class*="bg-slate-"],
-        .integrations-backend-theme [class*="bg-muted"] {
-          background-color: #111318 !important;
-        }
-
-        .integrations-backend-theme [class*="border-slate-"],
-        .integrations-backend-theme [class*="border-subtle"] {
-          border-color: rgba(255, 255, 255, 0.08) !important;
-        }
-
-        .integrations-backend-theme [class*="text-slate-"],
-        .integrations-backend-theme [class*="text-text-muted"] {
-          color: #94a3b8 !important;
-        }
-
-        .integrations-backend-theme [class*="text-indigo-"],
-        .integrations-backend-theme [class*="bg-indigo-"] {
-          color: #a5b4fc !important;
-          background-color: rgba(79, 70, 229, 0.2) !important;
-        }
-
-        .integrations-backend-theme [class*="backdrop-blur"] {
-          backdrop-filter: none !important;
-        }
-      `}</style>
     </>
   );
 }

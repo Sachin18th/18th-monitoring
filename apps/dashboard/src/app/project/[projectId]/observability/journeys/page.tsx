@@ -216,6 +216,12 @@ export default function JourneyIntelligencePage() {
 
   // Session Intelligence (live, from storefront_sessions + storefront_events).
   const si = intelligence?.sessionIntelligence || {};
+  // Real tracked-session count — sourced from storefront_sessions, NOT the
+  // funnel's first stage. The funnel's visit stage can be lifted by the synced-
+  // order merge (off-domain Shopify checkouts), so reading it here made "Total
+  // Sessions" show the order count. Fall back to the funnel only if the API
+  // predates total_sessions.
+  const totalSessions = Number(si.total_sessions ?? firstStep) || 0;
   const fmtDuration = (secs: number) => {
     const s = Math.max(0, Math.round(secs || 0));
     return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
@@ -272,8 +278,8 @@ export default function JourneyIntelligencePage() {
       },
       {
         label: 'Total Sessions',
-        value: firstStep.toLocaleString(),
-        badge: 'Entered first stage',
+        value: totalSessions.toLocaleString(),
+        badge: 'Tracked storefront sessions',
         icon: Users,
         accent: C.blue,
         valueColor: 'var(--text-primary)',
@@ -298,7 +304,7 @@ export default function JourneyIntelligencePage() {
         iconColor: frictionSignals > 0 ? C.red : 'var(--text-label)'
       }
     ],
-    [completion, completionNum, dropCount, firstStep, frictionSignals]
+    [completion, completionNum, dropCount, firstStep, totalSessions, frictionSignals]
   );
 
   if (isPageRestricted) {

@@ -378,7 +378,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
         `/api/v1/tenants/current/projects/${projectId}/integrations/${connectorId}/resync`,
         {
           method: 'POST',
-          body: JSON.stringify({ syncTargets: ['orders', 'customers'] }),
+          body: JSON.stringify({ syncTargets: ['orders', 'customers', 'products'] }),
         },
       );
 

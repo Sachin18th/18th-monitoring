@@ -307,7 +307,7 @@ const getConnectorBridgeResponse = (url: string) => {
         return {
             jobId: 'resync_mock_status',
             status: 'completed',
-            syncTargets: ['orders', 'customers'],
+            syncTargets: ['orders', 'customers', 'products'],
             initiatedAt: new Date().toISOString(),
             completedAt: new Date().toISOString(),
             error: null
@@ -318,7 +318,7 @@ const getConnectorBridgeResponse = (url: string) => {
         return {
             jobId: `resync_mock_${Date.now()}`,
             connectorInstanceId: 'mock_connector_instance',
-            syncTargets: ['orders', 'customers'],
+            syncTargets: ['orders', 'customers', 'products'],
             status: 'queued',
             initiatedAt: new Date().toISOString()
         };

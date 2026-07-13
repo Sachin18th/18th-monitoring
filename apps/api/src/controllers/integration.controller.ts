@@ -270,7 +270,7 @@ export class IntegrationController {
                         status: 'running',
                         startedAt: new Date().toISOString(),
                         completedAt: null,
-                        targets: ['orders', 'customers'],
+                        targets: ['orders', 'customers', 'products'],
                         results: {}
                     }
                 }
@@ -361,6 +361,13 @@ export class IntegrationController {
             : type === 'adobe_commerce' ? () => AdobeCommerceCustomerSyncService.syncConnectorInstance(id)
             : type === 'bigcommerce' ? () => BigCommerceCustomerSyncService.syncConnectorInstance(id)
             : null;
+        // Products (and their derived categories) sync independently too, via the resync
+        // service's provider-agnostic product entry point (Shopify uses its dedicated,
+        // checkpointed service; Adobe/BigCommerce use the inline canonical upsert).
+        const productSync =
+            ['shopify', 'adobe_commerce', 'bigcommerce'].includes(type)
+                ? () => ConnectorResyncService.syncProductsForInstance(id)
+                : null;
 
         const startedAt = new Date().toISOString();
         const results: Record<string, any> = {};
@@ -393,7 +400,7 @@ export class IntegrationController {
                                 status,
                                 startedAt: existingInitialSync.startedAt || startedAt,
                                 completedAt: status === 'running' ? null : new Date().toISOString(),
-                                targets: ['orders', 'customers'],
+                                targets: ['orders', 'customers', 'products'],
                                 failedTargets: [...failedTargets],
                                 results: { ...results }
                             }
@@ -438,6 +445,25 @@ export class IntegrationController {
                 results.customers = { status: 'failed', error: err?.message || String(err) };
                 failedTargets.push('customers');
                 console.error('[Integration] initial customer sync failed', { id, siteId, error: err?.message || err });
+            }
+            // Checkpoint after customers so the UI advances before products run.
+            await persistInitialSync('running');
+        }
+
+        if (productSync) {
+            try {
+                const result = await productSync();
+                results.products = {
+                    status: (result?.failed ?? 0) > 0 ? 'partial' : 'completed',
+                    fetched: result?.fetched ?? 0,
+                    upserted: (result?.created ?? 0) + (result?.updated ?? 0),
+                    failed: result?.failed ?? 0
+                };
+                console.log('[Integration] initial product sync done', { id, siteId, ...result });
+            } catch (err: any) {
+                results.products = { status: 'failed', error: err?.message || String(err) };
+                failedTargets.push('products');
+                console.error('[Integration] initial product sync failed', { id, siteId, error: err?.message || err });
             }
         }
 
@@ -825,7 +851,7 @@ export class IntegrationController {
                 status: anyRunning ? 'running' : (runs.length > 0 ? 'completed' : 'not_started'),
                 startedAt: runs[runs.length - 1]?.startedAt ?? null,
                 completedAt: anyRunning ? null : (runs[0]?.finishedAt ?? null),
-                targets: ['orders', 'customers'],
+                targets: ['orders', 'customers', 'products'],
                 results: {}
             };
         }
@@ -835,7 +861,7 @@ export class IntegrationController {
             status: initialSync.status,
             startedAt: initialSync.startedAt ?? null,
             completedAt: initialSync.completedAt ?? null,
-            targets: initialSync.targets ?? ['orders', 'customers'],
+            targets: initialSync.targets ?? ['orders', 'customers', 'products'],
             failedTargets: initialSync.failedTargets ?? [],
             results: initialSync.results ?? {},
             recordsByType: instance.recordsByType ?? {},

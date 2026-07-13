@@ -105,9 +105,15 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                     s.purchase_completed,
                     s.checkout_started,
                     s.funnel_stage,
+                    s.customer_email_encrypted AS sess_email_encrypted,
+                    s.customer_name AS sess_customer_name,
+                    s.customer_id AS sess_customer_id,
                     email_lookup.email_encrypted,
                     name_lookup.customer_name,
-                    cid_lookup.customer_id
+                    cid_lookup.customer_id,
+                    v_email_lookup.email_encrypted AS v_email_encrypted,
+                    v_name_lookup.customer_name AS v_customer_name,
+                    v_cid_lookup.customer_id AS v_customer_id
                 FROM storefront_sessions s
                 LEFT JOIN LATERAL (
                     SELECT e.properties->>'email_encrypted' AS email_encrypted
@@ -136,6 +142,38 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                     ORDER BY e.occurred_at DESC
                     LIMIT 1
                 ) cid_lookup ON true
+                -- Visitor-level fallback: visitor_id persists in localStorage
+                -- across sessions, so once a shopper is identified in ANY session
+                -- we can name their other sessions (e.g. ones whose identity beacon
+                -- was dropped, or that started before identity resolved). Matched on
+                -- visitor_id, used only when the session's own events carried none.
+                LEFT JOIN LATERAL (
+                    SELECT e.properties->>'email_encrypted' AS email_encrypted
+                    FROM storefront_events e
+                    WHERE e.visitor_id = s.visitor_id
+                      AND e.connector_instance_id = s.connector_instance_id
+                      AND e.properties->>'email_encrypted' IS NOT NULL
+                    ORDER BY e.occurred_at DESC
+                    LIMIT 1
+                ) v_email_lookup ON true
+                LEFT JOIN LATERAL (
+                    SELECT e.properties->>'customer_name' AS customer_name
+                    FROM storefront_events e
+                    WHERE e.visitor_id = s.visitor_id
+                      AND e.connector_instance_id = s.connector_instance_id
+                      AND e.properties->>'customer_name' IS NOT NULL
+                    ORDER BY e.occurred_at DESC
+                    LIMIT 1
+                ) v_name_lookup ON true
+                LEFT JOIN LATERAL (
+                    SELECT e.properties->>'customer_id' AS customer_id
+                    FROM storefront_events e
+                    WHERE e.visitor_id = s.visitor_id
+                      AND e.connector_instance_id = s.connector_instance_id
+                      AND e.properties->>'customer_id' IS NOT NULL
+                    ORDER BY e.occurred_at DESC
+                    LIMIT 1
+                ) v_cid_lookup ON true
                 WHERE s.connector_instance_id = ${connectorId}
                   AND s.tenant_id = ${req.tenantId}
                 ORDER BY s.started_at DESC
@@ -148,7 +186,11 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
             const profileByExtId = new Map<string, { email: string | null; name: string | null }>();
             if (extIdKey) {
                 const ids = Array.from(
-                    new Set(rows.map((r) => r.customer_id).filter((v): v is string => typeof v === 'string' && v.length > 0))
+                    new Set(
+                        rows
+                            .map((r) => r.sess_customer_id || r.customer_id || r.v_customer_id)
+                            .filter((v): v is string => typeof v === 'string' && v.length > 0)
+                    )
                 );
                 if (ids.length > 0) {
                     const profiles = await prisma.$queryRawUnsafe<any[]>(
@@ -173,12 +215,25 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
             }
 
             const sessions = rows.map((r) => {
-                const profile = r.customer_id ? profileByExtId.get(String(r.customer_id)) : undefined;
-                // Prefer identity captured directly on events (Adobe/BigCommerce
-                // read it from the storefront); fall back to the synced profile
-                // resolved from the numeric customer_id (the Shopify path).
-                const email = (r.email_encrypted ? decryptEmail(r.email_encrypted) : null) || profile?.email || null;
-                const customerName = (r.customer_name ? String(r.customer_name) : null) || profile?.name || null;
+                // Resolution order for each field:
+                //   1. identity persisted on the session itself (populated + visitor-
+                //      backfilled at ingest — the durable path, survives session
+                //      expiry / tab close / a dropped beacon);
+                //   2. this session's own events (historical rows not yet backfilled);
+                //   3. any event from the same visitor_id;
+                //   4. the synced customer_profiles row (Shopify numeric-id path).
+                const resolvedCid = r.sess_customer_id || r.customer_id || r.v_customer_id || null;
+                const profile = resolvedCid ? profileByExtId.get(String(resolvedCid)) : undefined;
+                const persistedEmail = r.sess_email_encrypted ? decryptEmail(r.sess_email_encrypted) : null;
+                const sessionEmail = r.email_encrypted ? decryptEmail(r.email_encrypted) : null;
+                const visitorEmail = r.v_email_encrypted ? decryptEmail(r.v_email_encrypted) : null;
+                const email = persistedEmail || sessionEmail || visitorEmail || profile?.email || null;
+                const customerName =
+                    (r.sess_customer_name ? String(r.sess_customer_name) : null) ||
+                    (r.customer_name ? String(r.customer_name) : null) ||
+                    (r.v_customer_name ? String(r.v_customer_name) : null) ||
+                    profile?.name ||
+                    null;
                 return {
                     id: r.id,
                     session_id: r.session_id,

@@ -6,8 +6,9 @@ import { AdobeCommerceOrderSyncService } from './adobe-commerce-order-sync.servi
 import { BigCommerceOrderSyncService } from './bigcommerce-order-sync.service';
 import { ShopifyCustomerSyncService } from './shopify-customer-sync.service';
 import { AdobeCommerceCustomerSyncService } from './adobe-commerce-customer-sync.service';
+import { ShopifyProductSyncService } from './shopify-product-sync.service';
 
-type ResyncTarget = 'orders' | 'customers';
+type ResyncTarget = 'orders' | 'customers' | 'products';
 
 type ConnectorContext = {
   id: string;
@@ -125,6 +126,52 @@ export class ConnectorResyncService {
     });
 
     return job ? this.mapJob(job as any) : null;
+  }
+
+  /**
+   * Runs a product (+ derived category) sync for a single connector instance, resolving its
+   * own tenant/project context. Used by the initial post-connect setup so products sync on
+   * connect across every provider. Returns the same summary shape the entity sync services do
+   * ({ fetched, created, updated, failed }) so callers can treat it uniformly.
+   */
+  static async syncProductsForInstance(connectorInstanceId: string): Promise<{ fetched: number; created: number; updated: number; failed: number }> {
+    const instance = await prisma.connectorInstance.findUnique({
+      where: { id: connectorInstanceId },
+      select: { id: true, tenantId: true, siteId: true, providerId: true }
+    });
+
+    if (!instance) {
+      throw new Error('Integration instance not found.');
+    }
+
+    if (!['shopify', 'adobe_commerce', 'bigcommerce'].includes(instance.providerId)) {
+      throw new Error(`Product sync is not supported for provider '${instance.providerId}'.`);
+    }
+
+    const connector = await this.loadConnectorContext({
+      tenantId: instance.tenantId,
+      projectId: instance.siteId,
+      connectorInstanceId
+    });
+
+    if (!connector) {
+      throw new Error('Integration instance not found.');
+    }
+
+    const summary =
+      connector.providerId === 'shopify'
+        ? await this.syncShopifyTarget(connector, 'products')
+        : connector.providerId === 'adobe_commerce'
+          ? await this.syncAdobeTarget(connector, 'products')
+          : await this.syncBigCommerceTarget(connector, 'products');
+
+    // TargetSummary ({ status, fetched, upserted, failed }) → entity-summary shape.
+    return {
+      fetched: summary.fetched,
+      created: summary.upserted,
+      updated: 0,
+      failed: summary.failed
+    };
   }
 
   private static async runResyncJob(jobId: string): Promise<void> {
@@ -249,7 +296,8 @@ export class ConnectorResyncService {
         const nextCounts = {
           ...existingCounts,
           ...(successfulCounts.orders !== undefined ? { orders: successfulCounts.orders } : {}),
-          ...(successfulCounts.customers !== undefined ? { customers: successfulCounts.customers } : {})
+          ...(successfulCounts.customers !== undefined ? { customers: successfulCounts.customers } : {}),
+          ...(successfulCounts.products !== undefined ? { products: successfulCounts.products } : {})
         };
 
         await tx.connectorInstance.update({
@@ -322,6 +370,11 @@ export class ConnectorResyncService {
       return this.mapSyncSummary(summary);
     }
 
+    if (target === 'products') {
+      const summary = await ShopifyProductSyncService.syncConnectorInstance(connector.id);
+      return this.mapSyncSummary(summary);
+    }
+
     const summary = await ShopifyCustomerSyncService.syncConnectorInstance(connector.id);
     return this.mapSyncSummary(summary);
   }
@@ -335,6 +388,24 @@ export class ConnectorResyncService {
     if (target === 'orders') {
       const summary = await AdobeCommerceOrderSyncService.syncConnectorInstance(connector.id);
       return this.mapSyncSummary(summary);
+    }
+
+    if (target === 'products') {
+      const config = connector.syncConfig || {};
+      const credentials = connector.credentials || {};
+      const storeUrl = String(config.storeUrl || config.baseUrl || '').trim();
+      const accessToken = String(
+        credentials.adminApiAccessToken || credentials.adminApiToken || credentials.accessToken || credentials.token || credentials.apiKey || ''
+      ).trim();
+
+      if (!storeUrl) {
+        throw new Error('Adobe Commerce integration is missing storeUrl in syncConfig.');
+      }
+      if (!accessToken) {
+        throw new Error('Adobe Commerce integration is missing accessToken credentials.');
+      }
+
+      return this.syncAdobeProducts({ connector, baseUrl: storeUrl.replace(/\/+$/, ''), accessToken });
     }
 
     const summary = await AdobeCommerceCustomerSyncService.syncConnectorInstance(connector.id);
@@ -368,6 +439,10 @@ export class ConnectorResyncService {
     if (target === 'orders') {
       const summary = await BigCommerceOrderSyncService.syncConnectorInstance(connector.id);
       return this.mapSyncSummary(summary);
+    }
+
+    if (target === 'products') {
+      return this.syncBigCommerceProducts({ connector, baseUrl, storeHash, accessToken });
     }
 
     return this.syncBigCommerceCustomers({ connector, baseUrl, storeHash, accessToken });
@@ -876,16 +951,173 @@ export class ConnectorResyncService {
     const inventoryValue = Number(
       rawProduct?.inventory_quantity ??
       rawProduct?.qty ??
+      rawProduct?.inventory_level ??
       rawProduct?.stock_qty ??
       rawProduct?.extension_attributes?.stock_item?.qty ??
       rawProduct?.extension_attributes?.quantity_and_stock_status?.qty ??
       0
     );
     const priceValue = Number(rawProduct?.price ?? rawProduct?.final_price ?? rawProduct?.regular_price ?? 0);
-    const sourceUpdatedAt = new Date(rawProduct?.updated_at || rawProduct?.updatedAt || new Date());
+    const sourceUpdatedAt = new Date(rawProduct?.updated_at || rawProduct?.updatedAt || rawProduct?.date_modified || new Date());
 
-    // canonical_products table removed — persistence neutralized (no-op)
-    return;
+    const metadata = {
+      sourceSystem,
+      sku,
+      status: rawProduct?.status ?? null,
+      productType: rawProduct?.product_type ?? rawProduct?.type ?? null,
+      vendor: rawProduct?.vendor ?? rawProduct?.brand ?? null,
+      connectorInstanceId: connector.id,
+      connectorLabel: connector.label,
+      lastSyncedAt: new Date().toISOString()
+    } as Prisma.InputJsonValue;
+
+    const existing = await prisma.canonicalProduct.findUnique({
+      where: {
+        siteId_tenantId_sourceSystem_productId: {
+          siteId: connector.siteId,
+          tenantId: connector.tenantId,
+          sourceSystem,
+          productId: externalId
+        }
+      },
+      select: { id: true }
+    });
+
+    if (existing) {
+      await prisma.canonicalProduct.update({
+        where: { id: existing.id },
+        data: {
+          name,
+          sku: sku || undefined,
+          inventory: Number.isFinite(inventoryValue) ? inventoryValue : 0,
+          price: Number.isFinite(priceValue) ? new Prisma.Decimal(priceValue) : undefined,
+          sourceUpdatedAt: Number.isNaN(sourceUpdatedAt.getTime()) ? undefined : sourceUpdatedAt,
+          connectorInstanceId: connector.id,
+          metadata
+        }
+      });
+    } else {
+      await prisma.canonicalProduct.create({
+        data: {
+          id: crypto.randomUUID(),
+          siteId: connector.siteId,
+          tenantId: connector.tenantId,
+          connectorInstanceId: connector.id,
+          productId: externalId,
+          sourceSystem,
+          name,
+          sku: sku || undefined,
+          inventory: Number.isFinite(inventoryValue) ? inventoryValue : 0,
+          price: Number.isFinite(priceValue) ? new Prisma.Decimal(priceValue) : undefined,
+          sourceUpdatedAt: Number.isNaN(sourceUpdatedAt.getTime()) ? undefined : sourceUpdatedAt,
+          metadata
+        }
+      });
+    }
+
+    await this.upsertProductCategories(connector, sourceSystem, externalId, rawProduct, sourceUpdatedAt);
+  }
+
+  /**
+   * Extracts human-readable category names from a raw product and upserts one canonical
+   * category row per (product, category). Only string category names are stored — Adobe
+   * Commerce and BigCommerce expose categories as numeric IDs inline, which require a separate
+   * catalog lookup to resolve to names, so those are skipped rather than stored as opaque IDs.
+   */
+  private static async upsertProductCategories(
+    connector: ConnectorContext,
+    sourceSystem: 'shopify' | 'adobe_commerce' | 'bigcommerce',
+    productId: string,
+    rawProduct: any,
+    sourceUpdatedAt: Date
+  ): Promise<void> {
+    const names = this.extractProductCategoryNames(rawProduct);
+    if (names.length === 0) {
+      return;
+    }
+
+    const validSourceUpdatedAt = Number.isNaN(sourceUpdatedAt.getTime()) ? undefined : sourceUpdatedAt;
+
+    for (let i = 0; i < names.length; i += 1) {
+      const categoryName = names[i];
+      const isPrimary = i === 0;
+      try {
+        await prisma.canonicalProductCategory.upsert({
+          where: {
+            siteId_tenantId_sourceSystem_productId_categoryName: {
+              siteId: connector.siteId,
+              tenantId: connector.tenantId,
+              sourceSystem,
+              productId,
+              categoryName
+            }
+          },
+          create: {
+            id: crypto.randomUUID(),
+            siteId: connector.siteId,
+            tenantId: connector.tenantId,
+            connectorInstanceId: connector.id,
+            productId,
+            sourceSystem,
+            categoryName,
+            categoryPath: categoryName,
+            isPrimary,
+            sourceUpdatedAt: validSourceUpdatedAt
+          },
+          update: {
+            connectorInstanceId: connector.id,
+            categoryPath: categoryName,
+            isPrimary,
+            sourceUpdatedAt: validSourceUpdatedAt
+          }
+        });
+      } catch (err) {
+        console.error('[ConnectorResyncService] Product category upsert failed', {
+          connectorInstanceId: connector.id,
+          productId,
+          categoryName,
+          error: err
+        });
+      }
+    }
+  }
+
+  private static extractProductCategoryNames(rawProduct: any): string[] {
+    const names: string[] = [];
+    const push = (value: unknown) => {
+      const name = String(value ?? '').trim();
+      if (name && !names.some((n) => n.toLowerCase() === name.toLowerCase())) {
+        names.push(name);
+      }
+    };
+
+    // Primary: Shopify product_type / generic type field.
+    push(rawProduct?.product_type ?? rawProduct?.type);
+
+    // `categories` may be an array of strings, or of objects with a `name`. Numeric-ID-only
+    // arrays (Adobe/BigCommerce) are ignored here — they need a catalog lookup for names.
+    const rawCategories = rawProduct?.categories;
+    if (Array.isArray(rawCategories)) {
+      for (const entry of rawCategories) {
+        if (typeof entry === 'string') {
+          push(entry);
+        } else if (entry && typeof entry === 'object' && (entry as any).name) {
+          push((entry as any).name);
+        }
+      }
+    } else if (typeof rawCategories === 'string') {
+      rawCategories.split(',').forEach((c) => push(c));
+    }
+
+    // Shopify tags (comma-delimited string or array) double as coarse categories.
+    const rawTags = rawProduct?.tags;
+    if (Array.isArray(rawTags)) {
+      rawTags.forEach((t) => push(t));
+    } else if (typeof rawTags === 'string' && rawTags.trim()) {
+      rawTags.split(',').forEach((t) => push(t));
+    }
+
+    return names;
   }
 
   private static extractNextLink(linkHeader: string | null): string | null {
@@ -919,18 +1151,18 @@ export class ConnectorResyncService {
   }
 
   private static normalizeTargets(value: Array<string>): ResyncTarget[] {
-    const allowed = new Set<ResyncTarget>(['orders', 'customers']);
+    const allowed = new Set<ResyncTarget>(['orders', 'customers', 'products']);
     const normalizedInput = Array.from(new Set((value || []).map((target) => String(target).trim().toLowerCase())));
     const invalidTargets = normalizedInput.filter((target) => !allowed.has(target as ResyncTarget));
 
     if (invalidTargets.length > 0) {
-      throw this.createHttpError(400, `Invalid syncTargets: ${invalidTargets.join(', ')}. Allowed values are orders, customers.`);
+      throw this.createHttpError(400, `Invalid syncTargets: ${invalidTargets.join(', ')}. Allowed values are orders, customers, products.`);
     }
 
     const normalized = normalizedInput.filter((target): target is ResyncTarget => allowed.has(target as ResyncTarget));
 
     if (normalized.length === 0) {
-      throw this.createHttpError(400, 'syncTargets must include at least one of: orders, customers.');
+      throw this.createHttpError(400, 'syncTargets must include at least one of: orders, customers, products.');
     }
 
     return normalized;

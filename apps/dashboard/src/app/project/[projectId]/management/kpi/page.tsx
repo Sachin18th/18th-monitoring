@@ -652,7 +652,7 @@ export default function KpiAnalyticsPage() {
         {/* ── ERROR & RESYNC HEALTH ──────────────────────────────── */}
         <div>
           <div style={SECTION_LABEL}>Error & Resync Health · {TIME_PERIODS.find(p => p.value === timeRange)?.label ?? timeRange}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '20px' }}>
 
             {/* Storefront Errors */}
             <div style={CARD}>

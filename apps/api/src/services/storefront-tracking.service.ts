@@ -104,7 +104,27 @@ type SessionAggregate = {
   purchaseCompleted: boolean;
   lastPageUrl: string | null;
   lastPageTitle: string | null;
+  // Resolved shopper identity (latest non-null values seen across the session's
+  // events). Email is the AES envelope + hash only — never plaintext.
+  customerId: string | null;
+  customerName: string | null;
+  emailEncrypted: string | null;
+  emailHash: string | null;
 };
+
+/**
+ * The client-side identity cache each platform resolves from (sessionStorage):
+ * Shopify __plat_shid / Adobe __plat_mid / BigCommerce __plat_bid. Persisted as
+ * storefront_sessions.identity_meta.source so the origin is always traceable.
+ */
+function identityCacheKey(platform: string | null): string | null {
+  switch (platform) {
+    case 'shopify': return 'shid';
+    case 'adobe_commerce': return 'mid';
+    case 'bigcommerce': return 'bid';
+    default: return null;
+  }
+}
 
 export class StorefrontTrackingService {
   /** Best-effort device classification from a user-agent string. */
@@ -283,6 +303,12 @@ export class StorefrontTrackingService {
         else sessions.set(ev.sessionId, [ev]);
       }
 
+      // Identity resolved this batch, keyed by visitor — used to backfill the
+      // visitor's OTHER sessions after the upserts (see below).
+      const identityByVisitor = new Map<
+        string,
+        { customerId: string | null; customerName: string | null; emailEncrypted: string | null; emailHash: string | null }
+      >();
       for (const [sessionId, sessionEvents] of sessions) {
         const aggregate = this.aggregateSession(sessionEvents);
         await this.upsertSession({
@@ -294,6 +320,28 @@ export class StorefrontTrackingService {
           platform: platform === 'unknown' ? null : platform,
           aggregate,
         });
+        if (aggregate.customerId || aggregate.customerName || aggregate.emailEncrypted) {
+          identityByVisitor.set(aggregate.visitorId, {
+            customerId: aggregate.customerId,
+            customerName: aggregate.customerName,
+            emailEncrypted: aggregate.emailEncrypted,
+            emailHash: aggregate.emailHash,
+          });
+        }
+      }
+
+      // visitor_id persists in localStorage across sessions, so a shopper we just
+      // identified in one session is the same person in their earlier/other
+      // sessions. Stamp their identity onto any of this visitor's sessions that
+      // never captured one (e.g. the identity beacon was dropped while ngrok was
+      // down) — filling nulls only, so an existing identity is never overwritten.
+      for (const [visitorId, ident] of identityByVisitor) {
+        await this.backfillVisitorIdentity(
+          connectorInstanceId,
+          visitorId,
+          platform === 'unknown' ? null : platform,
+          ident,
+        );
       }
 
       // 6) Insert event rows per the dedup rule (dedicated milestone events,
@@ -331,9 +379,32 @@ export class StorefrontTrackingService {
     let addToCart = false;
     let checkoutStarted = false;
     let purchaseCompleted = false;
+    // Latest non-null identity seen this batch (events are ascending, so the last
+    // assignment wins). normalizeEvent already turned any plaintext email into
+    // email_encrypted/email_hash, so we only ever see the envelope here.
+    let customerId: string | null = null;
+    let customerName: string | null = null;
+    let emailEncrypted: string | null = null;
+    let emailHash: string | null = null;
 
     for (const ev of ordered) {
       if (ev.pageUrl && !pageUrls.includes(ev.pageUrl)) pageUrls.push(ev.pageUrl);
+
+      const p = ev.properties as Record<string, unknown>;
+      if (p) {
+        if (p.customer_id != null && p.customer_id !== '' && p.customer_id !== '0') {
+          customerId = String(p.customer_id).slice(0, 100);
+        }
+        if (typeof p.customer_name === 'string' && p.customer_name.trim()) {
+          customerName = p.customer_name.trim().slice(0, 200);
+        }
+        if (typeof p.email_encrypted === 'string' && p.email_encrypted) {
+          emailEncrypted = p.email_encrypted;
+        }
+        if (typeof p.email_hash === 'string' && p.email_hash) {
+          emailHash = p.email_hash;
+        }
+      }
 
       const pid = ev.properties?.product_id ?? (ev.properties as any)?.productId;
       if (pid != null) {
@@ -377,6 +448,10 @@ export class StorefrontTrackingService {
       purchaseCompleted,
       lastPageUrl: last.pageUrl,
       lastPageTitle: last.pageTitle,
+      customerId,
+      customerName,
+      emailEncrypted,
+      emailHash,
     };
   }
 
@@ -390,6 +465,15 @@ export class StorefrontTrackingService {
     aggregate: SessionAggregate;
   }): Promise<void> {
     const a = s.aggregate;
+    const hasIdentity = Boolean(a.customerId || a.customerName || a.emailEncrypted);
+    const identitySource = hasIdentity ? s.platform : null;
+    const identityMeta = hasIdentity
+      ? JSON.stringify({
+          customer_id: a.customerId,
+          customer_name: a.customerName,
+          source: identityCacheKey(s.platform),
+        })
+      : null;
     // First-sight columns (started_at / landing_page / referrer / device_type /
     // platform) are preserved on conflict; last_active_at only ever advances.
     // The funnel aggregate merges across batches:
@@ -405,11 +489,15 @@ export class StorefrontTrackingService {
           user_agent, referrer, landing_page, device_type,
           page_view_count, page_urls_visited, funnel_stage, funnel_stages_reached,
           product_viewed, product_ids_viewed, add_to_cart, checkout_started, purchase_completed,
-          last_page_url, last_page_title, platform)
+          last_page_url, last_page_title, platform,
+          customer_id, customer_name, customer_email_encrypted, customer_email_hash,
+          identity_source, identity_meta)
        VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9,
                $10::int, $11::jsonb, $12, $13::jsonb,
                $14::bool, $15::jsonb, $16::bool, $17::bool, $18::bool,
-               $19, $20, $21)
+               $19, $20, $21,
+               $22, $23, $24, $25,
+               $26, $27::jsonb)
        ON CONFLICT (connector_instance_id, session_id) DO UPDATE SET
          last_active_at = GREATEST(storefront_sessions.last_active_at, EXCLUDED.last_active_at),
          user_agent     = COALESCE(storefront_sessions.user_agent, EXCLUDED.user_agent),
@@ -467,7 +555,15 @@ export class StorefrontTrackingService {
            ) s
          ), storefront_sessions.funnel_stages_reached),
          last_page_url   = COALESCE(EXCLUDED.last_page_url, storefront_sessions.last_page_url),
-         last_page_title = COALESCE(EXCLUDED.last_page_title, storefront_sessions.last_page_title)`,
+         last_page_title = COALESCE(EXCLUDED.last_page_title, storefront_sessions.last_page_title),
+         -- Identity: adopt a freshly-captured value, else keep what we already had
+         -- (a later batch with no identity must never wipe a resolved shopper).
+         customer_id              = COALESCE(EXCLUDED.customer_id, storefront_sessions.customer_id),
+         customer_name            = COALESCE(EXCLUDED.customer_name, storefront_sessions.customer_name),
+         customer_email_encrypted = COALESCE(EXCLUDED.customer_email_encrypted, storefront_sessions.customer_email_encrypted),
+         customer_email_hash      = COALESCE(EXCLUDED.customer_email_hash, storefront_sessions.customer_email_hash),
+         identity_source          = COALESCE(EXCLUDED.identity_source, storefront_sessions.identity_source),
+         identity_meta            = COALESCE(EXCLUDED.identity_meta, storefront_sessions.identity_meta)`,
       s.connectorInstanceId,
       s.tenantId,
       s.sessionId,
@@ -489,7 +585,58 @@ export class StorefrontTrackingService {
       a.lastPageUrl,
       a.lastPageTitle,
       s.platform,
+      a.customerId,
+      a.customerName,
+      a.emailEncrypted,
+      a.emailHash,
+      identitySource,
+      identityMeta,
     );
+  }
+
+  /**
+   * Propagate a resolved identity to every other session of the same visitor
+   * that has none yet. COALESCE fills nulls only, so a session that already knows
+   * its shopper is left untouched. Bounded by idx_storefront_session_visitor.
+   */
+  private static async backfillVisitorIdentity(
+    connectorInstanceId: string,
+    visitorId: string,
+    platform: string | null,
+    ident: { customerId: string | null; customerName: string | null; emailEncrypted: string | null; emailHash: string | null },
+  ): Promise<void> {
+    const identityMeta = JSON.stringify({
+      customer_id: ident.customerId,
+      customer_name: ident.customerName,
+      source: identityCacheKey(platform),
+    });
+    try {
+      await prisma.$executeRawUnsafe(
+        `UPDATE storefront_sessions SET
+           customer_id              = COALESCE(customer_id, $3),
+           customer_name            = COALESCE(customer_name, $4),
+           customer_email_encrypted = COALESCE(customer_email_encrypted, $5),
+           customer_email_hash      = COALESCE(customer_email_hash, $6),
+           identity_source          = COALESCE(identity_source, $7),
+           identity_meta            = COALESCE(identity_meta, $8::jsonb)
+         WHERE connector_instance_id = $1
+           AND visitor_id = $2
+           AND customer_id IS NULL
+           AND customer_name IS NULL
+           AND customer_email_encrypted IS NULL`,
+        connectorInstanceId,
+        visitorId,
+        ident.customerId,
+        ident.customerName,
+        ident.emailEncrypted,
+        ident.emailHash,
+        platform,
+        identityMeta,
+      );
+    } catch (err) {
+      // Backfill is best-effort — a failure here must never fail ingest.
+      console.error('[TRACK] visitor identity backfill failed', { visitorId }, err);
+    }
   }
 
   private static async insertEvents(
@@ -562,89 +709,16 @@ export class StorefrontTrackingService {
     }
   }
 
-  /**
-   * Count authoritative *completed purchases* from synced orders for the given
-   * connectors within the window. On Shopify/BigCommerce the checkout + order
-   * confirmation pages are hosted off-domain, so the tracker can never emit
-   * checkout_step / checkout_complete — the only truthful purchase signal is the
-   * order that the connector syncs into canonical_orders. Cancelled/refunded/
-   * pending/draft orders are excluded (they are not completed purchases).
-   */
-  private static async orderPurchaseCount(
-    connectorInstanceIds: string[],
-    from: Date,
-    to: Date,
-  ): Promise<number> {
-    const ids = (connectorInstanceIds || []).filter(Boolean);
-    if (ids.length === 0) return 0;
-    try {
-      // Synced orders are only merged into the funnel for platforms whose
-      // checkout + confirmation are OFF-domain and therefore invisible to the
-      // storefront tracker (Shopify, BigCommerce). For on-domain platforms
-      // (Adobe Commerce / Magento) the tracked storefront_sessions already
-      // capture checkout + purchase, so merging synced orders would re-add the
-      // same buyers against a tracked-session base — clamping every funnel stage
-      // up to the order count (visit=…=purchase) and forcing ~100% conversion
-      // with 0% drop-off. Restrict the merge to off-domain connectors.
-      const providers = await prisma.$queryRawUnsafe<Array<{ id: string; provider_id: string | null }>>(
-        `SELECT id, provider_id FROM connector_instances WHERE id = ANY($1::text[])`,
-        ids,
-      );
-      const offDomainIds = providers
-        .filter((p) => {
-          const platform = platformFromProviderId(p.provider_id);
-          return platform === 'shopify' || platform === 'bigcommerce';
-        })
-        .map((p) => p.id);
-      if (offDomainIds.length === 0) return 0;
-
-      const rows = await prisma.$queryRawUnsafe<Array<{ c: bigint }>>(
-        `SELECT COUNT(*)::bigint AS c
-           FROM canonical_orders
-          WHERE connector_instance_id = ANY($1::text[])
-            AND placed_at >= $2 AND placed_at <= $3
-            AND UPPER(normalized_status) NOT IN
-                ('CANCELLED','CANCELED','REFUNDED','FAILED','PENDING','DRAFT','VOIDED')`,
-        offDomainIds,
-        from,
-        to,
-      );
-      return Number(rows[0]?.c ?? 0);
-    } catch (err) {
-      // canonical_orders may be empty/absent for a connector — never break the funnel.
-      console.warn('[TRACK] orderPurchaseCount failed', err);
-      return 0;
-    }
-  }
-
-  /**
-   * Merge authoritative order purchases into the session-derived funnel counts.
-   * A real order proves its buyer reached every funnel stage, so we clamp the
-   * counts upward (purchase → checkout → add_to_cart → product_view → visit),
-   * keeping the funnel monotonic. `max` (not sum) avoids double-counting buyers
-   * the tracker already saw. This is what lets Shopify show checkout + purchase
-   * even though its checkout/confirmation pages are off-domain and untrackable.
-   *
-   * The merge only fills the off-domain blind spot ON TOP OF a real tracked-
-   * session base. When there are no storefront_sessions/events for the store
-   * (counts.visit === 0), there is nothing to attribute the synced orders to —
-   * clamping would fabricate a funnel where visit=…=purchase=order_count and
-   * report a misleading 100% conversion / 0% drop-off. In that case we leave the
-   * funnel purely session-derived (all zeros → honest empty state) and do NOT
-   * fall back to order data.
-   */
-  private static mergeOrderPurchases(
-    counts: Record<CanonicalFunnelStage, number>,
-    orderPurchases: number,
-  ): void {
-    if (orderPurchases <= 0) return;
-    if (counts.visit <= 0) return;
-    counts.purchase = Math.max(counts.purchase, orderPurchases);
-    counts.checkout = Math.max(counts.checkout, counts.purchase);
-    counts.add_to_cart = Math.max(counts.add_to_cart, counts.checkout);
-    counts.product_view = Math.max(counts.product_view, counts.add_to_cart);
-    counts.visit = Math.max(counts.visit, counts.product_view);
-  }
+  // NOTE: The Purchase Journey Funnel is intentionally 100% session/event-derived
+  // — each stage is the real count of storefront_sessions whose tracked events
+  // reached it. Synced canonical_orders are deliberately NOT merged into the
+  // funnel: order volume routinely exceeds tracked sessions (partial tracking +
+  // off-domain Shopify/BigCommerce checkout), so clamping the stages up to the
+  // order count flattened the whole funnel to a fake 100% conversion / 0%
+  // drop-off and even made the visit stage read the raw order count. Authoritative
+  // purchase/revenue figures live on the Orders page. A proper per-session order
+  // attribution model can reintroduce an order signal later (see git history for
+  // the previous orderPurchaseCount/mergeOrderPurchases helpers).
 
   // ── Analyst queries (always scoped by tenant_id + connector_instance_id) ────
 
@@ -834,9 +908,13 @@ export class StorefrontTrackingService {
       purchase: Number(r?.purchase_count ?? 0),
     };
 
-    // Merge authoritative synced-order purchases (off-domain checkouts).
-    const orderPurchases = await this.orderPurchaseCount([input.connectorInstanceId], from, to);
-    this.mergeOrderPurchases(counts, orderPurchases);
+    // Funnel is purely session/event-derived: each stage reports the real number
+    // of sessions whose tracked events reached that stage. Synced orders are NOT
+    // merged in here — order volume routinely exceeds tracked sessions (partial
+    // tracking + off-domain checkout), and clamping the stages up to it flattened
+    // the funnel to a fake 100% conversion. Authoritative purchase/revenue counts
+    // live on the Orders page. (orderPurchaseCount/mergeOrderPurchases are kept
+    // for a future orders-attribution model but are no longer applied.)
 
     const pct = (num: number, den: number) => (den > 0 ? Number(((num / den) * 100).toFixed(2)) : 0);
 
@@ -1086,7 +1164,7 @@ export class StorefrontTrackingService {
 
     const pct = (num: number, den: number) => (den > 0 ? Number(((num / den) * 100).toFixed(2)) : 0);
 
-    const [funnelRows, agg, nvr, platformRows, orderPurchases] = await Promise.all([
+    const [funnelRows, agg, nvr, platformRows] = await Promise.all([
       prisma.$queryRawUnsafe<
         Array<{
           visit_count: bigint;
@@ -1170,7 +1248,6 @@ export class StorefrontTrackingService {
         from,
         to,
       ),
-      this.orderPurchaseCount(ids, from, to),
     ]);
 
     const f = funnelRows[0];
@@ -1181,9 +1258,10 @@ export class StorefrontTrackingService {
       checkout: Number(f?.checkout_count ?? 0),
       purchase: Number(f?.purchase_count ?? 0),
     };
-    // Merge authoritative synced-order purchases so off-domain checkouts
-    // (Shopify/BigCommerce) still surface checkout + purchase in the funnel.
-    this.mergeOrderPurchases(counts, orderPurchases);
+    // Funnel is purely session/event-derived — each stage is the real count of
+    // sessions whose tracked events reached it. Synced orders are NOT merged in
+    // (order volume exceeds tracked sessions and clamping flattened the funnel to
+    // a fake 100%); authoritative purchases live on the Orders page.
     const visit = counts.visit;
 
     const funnel = CANONICAL_FUNNEL_STAGES.map((stage) => ({
@@ -1200,6 +1278,12 @@ export class StorefrontTrackingService {
     return {
       funnel,
       sessionIntelligence: {
+        // Real tracked-session totals (storefront_sessions), independent of the
+        // order-merged funnel. The "Total Sessions" KPI reads these — never the
+        // funnel's visit stage, which the order merge can lift for off-domain
+        // checkouts.
+        total_sessions: totalSessions,
+        unique_visitors: uniqueVisitors,
         avg_pages_per_session: Number((a?.avg_pages ?? 0).toFixed(2)),
         sessions_per_visitor: uniqueVisitors > 0 ? Number((totalSessions / uniqueVisitors).toFixed(2)) : 0,
         cart_abandonment_rate: pct(Number(a?.cart_abandoned ?? 0), Number(a?.cart_reached ?? 0)),

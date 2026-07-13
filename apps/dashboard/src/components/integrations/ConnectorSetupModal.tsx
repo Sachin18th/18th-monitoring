@@ -97,7 +97,7 @@ export const ConnectorSetupModal: React.FC = () => {
     const computeProgress = (payload: any): number => {
       const targets: string[] = Array.isArray(payload?.targets) && payload.targets.length
         ? payload.targets
-        : ['orders', 'customers'];
+        : ['orders', 'customers', 'products'];
       const results = payload?.results || {};
       const done = targets.filter((t) => {
         const s = String(results?.[t]?.status || '').toLowerCase();
@@ -426,8 +426,8 @@ export const ConnectorSetupModal: React.FC = () => {
             const minutes = Math.floor(syncElapsed / 60);
             const seconds = syncElapsed % 60;
             const elapsedLabel = `${minutes}m ${String(seconds).padStart(2, '0')}s`;
-            const targetLabels: Record<string, string> = { orders: 'Orders', customers: 'Customers' };
-            const targets = ['orders', 'customers'];
+            const targetLabels: Record<string, string> = { orders: 'Orders', customers: 'Customers', products: 'Products' };
+            const targets = ['orders', 'customers', 'products'];
 
             const headerTitle = !isDone
               ? 'Syncing your store data…'

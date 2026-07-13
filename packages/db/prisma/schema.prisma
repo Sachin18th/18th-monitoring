@@ -42,6 +42,7 @@ model Tenant {
   deadLetterQueues              DeadLetterQueue[]
   recoveryJobs                  RecoveryJob[]
   canonicalProducts             CanonicalProduct[]
+  canonicalProductCategories    CanonicalProductCategory[]
   canonicalCheckouts            CanonicalCheckout[]
 
   @@map("tenants")
@@ -90,6 +91,7 @@ model Project {
   deadLetterQueues              DeadLetterQueue[]
   recoveryJobs                  RecoveryJob[]
   canonicalProducts             CanonicalProduct[]
+  canonicalProductCategories    CanonicalProductCategory[]
   canonicalCheckouts            CanonicalCheckout[]
   paymentGatewayConfigs         PaymentGatewayConfig[]
   paymentGatewayStatusSnapshots PaymentGatewayStatusSnapshot[]
@@ -409,7 +411,8 @@ model ConnectorInstance {
   canonicalOrders    CanonicalOrder[]
   orderSnapshots     OrderSnapshot[]
   orderEvents        OrderEvent[]
-  canonicalProducts  CanonicalProduct[]
+  canonicalProducts          CanonicalProduct[]
+  canonicalProductCategories CanonicalProductCategory[]
   canonicalCheckouts CanonicalCheckout[]
   auditLogs          IamAuditLog[]
   alerts             Alert[]
@@ -861,6 +864,35 @@ model CanonicalProduct {
   @@index([tenantId], map: "idx_product_tenant")
   @@index([connectorInstanceId], map: "idx_product_connector")
   @@map("canonical_products")
+}
+
+model CanonicalProductCategory {
+  id                  String    @id @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  tenantId            String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
+  productId           String    @map("product_id") @db.VarChar(255)
+  sourceSystem        String    @map("source_system") @db.VarChar(255)
+  categoryId          String?   @map("category_id") @db.VarChar(255)
+  categoryName        String    @map("category_name") @db.VarChar(255)
+  categoryPath        String?   @map("category_path") @db.Text
+  isPrimary           Boolean   @default(false) @map("is_primary")
+  metadata            Json      @default("{}")
+  sourceUpdatedAt     DateTime? @map("source_updated_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @map("updated_at")
+
+  project           Project            @relation(fields: [siteId], references: [id])
+  tenant            Tenant             @relation(fields: [tenantId], references: [id])
+  connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
+
+  @@unique([siteId, tenantId, sourceSystem, productId, categoryName], map: "uq_product_category_source_ref")
+  @@index([siteId], map: "idx_product_category_site")
+  @@index([tenantId], map: "idx_product_category_tenant")
+  @@index([connectorInstanceId], map: "idx_product_category_connector")
+  @@index([productId], map: "idx_product_category_product")
+  @@index([categoryName], map: "idx_product_category_name")
+  @@map("canonical_product_categories")
 }
 
 model CanonicalCheckout {
