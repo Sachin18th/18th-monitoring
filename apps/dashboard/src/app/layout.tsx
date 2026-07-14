@@ -7,6 +7,10 @@ export const metadata = {
   title: 'KPI Monitoring Dashboard',
   description: 'Enterprise observability and operational surface for monitoring performance, integrations, and commerce KPIs.',
   keywords: ['monitoring', 'KPI', 'dashboard', 'observability', 'enterprise'],
+  icons: {
+    icon: '/favicon.ico',
+    shortcut: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

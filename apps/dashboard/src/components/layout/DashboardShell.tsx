@@ -759,24 +759,11 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
             cursor: 'pointer'
           }}
         >
-          <div
-            style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '6px',
-              background: '#1d4ed8',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-              color: '#fff',
-              fontSize: '13px',
-              fontWeight: 700
-            }}
-          >
-            18
-          </div>
-          <span style={{ fontSize: '13px', fontWeight: 500, color: shellColors.pillText, whiteSpace: 'nowrap' }}>18th Digitech</span>
+          <img
+            src="/logo.svg"
+            alt="18th Digitech"
+            style={{ height: '24px', width: 'auto', flexShrink: 0, objectFit: 'contain' }}
+          />
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', overflow: 'visible' }}>

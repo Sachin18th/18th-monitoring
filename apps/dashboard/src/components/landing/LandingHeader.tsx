@@ -23,7 +23,7 @@ export const LandingHeader = () => {
     )}>
       <div className="container">
         <Link href="/" className="logo-container">
-          <img src="https://www.18thdigitech.com/images/logo.svg" alt="18th Digitech" className="logo-img" />
+          <img src="/logo.svg" alt="18th Digitech" className="logo-img" />
           <span className="logo-spacer" />
           <span className="logo-text">18th Monitoring</span>
         </Link>
