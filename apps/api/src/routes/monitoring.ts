@@ -11,6 +11,7 @@ import { alertRuleInputSchema, alertNotificationsSchema } from '../utils/alertin
 import { DashboardService } from '../services/dashboard.service';
 import { tenantAuthHandler } from '../middlewares/auth.middleware';
 import { tenantIsolationGuard } from '../middlewares/tenant-isolation.middleware';
+import { queryAllSiteClients, findInSiteClients } from '../lib/tenant-prisma';
 import { ResponseUtil } from '../utils/response';
 
 export const monitoringRoutes = async (fastify: FastifyInstance) => {
@@ -187,11 +188,13 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
             where.status = { in: activeStatuses };
         }
 
-        const rows = await prisma.alert.findMany({
-            where,
-            orderBy: { triggeredAt: 'desc' },
-            take: 200,
-        });
+        // Alerts are site-partitioned across the site's store DBs — read from all
+        // of them and merge (control DB when the data plane is off).
+        const merged = await queryAllSiteClients(siteId, (db) =>
+            db.alert.findMany({ where, orderBy: { triggeredAt: 'desc' }, take: 200 }),
+        );
+        merged.sort((a: any, b: any) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime());
+        const rows = merged.slice(0, 200);
 
         const severityRank: Record<string, number> = { critical: 0, high: 1, warning: 1, medium: 2, low: 3, info: 3 };
         const toStatus = (value: string) => {
@@ -236,13 +239,17 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
      * Acknowledges an active alert, suppressing further notifications temporarily.
      */
     fastify.post('/tenants/:tenantId/projects/:siteId/alerts/:alertId/acknowledge', async (req, reply) => {
-        const { alertId } = req.params as any;
+        const { siteId, alertId } = req.params as any;
         const { userId } = (req.body as any) || { userId: 'system' };
         try {
-            await prisma.alert.update({
-                where: { id: alertId },
-                data: { status: 'ACKNOWLEDGED', acknowledgedBy: userId || 'system', acknowledgedAt: new Date() },
-            });
+            // Locate the store DB that holds this alert, then update it there.
+            const found = await findInSiteClients(siteId, (db) => db.alert.findFirst({ where: { id: alertId, siteId } }));
+            if (found) {
+                await found.client.alert.update({
+                    where: { id: alertId },
+                    data: { status: 'ACKNOWLEDGED', acknowledgedBy: userId || 'system', acknowledgedAt: new Date() },
+                });
+            }
         } catch (err) {
             (req as any).log?.warn?.({ err, alertId }, '[Alerts] acknowledge failed');
         }
@@ -254,12 +261,16 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
      * Marks an alert as resolved after operator remediation.
      */
     fastify.post('/tenants/:tenantId/projects/:siteId/alerts/:alertId/resolve', async (req, reply) => {
-        const { alertId } = req.params as any;
+        const { siteId, alertId } = req.params as any;
         try {
-            await prisma.alert.update({
-                where: { id: alertId },
-                data: { status: 'RESOLVED', resolvedAt: new Date() },
-            });
+            // Locate the store DB that holds this alert, then update it there.
+            const found = await findInSiteClients(siteId, (db) => db.alert.findFirst({ where: { id: alertId, siteId } }));
+            if (found) {
+                await found.client.alert.update({
+                    where: { id: alertId },
+                    data: { status: 'RESOLVED', resolvedAt: new Date() },
+                });
+            }
         } catch (err) {
             (req as any).log?.warn?.({ err, alertId }, '[Alerts] resolve failed');
         }

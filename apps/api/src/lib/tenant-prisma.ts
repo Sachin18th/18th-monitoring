@@ -238,3 +238,59 @@ export async function getSiteDataPlaneClients(siteId: string): Promise<any[]> {
   }
   return Promise.all(rows.map((r) => getStorePrismaClient(r.connectorInstanceId as string)));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scope helpers for data that is SITE-PARTITIONED across the site's store DBs
+// (alerts, alert_rules, discovered_page_urls, …). A given row lives in exactly
+// ONE store DB: the store it is scoped to, or — for project-wide rows
+// (connectorInstanceId null) — the site's primary store DB. Flag off / no store
+// DB yet → all three collapse to the shared control client, so pre-cutover
+// behavior is byte-for-byte unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * WRITE (and connector-scoped READ) client for a site+optional-connector scope:
+ * the specific store DB when scoped to a connector, else the site's primary
+ * store DB. Follows the same single-primary-client convention the analytics
+ * read paths already use for site-keyed queries.
+ */
+export async function getScopedClient(
+  siteId: string,
+  connectorInstanceId: string | null | undefined,
+): Promise<any> {
+  return connectorInstanceId
+    ? getDataPlaneClient(connectorInstanceId)
+    : getSiteDataPlaneClient(siteId);
+}
+
+/**
+ * Run a READ `query` against every store DB for a site and flat-merge the
+ * results. Use for site-keyed lists of site-partitioned rows (a row lives in
+ * exactly one store DB, so no dedup is needed). Callers re-sort/limit the merged
+ * set. Flag off / single-store site → runs once, identical to the old query.
+ */
+export async function queryAllSiteClients<T>(
+  siteId: string,
+  query: (client: any) => Promise<T[]>,
+): Promise<T[]> {
+  const clients = await getSiteDataPlaneClients(siteId);
+  const results = await Promise.all(clients.map((c) => query(c)));
+  return results.flat();
+}
+
+/**
+ * Locate a single row across a site's store DBs (e.g. an alert / rule by id) and
+ * return both the row and the client that owns it, so a follow-up write targets
+ * the correct physical DB. Returns null when no store DB has a match.
+ */
+export async function findInSiteClients(
+  siteId: string,
+  find: (client: any) => Promise<any>,
+): Promise<{ client: any; row: any } | null> {
+  const clients = await getSiteDataPlaneClients(siteId);
+  for (const client of clients) {
+    const row = await find(client);
+    if (row) return { client, row };
+  }
+  return null;
+}

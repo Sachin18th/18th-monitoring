@@ -29,7 +29,7 @@ const getFilters = (req: any) => {
     }
 
     // Extract connector_instance_id for multi-store data isolation
-    const connectorInstanceId = req.query.connector_instance_id;
+    const connectorInstanceId = req.query.connector_instance_id || req.query.connectorInstanceId || req.query.connectorId;
 
     return {
         tenantId: req.tenantId, // Attached by auth middleware

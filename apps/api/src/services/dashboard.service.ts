@@ -1,7 +1,7 @@
 //apps/api/src/services/dashboard.service.ts
 import { prisma, decryptEmail } from '@kpi-platform/db';
 import { Prisma } from '@prisma/client';
-import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
+import { getScopedClient, getSiteDataPlaneClient, queryAllSiteClients } from '../lib/tenant-prisma';
 import type { MetricFilterDto, KpiSummaryResponse, AlertSummaryResponse } from '../models/dashboard.dto';
 import { AnalyticsEngine } from './analytics-engine.service';
 import { PaymentGatewayService } from './payment-gateway.service';
@@ -21,6 +21,13 @@ function deriveCategory(action: string): string {
 }
 
 export class DashboardService {
+    private static async getDashboardDataClient(filters: MetricFilterDto | any) {
+        const connectorInstanceId = filters?.connectorInstanceId;
+        return connectorInstanceId && connectorInstanceId !== 'all'
+            ? getScopedClient(filters.siteId, connectorInstanceId)
+            : getSiteDataPlaneClient(filters.siteId);
+    }
+
     private static deriveCustomerEmail(customer: any): string | null {
         const metadata = customer?.metadata || {};
         const rawCustomer = metadata?.rawCustomer || {};
@@ -137,28 +144,35 @@ export class DashboardService {
         const { siteId, connectorInstanceId, limit = 50, offset = 0 } = filters;
 
         try {
-            const alerts = await prisma.alert.findMany({
-                where: {
-                    siteId,
-                    status: { in: ['TRIGGERED', 'ACTIVE'] },
-                    ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
-                },
-                orderBy: { triggeredAt: 'desc' },
-                take: limit,
-                skip: offset,
-                select: {
-                    id: true,
-                    severity: true,
-                    status: true,
-                    message: true,
-                    triggeredAt: true,
-                    acknowledgedAt: true,
-                    resolvedAt: true,
-                    siteId: true,
-                    alertType: true,
-                    module: true
-                }
-            });
+            // Alerts are site-partitioned across the site's store DBs — read from
+            // all of them, merge, then apply order/skip/limit (control DB when the
+            // data plane is off).
+            const merged = await queryAllSiteClients(siteId, (db) =>
+                db.alert.findMany({
+                    where: {
+                        siteId,
+                        status: { in: ['TRIGGERED', 'ACTIVE'] },
+                        ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
+                    },
+                    orderBy: { triggeredAt: 'desc' },
+                    take: offset + limit,
+                    select: {
+                        id: true,
+                        severity: true,
+                        status: true,
+                        message: true,
+                        triggeredAt: true,
+                        acknowledgedAt: true,
+                        resolvedAt: true,
+                        siteId: true,
+                        alertType: true,
+                        module: true
+                    }
+                }),
+            );
+            const alerts = merged
+                .sort((a: any, b: any) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime())
+                .slice(offset, offset + limit);
 
             return alerts.map((a: any) => ({
                 alertId: a.id,
@@ -228,11 +242,13 @@ export class DashboardService {
         const { siteId } = filters;
 
         try {
-            const rows = await prisma.alert.findMany({
-                where: { siteId },
-                orderBy: { triggeredAt: 'desc' },
-                take: 100
-            });
+            // Alerts + their rules are site-partitioned across the site's store
+            // DBs — fan out and merge (control DB when the data plane is off).
+            const rows = (await queryAllSiteClients(siteId, (db) =>
+                db.alert.findMany({ where: { siteId }, orderBy: { triggeredAt: 'desc' }, take: 100 }),
+            ))
+                .sort((a: any, b: any) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime())
+                .slice(0, 100);
 
             // Fetch alert rule names for any rule: prefixed alertTypes
             const ruleIds = [...new Set(
@@ -243,10 +259,12 @@ export class DashboardService {
 
             const ruleNames: Record<string, string> = {};
             if (ruleIds.length > 0) {
-                const rules = await prisma.alertRule.findMany({
-                    where: { id: { in: ruleIds } },
-                    select: { id: true, name: true }
-                });
+                const rules = await queryAllSiteClients(siteId, (db) =>
+                    db.alertRule.findMany({
+                        where: { id: { in: ruleIds }, siteId },
+                        select: { id: true, name: true }
+                    }),
+                );
                 rules.forEach((r: any) => { ruleNames[r.id] = r.name; });
             }
 
@@ -588,7 +606,7 @@ export class DashboardService {
     static async getCustomerIntelligence(filters: MetricFilterDto) {
         const { siteId } = filters;
         const tenantId = (filters as any).tenantId;
-        const db = await getSiteDataPlaneClient(siteId);
+        const db = await this.getDashboardDataClient(filters);
 
                 const { connectorInstanceId } = filters;
                 // Avoid showing platform-provisioned default gateways (e.g. demo Razorpay)
@@ -930,7 +948,7 @@ export class DashboardService {
      */
     static async getOrderSummary(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId, startDate, endDate } = filters as any;
-        const db = await getSiteDataPlaneClient(siteId);
+        const db = await this.getDashboardDataClient(filters);
 
         // Scope to the selected time period (orders placed within the window).
         const from = startDate ? new Date(startDate) : null;
@@ -1032,7 +1050,7 @@ export class DashboardService {
 
     static async getOrderTrends(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId, timeRange, startDate, endDate } = filters as any;
-        const db = await getSiteDataPlaneClient(siteId);
+        const db = await this.getDashboardDataClient(filters);
 
         const orders = await db.canonicalOrder.findMany({
             where: {
@@ -1261,11 +1279,14 @@ export class DashboardService {
     }
 
     static async getIntegrationHealthSummary(filters: MetricFilterDto) {
-        const { siteId } = filters;
+        const { siteId, connectorInstanceId } = filters;
         
         // Get connector instances
         const connectors = await prisma.connectorInstance.findMany({
-            where: { siteId },
+            where: {
+                siteId,
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { id: connectorInstanceId } : {}),
+            },
             select: { id: true, healthStatus: true, lastSyncAt: true, lastError: true }
         });
 
@@ -1275,7 +1296,12 @@ export class DashboardService {
 
         // Get sync runs for latency
         const syncRuns = await prisma.connectorSyncRun.findMany({
-            where: { connectorInstance: { siteId } },
+            where: {
+                connectorInstance: {
+                    siteId,
+                    ...(connectorInstanceId && connectorInstanceId !== 'all' ? { id: connectorInstanceId } : {}),
+                },
+            },
             select: { status: true, startedAt: true, finishedAt: true }
         });
 
@@ -1299,13 +1325,16 @@ export class DashboardService {
     }
 
     static async getSyncTrends(filters: MetricFilterDto) {
-        const { siteId } = filters;
+        const { siteId, connectorInstanceId } = filters;
         
         // Get sync runs from last 6 hours
         const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000);
         const syncRuns = await prisma.connectorSyncRun.findMany({
             where: { 
-                connectorInstance: { siteId },
+                connectorInstance: {
+                    siteId,
+                    ...(connectorInstanceId && connectorInstanceId !== 'all' ? { id: connectorInstanceId } : {}),
+                },
                 startedAt: { gte: sixHoursAgo }
             },
             select: { status: true, startedAt: true }
@@ -1333,11 +1362,14 @@ export class DashboardService {
     }
 
     static async getFailedSyncs(filters: MetricFilterDto) {
-        const { siteId } = filters;
+        const { siteId, connectorInstanceId } = filters;
         
         const failedRuns = await prisma.connectorSyncRun.findMany({
             where: { 
-                connectorInstance: { siteId },
+                connectorInstance: {
+                    siteId,
+                    ...(connectorInstanceId && connectorInstanceId !== 'all' ? { id: connectorInstanceId } : {}),
+                },
                 status: 'FAILED'
             },
             orderBy: { startedAt: 'desc' },
@@ -1359,7 +1391,7 @@ export class DashboardService {
     }
 
     static async getOrders(filters: MetricFilterDto & { limit?: number; offset?: number }) {
-        const { siteId } = filters;
+        const { siteId, connectorInstanceId } = filters;
 
         // Honor pagination from the caller. Previously this loaded EVERY order
         // (with the full raw provider payload in metadata) which timed out on
@@ -1367,9 +1399,12 @@ export class DashboardService {
         const take = Math.min(Math.max(Number(filters.limit) || 1000, 1), 10000);
         const skip = Math.max(Number(filters.offset) || 0, 0);
 
-        const db = await getSiteDataPlaneClient(siteId);
+        const db = await this.getDashboardDataClient(filters);
         const orders = await db.canonicalOrder.findMany({
-            where: { siteId },
+            where: {
+                siteId,
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {}),
+            },
             orderBy: { placedAt: 'desc' },
             take,
             skip
@@ -1420,10 +1455,13 @@ export class DashboardService {
     }
 
     static async getCustomers(filters: MetricFilterDto) {
-        const { siteId } = filters;
-        const db = await getSiteDataPlaneClient(siteId);
+        const { siteId, connectorInstanceId } = filters;
+        const db = await this.getDashboardDataClient(filters);
         const customers = await db.customerProfile.findMany({
-            where: { siteId },
+            where: {
+                siteId,
+                ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {}),
+            },
             orderBy: { lastSeenAt: 'desc' }
         });
 

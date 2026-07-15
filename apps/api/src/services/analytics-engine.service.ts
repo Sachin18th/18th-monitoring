@@ -1,5 +1,5 @@
 // import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
-import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
+import { getScopedClient, getSiteDataPlaneClient } from '../lib/tenant-prisma';
 
 /**
  * AnalyticsEngine
@@ -28,10 +28,15 @@ export class AnalyticsEngine {
         const whereClause: any = { siteId };
         if (filters.channel) whereClause.channel = filters.channel;
         if (filters.lifecycleState) whereClause.lifecycleState = filters.lifecycleState;
+        if (filters.connectorInstanceId && filters.connectorInstanceId !== 'all') {
+            whereClause.connectorInstanceId = filters.connectorInstanceId;
+        }
         if (startDate) whereClause.placedAt = { gte: startDate };
         if (endDate) whereClause.placedAt = { ...whereClause.placedAt, lte: endDate };
 
-        const db = await getSiteDataPlaneClient(siteId);
+        const db = filters.connectorInstanceId && filters.connectorInstanceId !== 'all'
+            ? await getScopedClient(siteId, filters.connectorInstanceId)
+            : await getSiteDataPlaneClient(siteId);
         const orders = await db.canonicalOrder.findMany({
             where: whereClause,
             select: {

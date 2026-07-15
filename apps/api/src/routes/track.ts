@@ -240,8 +240,13 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
       });
       return reply.code(200).send(ResponseUtil.success(data, {}, req.id as string));
     } catch (err) {
-      console.error('[TRACK] live users query failed', err);
-      return reply.code(500).send(ResponseUtil.error('Failed to query live users', 'TRACK_LIVE_FAILED'));
+      console.warn('[TRACK] live users unavailable; returning empty live count', err);
+      return reply.code(200).send(ResponseUtil.success({
+        liveUsers: 0,
+        liveSessions: 0,
+        windowMinutes: q.window_minutes || q.windowMinutes ? Number(q.window_minutes ?? q.windowMinutes) : 5,
+        asOf: new Date().toISOString(),
+      }, {}, req.id as string));
     }
   });
 

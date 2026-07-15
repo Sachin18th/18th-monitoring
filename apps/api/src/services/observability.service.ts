@@ -1,9 +1,10 @@
 import { prisma } from '@kpi-platform/db';
-import { 
-    SystemAlert, 
-    AlertSeverity, 
-    LogLevel, 
-    StructuredLog 
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
+import {
+    SystemAlert,
+    AlertSeverity,
+    LogLevel,
+    StructuredLog
 } from '../../../../packages/shared-types/src';
 import crypto from 'crypto';
 
@@ -38,9 +39,14 @@ export class ObservabilityService {
         // Migrated from Drizzle ORM to Prisma
         const id = crypto.randomUUID();
         
+        // Alerts are store-payload data → the site's primary store DB (control DB
+        // when the data plane is off, or for the special 'SYSTEM' site which has
+        // no store DB and falls back to control).
+        const db = await getSiteDataPlaneClient(alertData.siteId);
+
         // 1. DEDUPLICATION (Requirement 9)
         // Check if a similar alert is already active for this site/module/type
-        const existing = await prisma.alert.findFirst({
+        const existing = await db.alert.findFirst({
             where: {
                 siteId: alertData.siteId,
                 module: alertData.module,
@@ -55,7 +61,7 @@ export class ObservabilityService {
         }
 
         // 2. PERSIST NEW ALERT
-        await prisma.alert.create({
+        await db.alert.create({
             data: {
                 id,
                 siteId: alertData.siteId,
@@ -112,7 +118,9 @@ export class ObservabilityService {
      * Requirement 10: Alert Resolution
      */
     static async resolveAlert(alertId: string, resolvedBy: string) {
-        // Migrated from Drizzle ORM to Prisma
+        // NOTE: no siteId here, so this can't resolve routing to a store DB. It is
+        // currently unused; if revived, pass the site so it can target the same
+        // store DB triggerAlert wrote to (see findInSiteClients in tenant-prisma).
         await prisma.alert.updateMany({
             where: { id: alertId },
             data: {

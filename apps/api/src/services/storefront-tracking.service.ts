@@ -29,6 +29,20 @@ export const STOREFRONT_EVENT_TYPES = [
   'checkout_complete',
 ] as const;
 
+const isUnavailableLiveTrackingStore = (err: any) => {
+  const code = String(err?.code || '');
+  const message = String(err?.message || err?.meta?.message || '').toLowerCase();
+  return (
+    code === 'P2021' ||
+    code === 'P2022' ||
+    code === '42P01' ||
+    code === '42703' ||
+    message.includes('storefront_sessions') ||
+    message.includes('last_active_at') ||
+    message.includes('has no active store database')
+  );
+};
+
 export type StorefrontEventType = (typeof STOREFRONT_EVENT_TYPES)[number];
 const VALID_EVENT_TYPES = new Set<string>(STOREFRONT_EVENT_TYPES);
 
@@ -822,24 +836,35 @@ export class StorefrontTrackingService {
   }) {
     const windowMinutes = Math.min(Math.max(Number(input.windowMinutes) || 5, 1), 60);
     const since = new Date(Date.now() - windowMinutes * 60 * 1000);
-    const db = await getDataPlaneClient(input.connectorInstanceId);
-
-    const rows = await db.$queryRaw<Array<{ live_visitors: bigint; live_sessions: bigint }>>`
-      SELECT
-        COUNT(DISTINCT visitor_id)::bigint AS live_visitors,
-        COUNT(*)::bigint                   AS live_sessions
-      FROM storefront_sessions
-      WHERE tenant_id = ${input.tenantId}
-        AND connector_instance_id = ${input.connectorInstanceId}
-        AND last_active_at >= ${since}
-    `;
-
-    return {
-      liveUsers: Number(rows[0]?.live_visitors ?? 0),
-      liveSessions: Number(rows[0]?.live_sessions ?? 0),
+    const empty = {
+      liveUsers: 0,
+      liveSessions: 0,
       windowMinutes,
       asOf: new Date().toISOString(),
     };
+
+    try {
+      const db = await getDataPlaneClient(input.connectorInstanceId);
+      const rows = await db.$queryRaw<Array<{ live_visitors: bigint; live_sessions: bigint }>>`
+        SELECT
+          COUNT(DISTINCT visitor_id)::bigint AS live_visitors,
+          COUNT(*)::bigint                   AS live_sessions
+        FROM storefront_sessions
+        WHERE tenant_id = ${input.tenantId}
+          AND connector_instance_id = ${input.connectorInstanceId}
+          AND last_active_at >= ${since}
+      `;
+
+      return {
+        liveUsers: Number(rows[0]?.live_visitors ?? 0),
+        liveSessions: Number(rows[0]?.live_sessions ?? 0),
+        windowMinutes,
+        asOf: new Date().toISOString(),
+      };
+    } catch (err) {
+      if (!isUnavailableLiveTrackingStore(err)) throw err;
+      return empty;
+    }
   }
 
   static async listEvents(input: {

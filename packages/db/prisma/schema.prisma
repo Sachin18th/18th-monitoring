@@ -767,6 +767,16 @@ model StorefrontSession {
   lastPageTitle       String? @map("last_page_title")
   platform            String? @db.VarChar(50)
 
+  // ── Resolved shopper identity (persisted at ingest, backfilled across the
+  // visitor's sessions). Powers the Session Journey Timeline. Email is stored
+  // only as the AES envelope + deterministic hash, never plaintext. ──
+  customerId             String? @map("customer_id")
+  customerName           String? @map("customer_name")
+  customerEmailEncrypted String? @map("customer_email_encrypted")
+  customerEmailHash      String? @map("customer_email_hash")
+  identitySource         String? @map("identity_source")
+  identityMeta           Json?   @map("identity_meta")
+
   connectorInstance ConnectorInstance @relation(fields: [connectorInstanceId], references: [id], onDelete: Cascade)
 
   @@unique([connectorInstanceId, sessionId], map: "uq_storefront_session_connector_session")
@@ -778,6 +788,7 @@ model StorefrontSession {
   @@index([connectorInstanceId, platform], map: "idx_storefront_session_platform")
   @@index([connectorInstanceId, funnelStage, startedAt(sort: Desc)], map: "idx_ss_funnel")
   @@index([connectorInstanceId, purchaseCompleted, startedAt(sort: Desc)], map: "idx_ss_purchase")
+  @@index([connectorInstanceId, customerEmailHash], map: "idx_storefront_session_email_hash")
   @@map("storefront_sessions")
 }
 
@@ -803,6 +814,7 @@ model StorefrontEvent {
   @@index([connectorInstanceId, sessionId], map: "idx_storefront_event_session")
   @@index([connectorInstanceId, eventType, occurredAt], map: "idx_storefront_event_type_occurred")
   @@index([connectorInstanceId, canonicalStage, occurredAt], map: "idx_storefront_events_canonical_stage")
+  @@index([connectorInstanceId, visitorId, occurredAt], map: "idx_storefront_event_visitor")
   @@map("storefront_events")
 }
 

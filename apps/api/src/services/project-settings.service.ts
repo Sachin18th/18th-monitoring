@@ -1,4 +1,5 @@
 import { prisma } from '@kpi-platform/db';
+import { queryAllSiteClients } from '../lib/tenant-prisma';
 
 /**
  * Project-level alert notification settings.
@@ -88,7 +89,11 @@ export class ProjectSettingsService {
   }
 
   private static async seedRecipientsFromRules(siteId: string): Promise<string[]> {
-    const rules = await prisma.alertRule.findMany({ where: { siteId }, select: { criteria: true } });
+    // Rules are site-partitioned across the site's store DBs (control DB when the
+    // data plane is off).
+    const rules = await queryAllSiteClients<any>(siteId, (db) =>
+      db.alertRule.findMany({ where: { siteId }, select: { criteria: true } }),
+    );
     const set = new Set<string>();
     for (const r of rules) {
       const recs = (r.criteria as any)?.recipients;

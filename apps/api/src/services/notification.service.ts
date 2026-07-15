@@ -1,5 +1,6 @@
 import nodemailer, { Transporter } from 'nodemailer';
 import { prisma } from '@kpi-platform/db';
+import { queryAllSiteClients } from '../lib/tenant-prisma';
 import { Alert, AlertSeverity } from '../utils/alerting/types';
 import { ProjectSettingsService } from './project-settings.service';
 
@@ -438,11 +439,15 @@ export class NotificationService {
 
     // Snapshot of ALL currently-open alerts — every severity, in one email — so
     // the summary always reflects the full current state (not a per-batch slice).
-    const rows = await prisma.alert.findMany({
-      where: { siteId, status: { in: ['TRIGGERED', 'ACTIVE'] } },
-      orderBy: { triggeredAt: 'desc' },
-      take: 500,
-    });
+    // Alerts are site-partitioned across the site's store DBs — sweep all of
+    // them and merge (control DB when the data plane is off).
+    const rows = (await queryAllSiteClients(siteId, (db) =>
+      db.alert.findMany({
+        where: { siteId, status: { in: ['TRIGGERED', 'ACTIVE'] } },
+        orderBy: { triggeredAt: 'desc' },
+        take: 500,
+      }),
+    )).sort((a: any, b: any) => new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime()).slice(0, 500);
 
     if (!rows.length) {
       console.log(`[NotificationService] Summary for ${siteId} due but no active alerts.`);

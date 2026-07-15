@@ -1,4 +1,5 @@
 import { prisma } from '@kpi-platform/db';
+import { getScopedClient, getSiteDataPlaneClients } from '../lib/tenant-prisma';
 import { Alert, AlertRule, AlertSeverity, AlertStatus } from '../utils/alerting/types';
 import { RuleCriteria } from '../utils/alerting/rule-criteria';
 import { AlertRuleService } from './alert-rule.service';
@@ -121,6 +122,11 @@ export class AlertEngine {
       // a project-wide rule (null) evaluates across all of the site's data.
       const connectorInstanceId = rule.connectorInstanceId ?? null;
 
+      // Alerts are store-payload data: raise/resolve them in the same store DB
+      // the rule is scoped to (site's primary store DB for project-wide rules;
+      // control DB when the data plane is off).
+      const alertDb = await getScopedClient(siteId, connectorInstanceId);
+
       const alertType = `rule:${rule.id}`;
       const openStatuses = AlertEngine.OPEN_STATUSES;
 
@@ -133,7 +139,7 @@ export class AlertEngine {
       // Condition no longer breached → auto-resolve any open alert for this
       // rule so recovered problems stop lingering in the Alert Center.
       if (!this.compare(value, criteria.operator, criteria.threshold)) {
-        await prisma.alert.updateMany({
+        await alertDb.alert.updateMany({
           where: { siteId, alertType, status: { in: openStatuses } },
           data: { status: 'RESOLVED', resolvedAt: new Date() },
         });
@@ -145,7 +151,7 @@ export class AlertEngine {
       // current active signal) — we just don't create a duplicate.
       if (!opts.ignoreCooldown) {
         const cooldownMs = (rule.cooldownMinutes ?? 60) * 60_000;
-        const recent = await prisma.alert.findFirst({
+        const recent = await alertDb.alert.findFirst({
           where: { siteId, alertType, triggeredAt: { gte: new Date(Date.now() - cooldownMs) } },
           orderBy: { triggeredAt: 'desc' },
         });
@@ -156,7 +162,7 @@ export class AlertEngine {
       // breached → supersede any stale open alert for this rule (resolve it)
       // before raising a fresh one, so the Alert Center shows a single current
       // alert per rule rather than a growing stack of past triggers.
-      await prisma.alert.updateMany({
+      await alertDb.alert.updateMany({
         where: { siteId, alertType, status: { in: openStatuses } },
         data: { status: 'RESOLVED', resolvedAt: new Date() },
       });
@@ -167,7 +173,7 @@ export class AlertEngine {
         (meta.detail ? ` — ${meta.detail}` : '');
       const alertId = crypto.randomUUID();
 
-      await prisma.alert.create({
+      await alertDb.alert.create({
         data: {
           id: alertId,
           siteId,
@@ -227,11 +233,18 @@ export class AlertEngine {
    * NotificationService.flushDigests only sweeps open alerts.
    */
   static async resolveAlertsForRule(siteId: string, ruleId: string): Promise<number> {
-    const res = await prisma.alert.updateMany({
-      where: { siteId, alertType: `rule:${ruleId}`, status: { in: AlertEngine.OPEN_STATUSES } },
-      data: { status: 'RESOLVED', resolvedAt: new Date() },
-    });
-    return res.count;
+    // The rule's alerts live in one of the site's store DBs; sweep all of them
+    // (a no-op on the DBs that hold none). Control DB when the data plane is off.
+    const clients = await getSiteDataPlaneClients(siteId);
+    let count = 0;
+    for (const db of clients) {
+      const res = await db.alert.updateMany({
+        where: { siteId, alertType: `rule:${ruleId}`, status: { in: AlertEngine.OPEN_STATUSES } },
+        data: { status: 'RESOLVED', resolvedAt: new Date() },
+      });
+      count += res.count;
+    }
+    return count;
   }
 
   /**
@@ -268,6 +281,21 @@ export class AlertEngine {
     // query; when project-wide (null), omit it so all connectors are included.
     const connectorWhere = connectorInstanceId ? { connectorInstanceId } : {};
 
+    // Store-payload metrics (orders, storefront errors/sessions, performance)
+    // now live in the store DB — read them from the scoped store client (the
+    // connector's DB, or the site's primary store DB for project-wide rules;
+    // control DB when the data plane is off). Only resolve it for families that
+    // read payload: the `integration` case (connector_instances /
+    // connector_sync_runs) is control-plane, and payment/sms probe external
+    // services — resolving a (fail-closed) store client for those would break
+    // their rules while a store's DB is still provisioning.
+    const needsStoreDb =
+      criteria.metricFamily === 'pagespeed' ||
+      criteria.metricFamily === 'rum_errors' ||
+      criteria.metricFamily === 'orders' ||
+      (criteria.metricFamily === 'customer_session' && criteria.metric === 'avg_session_duration');
+    const db = needsStoreDb ? await getScopedClient(siteId, connectorInstanceId) : prisma;
+
     switch (criteria.metricFamily) {
       case 'pagespeed': {
         // PageSpeed stores one row per (page type × device) under distinct
@@ -277,7 +305,7 @@ export class AlertEngine {
         // and breach on the WORST one — direction-aware so it matches the rule:
         //   'above' (lcp/ttfb/cls/tbt)  → the slowest page (max)
         //   'below' (score)             → the worst-scoring page (min)
-        const rows = await prisma.performanceMetric.findMany({
+        const rows = await db.performanceMetric.findMany({
           where: {
             siteId,
             ...connectorWhere,
@@ -318,18 +346,18 @@ export class AlertEngine {
         const base = { projectId: siteId, ...connectorWhere, occurredAt: { gte: windowStart } } as any;
         switch (criteria.metric) {
           case 'js_errors':
-            return prisma.storefrontError.count({
+            return db.storefrontError.count({
               where: { ...base, errorType: { in: ['js_error', 'promise_rejection'] } },
             });
           case 'network_errors':
-            return prisma.storefrontError.count({ where: { ...base, errorType: 'network_error' } });
+            return db.storefrontError.count({ where: { ...base, errorType: 'network_error' } });
           case 'resource_errors':
-            return prisma.storefrontError.count({ where: { ...base, errorType: 'resource_error' } });
+            return db.storefrontError.count({ where: { ...base, errorType: 'resource_error' } });
           case 'checkout_errors':
-            return prisma.storefrontError.count({ where: { ...base, pageType: 'checkout' } });
+            return db.storefrontError.count({ where: { ...base, pageType: 'checkout' } });
           case 'error_count':
           default:
-            return prisma.storefrontError.count({ where: base });
+            return db.storefrontError.count({ where: base });
         }
       }
 
@@ -337,13 +365,13 @@ export class AlertEngine {
         // Use live CanonicalOrder data so the rule fires even when no
         // kpiValue snapshot exists (e.g. "order_count < 1 → 0 orders = fires").
         if (criteria.metric === 'order_count') {
-          return prisma.canonicalOrder.count({
+          return db.canonicalOrder.count({
             where: { siteId, ...connectorWhere, placedAt: { gte: windowStart } },
           });
         }
         // Orders stuck in a pre-fulfilment state — the "delayed orders" signal.
         if (criteria.metric === 'delayed_orders') {
-          return prisma.canonicalOrder.count({
+          return db.canonicalOrder.count({
             where: {
               siteId,
               ...connectorWhere,
@@ -354,7 +382,7 @@ export class AlertEngine {
         }
         // Orders that failed, were cancelled, returned or refunded — "critical failures".
         if (criteria.metric === 'failed_orders') {
-          return prisma.canonicalOrder.count({
+          return db.canonicalOrder.count({
             where: {
               siteId,
               ...connectorWhere,
@@ -366,18 +394,18 @@ export class AlertEngine {
           });
         }
         if (criteria.metric === 'revenue') {
-          const agg = await prisma.canonicalOrder.aggregate({
+          const agg = await db.canonicalOrder.aggregate({
             where: { siteId, ...connectorWhere, placedAt: { gte: windowStart } },
             _sum: { totalAmount: true },
           });
           return agg._sum.totalAmount == null ? 0 : Number(agg._sum.totalAmount);
         }
         if (criteria.metric === 'aov') {
-          const count = await prisma.canonicalOrder.count({
+          const count = await db.canonicalOrder.count({
             where: { siteId, ...connectorWhere, placedAt: { gte: windowStart } },
           });
           if (count === 0) return null; // AOV undefined with 0 orders
-          const agg = await prisma.canonicalOrder.aggregate({
+          const agg = await db.canonicalOrder.aggregate({
             where: { siteId, ...connectorWhere, placedAt: { gte: windowStart } },
             _sum: { totalAmount: true },
           });
@@ -400,7 +428,7 @@ export class AlertEngine {
         // avg_session_duration isn't part of journeyIntel — derive it directly
         // from the same storefront_sessions rows (last_active - started).
         if (criteria.metric === 'avg_session_duration') {
-          return this.avgStorefrontSessionDuration(ids, windowStart);
+          return this.avgStorefrontSessionDuration(db, ids, windowStart);
         }
 
         const intel = await StorefrontTrackingService.journeyIntel({
@@ -550,8 +578,8 @@ export class AlertEngine {
   }
 
   /** Average storefront session duration (seconds) over the window. */
-  private static async avgStorefrontSessionDuration(ids: string[], windowStart: Date): Promise<number | null> {
-    const rows = await prisma.$queryRawUnsafe<Array<{ avg_seconds: number | null }>>(
+  private static async avgStorefrontSessionDuration(db: any, ids: string[], windowStart: Date): Promise<number | null> {
+    const rows: Array<{ avg_seconds: number | null }> = await db.$queryRawUnsafe(
       `SELECT AVG(EXTRACT(EPOCH FROM (last_active_at - started_at)))::float8 AS avg_seconds
          FROM storefront_sessions
         WHERE connector_instance_id = ANY($1::text[])

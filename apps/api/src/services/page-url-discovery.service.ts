@@ -1,4 +1,5 @@
-import { prisma, decryptSecret } from '@kpi-platform/db';
+import { decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 
 /**
  * Per-page-type URL discovery for PageSpeed measurement.
@@ -120,7 +121,10 @@ export class PageUrlDiscoveryService {
         stale: boolean;
         empty: boolean;
     }> {
-        const rows = await (prisma as any).discoveredPageUrl.findMany({
+        // discovered_page_urls is store-payload data → read from the integration's
+        // physical store DB (control-plane client when the data plane is off).
+        const db = await getDataPlaneClient(connectorInstanceId);
+        const rows = await db.discoveredPageUrl.findMany({
             where: { connectorInstanceId },
             orderBy: [{ pageType: 'asc' }, { rank: 'asc' }],
         });
@@ -145,7 +149,11 @@ export class PageUrlDiscoveryService {
         if (pageTypes.length === 0) return;
 
         const now = new Date();
-        await (prisma as any).$transaction(async (tx: any) => {
+        // Persist into the integration's physical store DB (fails closed when the
+        // data plane is enabled but the store DB isn't active; the caller in
+        // discoverAndPersist swallows that so a single store can't break discovery).
+        const db = await getDataPlaneClient(connector.id);
+        await db.$transaction(async (tx: any) => {
             // Re-discovery fully replaces the prior sample for these page types so a
             // shrunken catalog never leaves stale (possibly 404ing) URLs behind.
             await tx.discoveredPageUrl.deleteMany({
