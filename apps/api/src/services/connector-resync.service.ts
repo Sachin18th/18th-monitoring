@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { ShopifyOrderSyncService } from './shopify-order-sync.service';
 import { AdobeCommerceOrderSyncService } from './adobe-commerce-order-sync.service';
 import { BigCommerceOrderSyncService } from './bigcommerce-order-sync.service';
@@ -449,6 +450,8 @@ export class ConnectorResyncService {
   }
 
   private static async syncBigCommerceCustomers(input: { connector: ConnectorContext; baseUrl: string; storeHash: string; accessToken: string; }): Promise<TargetSummary> {
+    // DATA-PLANE routing: customer profiles live in the integration's physical store DB.
+    const db = await getDataPlaneClient(input.connector.id);
     const pageSize = 100;
     let page = 1;
     const items: any[] = [];
@@ -467,7 +470,7 @@ export class ConnectorResyncService {
     let failed = 0;
     for (const raw of items) {
       try {
-        await this.upsertCustomer(input.connector, 'bigcommerce', raw);
+        await this.upsertCustomer(db, input.connector, 'bigcommerce', raw);
         upserted += 1;
       } catch (err) {
         failed += 1;
@@ -485,6 +488,8 @@ export class ConnectorResyncService {
   }
 
   private static async syncBigCommerceProducts(input: { connector: ConnectorContext; baseUrl: string; storeHash: string; accessToken: string; }): Promise<TargetSummary> {
+    // DATA-PLANE routing: canonical products/categories live in the integration's physical store DB.
+    const db = await getDataPlaneClient(input.connector.id);
     const pageSize = 100;
     let page = 1;
     const items: any[] = [];
@@ -503,7 +508,7 @@ export class ConnectorResyncService {
     let failed = 0;
     for (const raw of items) {
       try {
-        await this.upsertProduct(input.connector, 'bigcommerce', raw);
+        await this.upsertProduct(db, input.connector, 'bigcommerce', raw);
         upserted += 1;
       } catch (err) {
         failed += 1;
@@ -559,12 +564,15 @@ export class ConnectorResyncService {
       resource: 'customers'
     });
 
+    // DATA-PLANE routing: customer profiles live in the integration's physical store DB.
+    const db = await getDataPlaneClient(input.connector.id);
+
     let upserted = 0;
     let failed = 0;
 
     for (const rawCustomer of customers) {
       try {
-        await this.upsertCustomer(input.connector, 'shopify', rawCustomer);
+        await this.upsertCustomer(db, input.connector, 'shopify', rawCustomer);
         upserted += 1;
       } catch (error) {
         failed += 1;
@@ -598,12 +606,15 @@ export class ConnectorResyncService {
       resource: 'products'
     });
 
+    // DATA-PLANE routing: canonical products/categories live in the integration's physical store DB.
+    const db = await getDataPlaneClient(input.connector.id);
+
     let upserted = 0;
     let failed = 0;
 
     for (const rawProduct of products) {
       try {
-        await this.upsertProduct(input.connector, 'shopify', rawProduct);
+        await this.upsertProduct(db, input.connector, 'shopify', rawProduct);
         upserted += 1;
       } catch (error) {
         failed += 1;
@@ -647,12 +658,15 @@ export class ConnectorResyncService {
       }
     }
 
+    // DATA-PLANE routing: customer profiles live in the integration's physical store DB.
+    const db = await getDataPlaneClient(input.connector.id);
+
     let upserted = 0;
     let failed = 0;
 
     for (const rawCustomer of items) {
       try {
-        await this.upsertCustomer(input.connector, 'adobe_commerce', rawCustomer);
+        await this.upsertCustomer(db, input.connector, 'adobe_commerce', rawCustomer);
         upserted += 1;
       } catch (error) {
         failed += 1;
@@ -696,12 +710,15 @@ export class ConnectorResyncService {
       }
     }
 
+    // DATA-PLANE routing: canonical products/categories live in the integration's physical store DB.
+    const db = await getDataPlaneClient(input.connector.id);
+
     let upserted = 0;
     let failed = 0;
 
     for (const rawProduct of items) {
       try {
-        await this.upsertProduct(input.connector, 'adobe_commerce', rawProduct);
+        await this.upsertProduct(db, input.connector, 'adobe_commerce', rawProduct);
         upserted += 1;
       } catch (error) {
         failed += 1;
@@ -847,6 +864,7 @@ export class ConnectorResyncService {
   }
 
   private static async upsertCustomer(
+    db: any,
     connector: ConnectorContext,
     sourceSystem: 'shopify' | 'adobe_commerce' | 'bigcommerce',
     rawCustomer: any
@@ -858,7 +876,7 @@ export class ConnectorResyncService {
 
     const email = String(rawCustomer?.email || '').trim().toLowerCase();
     const phone = String(rawCustomer?.phone || rawCustomer?.telephone || rawCustomer?.addresses?.[0]?.telephone || '').trim();
-    const existing = await prisma.customerProfile.findFirst({
+    const existing = await db.customerProfile.findFirst({
       where: {
         siteId: connector.siteId,
         tenantId: connector.tenantId,
@@ -914,7 +932,7 @@ export class ConnectorResyncService {
     };
 
     if (existing) {
-      await prisma.customerProfile.update({
+      await db.customerProfile.update({
         where: { id: existing.id },
         data: {
           lastSeenAt: payload.lastSeenAt,
@@ -931,12 +949,13 @@ export class ConnectorResyncService {
       return;
     }
 
-    await prisma.customerProfile.create({
+    await db.customerProfile.create({
       data: payload
     });
   }
 
   private static async upsertProduct(
+    db: any,
     connector: ConnectorContext,
     sourceSystem: 'shopify' | 'adobe_commerce' | 'bigcommerce',
     rawProduct: any
@@ -971,7 +990,7 @@ export class ConnectorResyncService {
       lastSyncedAt: new Date().toISOString()
     } as Prisma.InputJsonValue;
 
-    const existing = await prisma.canonicalProduct.findUnique({
+    const existing = await db.canonicalProduct.findUnique({
       where: {
         siteId_tenantId_sourceSystem_productId: {
           siteId: connector.siteId,
@@ -984,7 +1003,7 @@ export class ConnectorResyncService {
     });
 
     if (existing) {
-      await prisma.canonicalProduct.update({
+      await db.canonicalProduct.update({
         where: { id: existing.id },
         data: {
           name,
@@ -997,7 +1016,7 @@ export class ConnectorResyncService {
         }
       });
     } else {
-      await prisma.canonicalProduct.create({
+      await db.canonicalProduct.create({
         data: {
           id: crypto.randomUUID(),
           siteId: connector.siteId,
@@ -1015,7 +1034,7 @@ export class ConnectorResyncService {
       });
     }
 
-    await this.upsertProductCategories(connector, sourceSystem, externalId, rawProduct, sourceUpdatedAt);
+    await this.upsertProductCategories(db, connector, sourceSystem, externalId, rawProduct, sourceUpdatedAt);
   }
 
   /**
@@ -1025,6 +1044,7 @@ export class ConnectorResyncService {
    * catalog lookup to resolve to names, so those are skipped rather than stored as opaque IDs.
    */
   private static async upsertProductCategories(
+    db: any,
     connector: ConnectorContext,
     sourceSystem: 'shopify' | 'adobe_commerce' | 'bigcommerce',
     productId: string,
@@ -1042,7 +1062,7 @@ export class ConnectorResyncService {
       const categoryName = names[i];
       const isPrimary = i === 0;
       try {
-        await prisma.canonicalProductCategory.upsert({
+        await db.canonicalProductCategory.upsert({
           where: {
             siteId_tenantId_sourceSystem_productId_categoryName: {
               siteId: connector.siteId,

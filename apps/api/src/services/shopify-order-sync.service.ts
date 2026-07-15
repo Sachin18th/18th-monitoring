@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { orderNormalizationService } from './order-normalization.service';
 import {
     getSinceCursor,
@@ -340,7 +341,15 @@ export class ShopifyOrderSyncService {
         );
         const customerEmail = this.extractCustomerEmail(rawOrder);
 
-        const existing = await prisma.canonicalOrder.findFirst({
+        // PHASE 5 PILOT: canonical order data is a DATA-PLANE write. Route it to
+        // the integration's physical store DB when the data plane is enabled
+        // (else this is the shared control client — identical to prior
+        // behavior). The connector bookkeeping writes (connectorSyncRun /
+        // connectorInstance / lifecycle events) stay on the control client in
+        // syncConnectorInstance.
+        const db = await getDataPlaneClient(instance.id);
+
+        const existing = await db.canonicalOrder.findFirst({
             where: {
                 siteId: instance.siteId,
                 tenantId: instance.tenantId,
@@ -399,7 +408,7 @@ export class ShopifyOrderSyncService {
         };
 
         if (existing) {
-            await prisma.$transaction(async (tx) => {
+            await db.$transaction(async (tx: any) => {
                 await tx.canonicalOrder.update({
                     where: { id: existing.id },
                     data
@@ -410,7 +419,7 @@ export class ShopifyOrderSyncService {
         }
 
         const newId = crypto.randomUUID();
-        await prisma.$transaction(async (tx) => {
+        await db.$transaction(async (tx: any) => {
             await tx.canonicalOrder.create({
                 data: {
                     id: newId,

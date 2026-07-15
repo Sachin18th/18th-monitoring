@@ -1,0 +1,476 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// TENANT DATA-PLANE SCHEMA (physical database-per-tenant)
+//
+// This schema is migrated into EACH tenant's dedicated physical Postgres
+// database by TenantDatabaseProvisioningService. It holds only tenant payload
+// data — no control-plane tables (tenants/projects/users/connector_instances
+// live in the control-plane `KPI` DB, described by ../schema.prisma).
+//
+// KEY DIFFERENCE vs the control-plane schema: there are NO foreign keys to
+// control-plane tables. `tenant_id`, `site_id` (project) and
+// `connector_instance_id` are carried as plain indexed columns (soft
+// references) because Postgres cannot enforce a foreign key across two physical
+// databases. Foreign keys that stay WITHIN the data plane (order→snapshot,
+// customer→session→event) are preserved.
+//
+// @map names, column types and indexes are kept identical to the control-plane
+// schema so existing `prisma.<model>` query shapes port to the tenant client
+// unchanged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TENANT_DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../../../node_modules/.prisma/tenant-client"
+}
+
+model CanonicalOrder {
+  id                  String    @id @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  tenantId            String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
+  orderId             String    @map("order_id") @db.VarChar(255)
+  externalReferenceId String?   @map("external_ref_id") @db.VarChar(255)
+  sourceSystem        String    @map("source_system") @db.VarChar(255)
+  channel             String    @db.VarChar(50)
+  lifecycleState      String    @map("lifecycle_state") @db.VarChar(50)
+  normalizedStatus    String    @map("normalized_status") @db.VarChar(50)
+  currency            String    @db.VarChar(10)
+  totalAmount         Decimal   @map("total_amount") @db.Decimal(20, 4)
+  taxAmount           Decimal?  @map("tax_amount") @db.Decimal(20, 4)
+  discountAmount      Decimal?  @map("discount_amount") @db.Decimal(20, 4)
+  paidAmount          Decimal?  @map("paid_amount") @db.Decimal(20, 4)
+  refundedAmount      Decimal?  @map("refunded_amount") @db.Decimal(20, 4)
+  placedAt            DateTime  @map("placed_at")
+  paidAt              DateTime? @map("paid_at")
+  shippedAt           DateTime? @map("shipped_at")
+  deliveredAt         DateTime? @map("delivered_at")
+  mappingVersion      String    @map("mapping_version") @db.VarChar(20)
+  ingestionEventId    String?   @map("ingestion_event_id") @db.VarChar(36)
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @map("updated_at")
+
+  snapshots OrderSnapshot[]
+  events    OrderEvent[]
+
+  @@index([siteId], map: "idx_order_site")
+  @@index([tenantId], map: "idx_order_tenant")
+  @@index([connectorInstanceId], map: "idx_order_connector")
+  @@index([orderId], map: "idx_order_source_id")
+  @@index([lifecycleState], map: "idx_order_lifecycle")
+  @@index([placedAt], map: "idx_order_placed_ts")
+  @@map("canonical_orders")
+}
+
+model CanonicalProduct {
+  id                  String    @id @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  tenantId            String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
+  productId           String    @map("product_id") @db.VarChar(255)
+  sourceSystem        String    @map("source_system") @db.VarChar(255)
+  name                String    @db.VarChar(255)
+  sku                 String?   @db.VarChar(255)
+  inventory           Int?      @default(0)
+  price               Decimal?  @db.Decimal(20, 4)
+  sourceUpdatedAt     DateTime? @map("source_updated_at")
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @map("updated_at")
+
+  @@unique([siteId, tenantId, sourceSystem, productId], map: "uq_product_source_ref")
+  @@index([siteId], map: "idx_product_site")
+  @@index([tenantId], map: "idx_product_tenant")
+  @@index([connectorInstanceId], map: "idx_product_connector")
+  @@map("canonical_products")
+}
+
+model CanonicalProductCategory {
+  id                  String    @id @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  tenantId            String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
+  productId           String    @map("product_id") @db.VarChar(255)
+  sourceSystem        String    @map("source_system") @db.VarChar(255)
+  categoryId          String?   @map("category_id") @db.VarChar(255)
+  categoryName        String    @map("category_name") @db.VarChar(255)
+  categoryPath        String?   @map("category_path") @db.Text
+  isPrimary           Boolean   @default(false) @map("is_primary")
+  metadata            Json      @default("{}")
+  sourceUpdatedAt     DateTime? @map("source_updated_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @map("updated_at")
+
+  @@unique([siteId, tenantId, sourceSystem, productId, categoryName], map: "uq_product_category_source_ref")
+  @@index([siteId], map: "idx_product_category_site")
+  @@index([tenantId], map: "idx_product_category_tenant")
+  @@index([connectorInstanceId], map: "idx_product_category_connector")
+  @@index([productId], map: "idx_product_category_product")
+  @@index([categoryName], map: "idx_product_category_name")
+  @@map("canonical_product_categories")
+}
+
+model CanonicalCheckout {
+  id                   String    @id @db.VarChar(36)
+  siteId               String    @map("site_id") @db.VarChar(255)
+  tenantId             String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId  String?   @map("connector_instance_id") @db.VarChar(36)
+  checkoutId           String    @map("checkout_id") @db.VarChar(255)
+  sourceSystem         String    @map("source_system") @db.VarChar(255)
+  token                String?   @db.VarChar(255)
+  customerId           String?   @map("customer_id") @db.VarChar(36)
+  customerEmail        String?   @map("customer_email") @db.VarChar(255)
+  status               String    @db.VarChar(50)
+  currency             String    @db.VarChar(10)
+  subtotalAmount       Decimal?  @map("subtotal_amount") @db.Decimal(20, 4)
+  totalAmount          Decimal   @map("total_amount") @db.Decimal(20, 4)
+  taxAmount            Decimal?  @map("tax_amount") @db.Decimal(20, 4)
+  discountAmount       Decimal?  @map("discount_amount") @db.Decimal(20, 4)
+  lineItemsCount       Int?      @default(0) @map("line_items_count")
+  lineItems            Json      @default("[]") @map("line_items")
+  abandonedCheckoutUrl String?   @map("abandoned_checkout_url") @db.Text
+  completedOrderId     String?   @map("completed_order_id") @db.VarChar(255)
+  startedAt            DateTime  @map("started_at")
+  lastActivityAt       DateTime? @map("last_activity_at")
+  completedAt          DateTime? @map("completed_at")
+  metadata             Json      @default("{}")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @map("updated_at")
+
+  @@unique([siteId, tenantId, sourceSystem, checkoutId], map: "uq_checkout_source_ref")
+  @@index([siteId], map: "idx_checkout_site")
+  @@index([tenantId], map: "idx_checkout_tenant")
+  @@index([connectorInstanceId], map: "idx_checkout_connector")
+  @@index([status], map: "idx_checkout_status")
+  @@index([startedAt], map: "idx_checkout_started_ts")
+  @@map("canonical_checkouts")
+}
+
+model OrderSnapshot {
+  id                  Int      @id @default(autoincrement())
+  orderInternalId     String   @map("order_internal_id") @db.VarChar(36)
+  projectId           String?  @map("project_id") @db.VarChar(255)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  snapshotTimestamp   DateTime @default(now()) @map("snapshot_timestamp")
+  lifecycleState      String   @map("lifecycle_state") @db.VarChar(50)
+  totalAmount         Decimal? @map("total_amount") @db.Decimal(20, 4)
+  metadata            Json?
+
+  order CanonicalOrder @relation(fields: [orderInternalId], references: [id])
+
+  @@index([orderInternalId], map: "idx_shot_order")
+  @@index([projectId, snapshotTimestamp], map: "idx_shot_project_ts")
+  @@index([connectorInstanceId], map: "idx_shot_connector")
+  @@map("order_snapshots")
+}
+
+model OrderEvent {
+  id                  String   @id @db.VarChar(36)
+  orderInternalId     String   @map("order_internal_id") @db.VarChar(36)
+  projectId           String?  @map("project_id") @db.VarChar(255)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  eventType           String   @map("event_type") @db.VarChar(100)
+  timestamp           DateTime
+  payload             Json     @default("{}")
+  correlationId       String?  @map("correlation_id") @db.VarChar(255)
+
+  order CanonicalOrder @relation(fields: [orderInternalId], references: [id])
+
+  @@index([orderInternalId], map: "idx_order_event_order")
+  @@index([projectId, timestamp], map: "idx_order_event_project_ts")
+  @@index([connectorInstanceId], map: "idx_order_event_connector")
+  @@index([eventType], map: "idx_order_event_type")
+  @@map("order_events")
+}
+
+model CustomerProfile {
+  id                  String   @id @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  externalIds         Json     @default("{}") @map("external_ids")
+  emailHash           String?  @map("email_hash") @db.VarChar(255)
+  emailEncrypted      String?  @map("email_encrypted") @db.Text
+  phoneHash           String?  @map("phone_hash") @db.VarChar(255)
+  lifecycleState      String   @default("NEW_GUEST") @map("lifecycle_state") @db.VarChar(50)
+  identityConfidence  Decimal? @map("identity_confidence")
+  firstSeenAt         DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt          DateTime @default(now()) @map("last_seen_at")
+  totalLtv            Decimal? @map("total_ltv")
+  metadata            Json     @default("{}")
+
+  sessions CustomerSession[]
+  events   CustomerEvent[]
+
+  @@index([siteId], map: "idx_cust_profile_site")
+  @@index([connectorInstanceId], map: "idx_cust_profile_connector")
+  @@index([emailHash], map: "idx_cust_profile_email")
+  @@map("customer_profiles")
+}
+
+model CustomerSession {
+  id                  String    @id @db.VarChar(36)
+  customerId          String    @map("customer_id") @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
+  startTime           DateTime  @map("start_time")
+  endTime             DateTime? @map("end_time")
+  durationSeconds     Int?      @map("duration_seconds")
+  device              String?   @db.VarChar(100)
+  browser             String?   @db.VarChar(100)
+  trafficSource       String?   @map("traffic_source") @db.VarChar(255)
+  isConverted         Int?      @default(0) @map("is_converted")
+  eventCount          Int?      @default(0) @map("event_count")
+
+  customer CustomerProfile @relation(fields: [customerId], references: [id])
+  events   CustomerEvent[]
+
+  @@index([customerId], map: "idx_session_customer")
+  @@index([siteId], map: "idx_session_site")
+  @@index([connectorInstanceId], map: "idx_session_connector")
+  @@map("customer_sessions")
+}
+
+model CustomerEvent {
+  id                  String   @id @db.VarChar(36)
+  customerId          String   @map("customer_id") @db.VarChar(36)
+  sessionId           String?  @map("session_id") @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  eventName           String   @map("event_name") @db.VarChar(255)
+  category            String   @db.VarChar(50)
+  timestamp           DateTime
+  utmSource           String?  @map("utm_source") @db.VarChar(100)
+  utmMedium           String?  @map("utm_medium") @db.VarChar(100)
+  utmCampaign         String?  @map("utm_campaign") @db.VarChar(100)
+  metadata            Json     @default("{}")
+
+  customer CustomerProfile  @relation(fields: [customerId], references: [id])
+  session  CustomerSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId], map: "idx_cust_event_session")
+  @@index([customerId, timestamp], map: "idx_cust_event_cust_ts")
+  @@index([connectorInstanceId], map: "idx_cust_event_connector")
+  @@map("customer_events")
+}
+
+model StorefrontSession {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  sessionId           String   @map("session_id")
+  visitorId           String   @map("visitor_id")
+  startedAt           DateTime @default(now()) @map("started_at") @db.Timestamptz()
+  lastActiveAt        DateTime @default(now()) @map("last_active_at") @db.Timestamptz()
+  userAgent           String?  @map("user_agent")
+  referrer            String?
+  landingPage         String?  @map("landing_page")
+  deviceType          String?  @map("device_type")
+  metadata            Json     @default("{}")
+
+  pageViewCount       Int     @default(0) @map("page_view_count")
+  pageUrlsVisited     Json    @default("[]") @map("page_urls_visited")
+  funnelStage         String  @default("visit") @map("funnel_stage") @db.VarChar(50)
+  funnelStagesReached Json    @default("[\"visit\"]") @map("funnel_stages_reached")
+  productViewed       Boolean @default(false) @map("product_viewed")
+  productIdsViewed    Json    @default("[]") @map("product_ids_viewed")
+  addToCart           Boolean @default(false) @map("add_to_cart")
+  checkoutStarted     Boolean @default(false) @map("checkout_started")
+  purchaseCompleted   Boolean @default(false) @map("purchase_completed")
+  lastPageUrl         String? @map("last_page_url")
+  lastPageTitle       String? @map("last_page_title")
+  platform            String? @db.VarChar(50)
+
+  @@unique([connectorInstanceId, sessionId], map: "uq_storefront_session_connector_session")
+  @@index([tenantId], map: "idx_storefront_session_tenant")
+  @@index([connectorInstanceId], map: "idx_storefront_session_connector")
+  @@index([connectorInstanceId, visitorId], map: "idx_storefront_session_visitor")
+  @@index([connectorInstanceId, lastActiveAt], map: "idx_storefront_session_last_active")
+  @@index([connectorInstanceId, funnelStage], map: "idx_storefront_session_funnel_stage")
+  @@index([connectorInstanceId, platform], map: "idx_storefront_session_platform")
+  @@index([connectorInstanceId, funnelStage, startedAt(sort: Desc)], map: "idx_ss_funnel")
+  @@index([connectorInstanceId, purchaseCompleted, startedAt(sort: Desc)], map: "idx_ss_purchase")
+  @@map("storefront_sessions")
+}
+
+model StorefrontEvent {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  sessionId           String   @map("session_id")
+  visitorId           String   @map("visitor_id")
+  eventType           String   @map("event_type")
+  canonicalStage      String?  @map("canonical_stage") @db.VarChar(50)
+  pageUrl             String?  @map("page_url")
+  pageTitle           String?  @map("page_title")
+  occurredAt          DateTime @default(now()) @map("occurred_at") @db.Timestamptz()
+  receivedAt          DateTime @default(now()) @map("received_at") @db.Timestamptz()
+  properties          Json     @default("{}")
+
+  @@index([tenantId], map: "idx_storefront_event_tenant")
+  @@index([connectorInstanceId], map: "idx_storefront_event_connector")
+  @@index([connectorInstanceId, occurredAt], map: "idx_storefront_event_connector_occurred")
+  @@index([connectorInstanceId, sessionId], map: "idx_storefront_event_session")
+  @@index([connectorInstanceId, eventType, occurredAt], map: "idx_storefront_event_type_occurred")
+  @@index([connectorInstanceId, canonicalStage, occurredAt], map: "idx_storefront_events_canonical_stage")
+  @@map("storefront_events")
+}
+
+model StorefrontError {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  projectId           String   @map("project_id") @db.VarChar(255)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  errorType           String   @map("error_type") @db.VarChar(50)
+  severity            String   @db.VarChar(20)
+  message             String   @db.Text
+  sourceUrl           String?  @map("source_url") @db.Text
+  stackTrace          String?  @map("stack_trace") @db.Text
+  requestUrl          String?  @map("request_url") @db.Text
+  statusCode          Int?     @map("status_code")
+  httpMethod          String?  @map("http_method") @db.VarChar(10)
+  durationMs          Int?     @map("duration_ms")
+  resourceTag         String?  @map("resource_tag") @db.VarChar(20)
+  pageType            String?  @map("page_type") @db.VarChar(30)
+  pageUrl             String?  @map("page_url") @db.Text
+  userAgent           String?  @map("user_agent") @db.Text
+  sessionId           String?  @map("session_id") @db.VarChar(100)
+  metadata            Json     @default("{}")
+  occurredAt          DateTime @map("occurred_at") @db.Timestamptz()
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([projectId, occurredAt(sort: Desc)], map: "idx_storefront_error_project_occurred")
+  @@index([connectorInstanceId, occurredAt(sort: Desc)], map: "idx_storefront_error_connector_occurred")
+  @@index([projectId, errorType, occurredAt], map: "idx_storefront_error_type")
+  @@index([projectId, pageType, occurredAt], map: "idx_storefront_error_page")
+  @@map("storefront_errors")
+}
+
+model PerformanceMetric {
+  id                  Int      @id @default(autoincrement())
+  siteId              String   @map("site_id") @db.VarChar(255)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  category            String   @db.VarChar(50)
+  metricName          String   @map("metric_name") @db.VarChar(100)
+  source              String   @default("unknown") @db.VarChar(100)
+  metricValue         Decimal  @map("metric_value") @db.Decimal(20, 4)
+  unit                String   @db.VarChar(20)
+  region              String?  @db.VarChar(100)
+  device              String?  @db.VarChar(100)
+  browser             String?  @db.VarChar(100)
+  route               String?  @db.VarChar(1024)
+  timestamp           DateTime
+  traceId             String?  @map("trace_id") @db.VarChar(255)
+  correlationId       String?  @map("correlation_id") @db.VarChar(255)
+
+  @@unique([siteId, metricName, source], map: "uq_perf_site_metric_source")
+  @@index([siteId, metricName, timestamp], map: "idx_perf_site_name_ts")
+  @@index([tenantId, timestamp], map: "idx_perf_tenant_ts")
+  @@index([connectorInstanceId, timestamp], map: "idx_perf_connector_ts")
+  @@map("performance_metrics")
+}
+
+model PerformanceRollup {
+  id                  Int      @id @default(autoincrement())
+  siteId              String   @map("site_id") @db.VarChar(255)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  metricName          String   @map("metric_name") @db.VarChar(100)
+  bucketSize          String   @map("bucket_size") @db.VarChar(20)
+  timestamp           DateTime
+  count               Int
+  min                 Decimal? @db.Decimal(20, 4)
+  max                 Decimal? @db.Decimal(20, 4)
+  sum                 Decimal? @db.Decimal(20, 4)
+  avg                 Decimal? @db.Decimal(20, 4)
+  p50                 Decimal? @db.Decimal(20, 4)
+  p90                 Decimal? @db.Decimal(20, 4)
+  p99                 Decimal? @db.Decimal(20, 4)
+  dimensions          Json     @default("{}")
+
+  @@index([siteId, metricName, bucketSize, timestamp], map: "idx_perf_rollup")
+  @@index([connectorInstanceId, timestamp], map: "idx_perf_rollup_connector_ts")
+  @@map("performance_rollups")
+}
+
+model KpiValue {
+  id                  Int      @id @default(autoincrement())
+  siteId              String   @map("site_id") @db.VarChar(255)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  kpiName             String   @map("kpi_name") @db.VarChar(100)
+  kpiValue            Decimal  @map("kpi_value") @db.Decimal(20, 4)
+  timeWindow          String   @map("time_window") @db.VarChar(20)
+  timestamp           DateTime
+  metadata            Json     @default("{}")
+  updatedAt           DateTime @default(now()) @map("updated_at")
+
+  @@index([siteId, kpiName, timestamp], map: "idx_kpi_site_name_ts")
+  @@index([tenantId, timestamp], map: "idx_kpi_tenant_ts")
+  @@index([connectorInstanceId, timestamp], map: "idx_kpi_connector_ts")
+  @@map("kpi_values")
+}
+
+model DiscoveredPageUrl {
+  id                  String   @id @default(uuid()) @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  pageType            String   @map("page_type") @db.VarChar(20)
+  resolvedUrl         String   @map("resolved_url") @db.VarChar(1024)
+  urlResolutionMethod String   @map("url_resolution_method") @db.VarChar(20)
+  rank                Int      @default(0)
+  discoveredAt        DateTime @default(now()) @map("discovered_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  @@unique([connectorInstanceId, pageType, resolvedUrl], map: "uq_discovered_page_url")
+  @@index([connectorInstanceId, pageType], map: "idx_discovered_connector_pagetype")
+  @@map("discovered_page_urls")
+}
+
+model Alert {
+  id                  String    @id @db.VarChar(36)
+  siteId              String    @map("site_id") @db.VarChar(255)
+  tenantId            String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
+  severity            String    @db.VarChar(20)
+  status              String    @default("TRIGGERED") @db.VarChar(50)
+  module              String    @db.VarChar(50)
+  alertType           String    @map("alert_type") @db.VarChar(100)
+  message             String    @db.Text
+  context             Json      @default("{}")
+  correlationId       String?   @map("correlation_id") @db.VarChar(255)
+  triggeredAt         DateTime  @default(now()) @map("triggered_at")
+  acknowledgedAt      DateTime? @map("acknowledged_at")
+  acknowledgedBy      String?   @map("acknowledged_by") @db.VarChar(255)
+  resolvedAt          DateTime? @map("resolved_at")
+
+  @@index([siteId], map: "idx_alert_site")
+  @@index([tenantId], map: "idx_alert_tenant")
+  @@index([connectorInstanceId], map: "idx_alert_connector")
+  @@index([status], map: "idx_alert_status")
+  @@map("alerts")
+}
+
+model AlertRule {
+  id                  String   @id @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  tenantId            String   @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
+  name                String   @db.VarChar(255)
+  description         String?  @db.Text
+  severity            String   @db.VarChar(20)
+  enabled             Int?     @default(1)
+  criteria            Json
+  cooldownMinutes     Int?     @default(60) @map("cooldown_minutes")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @default(now()) @map("updated_at")
+
+  @@index([siteId], map: "idx_alert_rule_site")
+  @@index([connectorInstanceId], map: "idx_alert_rule_connector")
+  @@map("alert_rules")
+}

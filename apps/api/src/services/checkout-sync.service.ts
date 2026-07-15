@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, encryptEmail, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
 type ConnectorRecord = {
@@ -95,6 +96,11 @@ export class CheckoutSyncService {
             syncConfig: instance.syncConfig || {}
         };
 
+        // DATA-PLANE routing: customer profiles live in the integration's
+        // physical store DB when the data plane is enabled (else this is the
+        // shared control client). Connector bookkeeping stays on `prisma`.
+        const db = await getDataPlaneClient(instance.id);
+
         const runId = crypto.randomUUID();
         const startedAt = new Date();
 
@@ -119,7 +125,7 @@ export class CheckoutSyncService {
 
             for (const checkout of checkouts) {
                 try {
-                    await this.persistCheckout(record, provider, checkout);
+                    await this.persistCheckout(db, record, provider, checkout);
                     checkoutsUpserted += 1;
                 } catch (err) {
                     failed += 1;
@@ -400,11 +406,12 @@ export class CheckoutSyncService {
     // ----------------------------------------------------------------------
 
     private static async persistCheckout(
+        db: any,
         instance: ConnectorRecord,
         sourceSystem: string,
         checkout: NormalizedCheckout
     ): Promise<void> {
-        const customerId = await this.resolveCustomerProfileId(instance, sourceSystem, checkout);
+        const customerId = await this.resolveCustomerProfileId(db, instance, sourceSystem, checkout);
         const lineItemsCount = checkout.raw?.lineItemsCount ?? checkout.lineItems.length;
 
         // canonical_checkout table removed — query neutralized
@@ -450,6 +457,7 @@ export class CheckoutSyncService {
      * journey/customer sync identity resolution.
      */
     private static async resolveCustomerProfileId(
+        db: any,
         instance: ConnectorRecord,
         sourceSystem: string,
         checkout: NormalizedCheckout
@@ -459,7 +467,7 @@ export class CheckoutSyncService {
         const emailHash = hashEmail(email);
 
         if (externalId) {
-            const byExternalId = await prisma.customerProfile.findFirst({
+            const byExternalId = await db.customerProfile.findFirst({
                 where: {
                     siteId: instance.siteId,
                     tenantId: instance.tenantId,
@@ -471,7 +479,7 @@ export class CheckoutSyncService {
         }
 
         if (emailHash) {
-            const byEmail = await prisma.customerProfile.findFirst({
+            const byEmail = await db.customerProfile.findFirst({
                 where: { siteId: instance.siteId, tenantId: instance.tenantId, emailHash },
                 select: { id: true }
             });
@@ -483,7 +491,7 @@ export class CheckoutSyncService {
             : `guest:${instance.siteId}:${sourceSystem}:checkout:${checkout.checkoutId}`;
         const profileId = stableUuid(seed);
 
-        await prisma.customerProfile.upsert({
+        await db.customerProfile.upsert({
             where: { id: profileId },
             create: {
                 id: profileId,

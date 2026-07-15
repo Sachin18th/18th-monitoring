@@ -1,5 +1,5 @@
-import { prisma } from '@kpi-platform/db';
-import { 
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
+import {
     PerformanceSignal, 
     PerformanceRollup, 
     PerformanceMetricName 
@@ -16,7 +16,10 @@ export class PerformanceIntelligenceService {
         const id = crypto.randomUUID();
         
         // 1. STORE RAW SIGNAL (Requirement 3)
-        await prisma.performanceMetric.create({
+        // DATABASE-PER-INTEGRATION: performance_metrics is a data-plane table —
+        // route through the site's store DB.
+        const db = await getSiteDataPlaneClient(signal.siteId);
+        await db.performanceMetric.create({
             data: {
                 siteId: signal.siteId,
                 tenantId: (signal as any).tenantId || 'system',
@@ -46,8 +49,9 @@ export class PerformanceIntelligenceService {
      * Requirement 4 & 5
      */
     static async computeRollup(siteId: string, metricName: PerformanceMetricName, bucket: '1m' | '5m' | '1h', from: Date, to: Date) {
-        // Fetch raw data for the window
-        const signals = await prisma.performanceMetric.findMany({
+        // Fetch raw data for the window (data-plane read via the site's store DB)
+        const db = await getSiteDataPlaneClient(siteId);
+        const signals = await db.performanceMetric.findMany({
             where: {
                 siteId,
                 metricName,

@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, encryptEmail, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 
 type ConnectorRecord = {
@@ -56,6 +57,11 @@ export class AdobeCommerceJourneySyncService {
             throw new Error(`Provider "${instance.providerId}" is not supported by AdobeCommerceJourneySyncService.`);
         }
 
+        // DATA-PLANE routing: customer profiles/sessions/events live in the
+        // integration's physical store DB when the data plane is enabled (else
+        // this is the shared control client). Connector bookkeeping stays on `prisma`.
+        const db = await getDataPlaneClient(instance.id);
+
         const runId = crypto.randomUUID();
         const startedAt = new Date();
 
@@ -81,7 +87,7 @@ export class AdobeCommerceJourneySyncService {
 
             for (const order of orders) {
                 try {
-                    const result = await this.persistOrderJourney(instance, order);
+                    const result = await this.persistOrderJourney(db, instance, order);
                     sessionsUpserted += result.sessions;
                     eventsUpserted += result.events;
                 } catch (err) {
@@ -198,6 +204,7 @@ export class AdobeCommerceJourneySyncService {
     }
 
     private static async persistOrderJourney(
+        db: any,
         instance: ConnectorRecord,
         order: any
     ): Promise<{ sessions: number; events: number }> {
@@ -206,7 +213,7 @@ export class AdobeCommerceJourneySyncService {
             return { sessions: 0, events: 0 };
         }
 
-        const customerId = await this.resolveCustomerProfileId(instance, order);
+        const customerId = await this.resolveCustomerProfileId(db, instance, order);
 
         const placedAt = this.toMagentoDate(order?.created_at);
         const lastActivityAt = this.toMagentoDate(order?.updated_at) || placedAt;
@@ -257,13 +264,13 @@ export class AdobeCommerceJourneySyncService {
      * profile when the order's customer was not synced (e.g. guest checkout).
      * Mirrors the externalIds.adobe_commerce lookup used by the customer sync.
      */
-    private static async resolveCustomerProfileId(instance: ConnectorRecord, order: any): Promise<string> {
+    private static async resolveCustomerProfileId(db: any, instance: ConnectorRecord, order: any): Promise<string> {
         const adobeCustomerId = order?.customer_id != null ? String(order.customer_id) : null;
         const email = String(order?.customer_email || order?.billing_address?.email || '').trim().toLowerCase();
         const emailHash = hashEmail(email);
 
         if (adobeCustomerId) {
-            const byExternalId = await prisma.customerProfile.findFirst({
+            const byExternalId = await db.customerProfile.findFirst({
                 where: {
                     siteId: instance.siteId,
                     tenantId: instance.tenantId,
@@ -275,7 +282,7 @@ export class AdobeCommerceJourneySyncService {
         }
 
         if (emailHash) {
-            const byEmail = await prisma.customerProfile.findFirst({
+            const byEmail = await db.customerProfile.findFirst({
                 where: { siteId: instance.siteId, tenantId: instance.tenantId, emailHash },
                 select: { id: true }
             });
@@ -289,7 +296,7 @@ export class AdobeCommerceJourneySyncService {
             : `guest:${instance.siteId}:${order?.entity_id || order?.increment_id}`;
         const profileId = stableUuid(seed);
 
-        await prisma.customerProfile.upsert({
+        await db.customerProfile.upsert({
             where: { id: profileId },
             create: {
                 id: profileId,

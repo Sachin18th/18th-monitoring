@@ -1,5 +1,5 @@
 //apps/api/src/services/order-aggregation.service.ts
-import { prisma } from '@kpi-platform/db';
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
 
 type SourceSystem = 'shopify' | 'adobe_commerce' | 'bigcommerce';
 
@@ -13,8 +13,10 @@ export class OrderAggregationService {
 
     const systems = Array.isArray(sourceSystems) && sourceSystems.length > 0 ? sourceSystems : ['shopify', 'adobe_commerce', 'bigcommerce'];
 
+    const db = await getSiteDataPlaneClient(siteId);
+
     // Total orders across selected source systems
-    const totalOrders = await prisma.canonicalOrder.count({
+    const totalOrders = await db.canonicalOrder.count({
       where: {
         tenantId,
         siteId,
@@ -26,7 +28,7 @@ export class OrderAggregationService {
     const now = new Date();
     const startOfHour = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 0, 0, 0));
 
-    const ordersThisHour = await prisma.canonicalOrder.count({
+    const ordersThisHour = await db.canonicalOrder.count({
       where: {
         tenantId,
         siteId,

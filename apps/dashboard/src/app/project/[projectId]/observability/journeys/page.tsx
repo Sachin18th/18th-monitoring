@@ -23,8 +23,10 @@ import {
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
+import { useConnectorPlatform } from '@/context/ConnectorPlatformContext';
 import { PageRestricted } from '@/components/PageRestricted';
 import SessionJourneyTimeline from '@/components/journey/SessionJourneyTimeline';
+import TrackingInstallCard from '@/components/integrations/TrackingInstallCard';
 
 const pageStyle: React.CSSProperties = {
   padding: '24px 28px',
@@ -153,7 +155,18 @@ export default function JourneyIntelligencePage() {
   const { projectId } = useParams();
   const { apiFetch, token, user } = useAuth();
   const { connectorInstanceId } = useConnectorFilter();
+  const { connectedStores } = useConnectorPlatform();
   const initialLoadKeyRef = useRef<string | null>(null);
+
+  // Platform of the store currently selected in the connector filter — used to
+  // open the tracking-install instructions on the right platform. Falls back to
+  // the only connected store when "All stores" is active.
+  const selectedPlatform = useMemo(() => {
+    const store =
+      connectedStores.find((s) => s.connectorId === connectorInstanceId) ||
+      (connectedStores.length === 1 ? connectedStores[0] : undefined);
+    return store?.platform;
+  }, [connectedStores, connectorInstanceId]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1118,6 +1131,24 @@ export default function JourneyIntelligencePage() {
             {intelligence?.range ? ` · Range: ${intelligence.range}` : ''}
           </div>
         )}
+
+        {/* Storefront Tracking Setup — install/verify the tracking script. The
+            card opens on the tab for the platform of the store selected in the
+            connector filter (Shopify / BigCommerce / Adobe Commerce) and embeds
+            the connector-scoped snippet + admin steps for that platform. */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div>
+            <h3 style={sectionTitleStyle}>Storefront Tracking Setup</h3>
+            <p style={sectionSubStyle}>
+              Add the tracking script to your store to power these journey insights. Steps and
+              snippet are tailored to your selected platform.
+            </p>
+          </div>
+          <TrackingInstallCard
+            connectorInstanceId={connectorInstanceId || undefined}
+            platform={selectedPlatform}
+          />
+        </div>
 
         {/* Session Journey Timeline — individual visitor paths, event by event.
             Self-contained: loads its own session/event data scoped to the active

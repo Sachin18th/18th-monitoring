@@ -12,6 +12,8 @@ import { BigCommerceCustomerSyncService } from '../services/bigcommerce-customer
 import { ConnectorResyncService } from '../services/connector-resync.service';
 import { registerShopifyPixel } from '../../../../packages/connectors/src/commerce/shopify-pixel.service';
 import { StoreHealthService } from '../services/store-health.service';
+import { isTenantDataPlaneEnabled } from '../lib/tenant-prisma';
+import { provisionStoreDatabase } from '../services/tenant-database-provisioning.service';
 
 export class IntegrationController {
 
@@ -240,7 +242,7 @@ export class IntegrationController {
         const { type, label, family, config, credentials } = req.body as any;
 
         const id = crypto.randomUUID();
-        
+
         const connector = ConnectorRegistry.get(type);
         if (!connector) {
             return reply.code(404).send(ResponseUtil.error([{ code: 'CONNECTOR_NOT_FOUND', message: `Connector type '${type}' is not registered.` }], req.id as string));
@@ -330,6 +332,39 @@ export class IntegrationController {
     }
 
     /**
+     * Mark the instance's initialSync metadata as failed with a reason (merges
+     * into existing metadata so other keys, e.g. pixelConfig, are preserved).
+     */
+    private static async markInitialSyncFailed(id: string, error: string): Promise<void> {
+        try {
+            const current = await prisma.connectorInstance.findUnique({
+                where: { id },
+                select: { metadata: true }
+            });
+            const existingMetadata = (current?.metadata && typeof current.metadata === 'object')
+                ? current.metadata as Record<string, any>
+                : {};
+            await prisma.connectorInstance.update({
+                where: { id },
+                data: {
+                    healthStatus: 'DEGRADED',
+                    metadata: {
+                        ...existingMetadata,
+                        initialSync: {
+                            ...(existingMetadata.initialSync ?? {}),
+                            status: 'failed',
+                            completedAt: new Date().toISOString(),
+                            error
+                        }
+                    } as any
+                }
+            });
+        } catch (err: any) {
+            console.error('[Integration] failed to mark initialSync failed', { id, error: err?.message || err });
+        }
+    }
+
+    /**
      * Runs the post-create initial sync and provider-specific setup in the
      * background. Never throws — all failures are logged and captured on the
      * connector instance's health state by the individual sync services.
@@ -344,6 +379,29 @@ export class IntegrationController {
         const { id, type, siteId, config, credentials } = input;
 
         console.log('[Integration] runInitialSetup:start', { connectorInstanceId: id, type, siteId });
+
+        // ─── Store database provisioning (database-per-integration) ─────────
+        // Every integration gets its OWN physical database; all data the syncs
+        // below pull for this store lands there. Provisioning is idempotent
+        // (re-runs repair a failed/stale row). When the data plane is enabled,
+        // sync writes fail closed without an active store DB — so on a
+        // provisioning failure we mark the initial sync failed and stop instead
+        // of letting every entity sync fail one by one.
+        try {
+            const provision = await provisionStoreDatabase(id, { triggeredBy: 'integration-create' });
+            if (provision.status !== 'active') {
+                throw new Error(provision.error || `store DB status: ${provision.status}`);
+            }
+            console.log('[Integration] store database ready', { connectorInstanceId: id, dbName: provision.dbName });
+        } catch (provErr: any) {
+            console.error('[Integration] store database provisioning failed', { id, error: provErr?.message || provErr });
+            if (isTenantDataPlaneEnabled()) {
+                await IntegrationController.markInitialSyncFailed(id, `Store database provisioning failed: ${provErr?.message || provErr}`);
+                return;
+            }
+            // Data plane disabled: syncs still write to the master DB, so
+            // continue — the failed row stays visible for repair.
+        }
 
         // ─── Initial order + customer sync ───────────────────────────────────
         // Orders and customers are synced INDEPENDENTLY. They authenticate against

@@ -1,6 +1,7 @@
 //apps/api/src/services/pagespeed.service.ts
 import { createHash } from 'crypto';
 import { prisma, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient, getSiteDataPlaneClient } from '../lib/tenant-prisma';
 import { PageUrlDiscoveryService, DiscoveryPageType, DiscoveredUrl, SAMPLE_CAPS } from './page-url-discovery.service';
 
 type PagespeedMetricName = 'lcp' | 'fcp' | 'fid' | 'cls' | 'ttfb' | 'tti';
@@ -219,7 +220,11 @@ export class PageSpeedService {
 
     static async getLatestMetrics(projectId: string, connectorInstanceId?: string): Promise<any> {
         try {
-            const metrics = await (prisma.performanceMetric as any).findMany({
+            // DATABASE-PER-INTEGRATION: performance_metrics is a data-plane table.
+            const db = connectorInstanceId
+                ? await getDataPlaneClient(connectorInstanceId)
+                : await getSiteDataPlaneClient(projectId);
+            const metrics = await (db.performanceMetric as any).findMany({
                 where: {
                     siteId: projectId,
                     ...(connectorInstanceId ? { connectorInstanceId } : {}),
@@ -625,7 +630,12 @@ export class PageSpeedService {
             metricValue: input.metricValue,
         });
 
-        await (prisma.performanceMetric as any).upsert({
+        // DATABASE-PER-INTEGRATION: route the write to the connector's store DB
+        // (falling back to the site's store DB when no connector id was passed).
+        const db = input.connectorInstanceId
+            ? await getDataPlaneClient(input.connectorInstanceId)
+            : await getSiteDataPlaneClient(input.siteId);
+        await (db.performanceMetric as any).upsert({
             where: {
                 siteId_metricName_source: {
                     siteId: input.siteId,
@@ -1075,7 +1085,11 @@ export class PageSpeedService {
         source: string,
         strategy: PagespeedStrategy,
     ): Promise<{ values: Partial<Record<PageMetricName, number>>; url: string | null; timestamp: string | null; ageMs: number } | null> {
-        const rows = await (prisma.performanceMetric as any).findMany({
+        // DATABASE-PER-INTEGRATION: performance_metrics is a data-plane table.
+        const db = connectorInstanceId
+            ? await getDataPlaneClient(connectorInstanceId)
+            : await getSiteDataPlaneClient(projectId);
+        const rows = await (db.performanceMetric as any).findMany({
             where: {
                 siteId: projectId,
                 ...(connectorInstanceId ? { connectorInstanceId } : {}),
@@ -1112,7 +1126,12 @@ export class PageSpeedService {
     }) {
         const source = this.buildPageSource(input.strategy, input.pageType, input.url);
         const unit = input.metricName === 'cls' || input.metricName === 'score' ? 'score' : 'ms';
-        await (prisma.performanceMetric as any).upsert({
+        // DATABASE-PER-INTEGRATION: route the write to the connector's store DB
+        // (falling back to the site's store DB when no connector id was passed).
+        const db = input.connectorInstanceId
+            ? await getDataPlaneClient(input.connectorInstanceId)
+            : await getSiteDataPlaneClient(input.siteId);
+        await (db.performanceMetric as any).upsert({
             where: { siteId_metricName_source: { siteId: input.siteId, metricName: input.metricName, source } },
             create: {
                 tenantId: input.tenantId, siteId: input.siteId, connectorInstanceId: input.connectorInstanceId || null,

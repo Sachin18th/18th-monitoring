@@ -2,6 +2,7 @@ import { prisma } from "@kpi-platform/db";
 import { successResponse, errorResponse } from "../utils/response";
 import crypto from "crypto";
 import { z } from "zod";
+import { getTenantDatabasesByTenant, getProvisioningEvents } from "../services/tenant-database.service";
 
 /**
  * Validation schema for creating a new project
@@ -61,6 +62,10 @@ export const createProject = async (req: any, reply: any) => {
     },
   }) as any;
 
+  // NOTE: store databases are provisioned per INTEGRATION (see
+  // IntegrationController.runInitialSetup), not per project — a fresh project
+  // has no data-plane database until its first integration is created.
+
   return reply.code(201).send(
     successResponse({
       id: newProject.id,
@@ -114,4 +119,63 @@ export const updateProject = async (req: any, reply: any) => {
   });
 
   return reply.code(200).send(successResponse(updatedProject));
+};
+
+/**
+ * GET the current tenant's store-database provisioning status + recent
+ * lifecycle events — one entry per integration (database-per-integration).
+ * Powers the onboarding progress indicator (same polling UX as the connector
+ * initial-sync status). Tenant is taken from the caller's JWT.
+ */
+export const getTenantDatabaseStatus = async (req: any, reply: any) => {
+  const { tenantId } = req.user;
+
+  const rows = await getTenantDatabasesByTenant(tenantId);
+  if (rows.length === 0) {
+    return reply.code(200).send(
+      successResponse({
+        status: "not_provisioned",
+        tenantId,
+        databases: [],
+      })
+    );
+  }
+
+  const databases = await Promise.all(
+    rows.map(async (row) => {
+      const events = await getProvisioningEvents(row.id);
+      return {
+        status: row.status, // pending | provisioning | active | failed
+        connectorInstanceId: row.connectorInstanceId,
+        projectId: row.projectId,
+        dbName: row.dbName,
+        provisionedAt: row.provisionedAt,
+        lastMigrationVersion: row.lastMigrationVersion,
+        lastError: row.lastError ?? null,
+        events: events.map((e) => ({
+          eventType: e.eventType,
+          fromStatus: e.fromStatus,
+          toStatus: e.toStatus,
+          severity: e.severity,
+          at: e.createdAt,
+        })),
+      };
+    })
+  );
+
+  // Overall status: failed > provisioning/pending > active — the worst state
+  // wins so the onboarding indicator surfaces problems.
+  const overall = databases.some((d) => d.status === "failed")
+    ? "failed"
+    : databases.some((d) => d.status !== "active")
+      ? "provisioning"
+      : "active";
+
+  return reply.code(200).send(
+    successResponse({
+      status: overall,
+      tenantId,
+      databases,
+    })
+  );
 };

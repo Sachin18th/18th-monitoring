@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { orderNormalizationService } from './order-normalization.service';
 import {
   getSinceCursor,
@@ -61,6 +62,11 @@ export class BigCommerceOrderSyncService {
       throw new Error('BigCommerce integration is missing accessToken credentials.');
     }
 
+    // DATA-PLANE routing: canonical orders/snapshots/events live in the
+    // integration's physical store DB when the data plane is enabled (else
+    // this is the shared control client). Connector bookkeeping stays on `prisma`.
+    const db = await getDataPlaneClient(instance.id);
+
     const runId = crypto.randomUUID();
     const startedAt = new Date();
 
@@ -98,7 +104,7 @@ export class BigCommerceOrderSyncService {
 
       for (const rawOrder of orders) {
         try {
-          const result = await this.upsertCanonicalOrder(instance, rawOrder);
+          const result = await this.upsertCanonicalOrder(db, instance, rawOrder);
           if (result === 'created') {
             created += 1;
           } else {
@@ -250,7 +256,7 @@ export class BigCommerceOrderSyncService {
     return allOrders;
   }
 
-  private static async upsertCanonicalOrder(instance: ConnectorRecord, rawOrder: any): Promise<'created' | 'updated'> {
+  private static async upsertCanonicalOrder(db: any, instance: ConnectorRecord, rawOrder: any): Promise<'created' | 'updated'> {
     const canonical = await orderNormalizationService.normalize(
       'bigcommerce',
       rawOrder,
@@ -258,7 +264,7 @@ export class BigCommerceOrderSyncService {
       instance.tenantId
     );
 
-    const existing = await prisma.canonicalOrder.findFirst({
+    const existing = await db.canonicalOrder.findFirst({
       where: {
         siteId: instance.siteId,
         tenantId: instance.tenantId,
@@ -310,7 +316,7 @@ export class BigCommerceOrderSyncService {
     };
 
     if (existing) {
-      await prisma.$transaction(async (tx) => {
+      await db.$transaction(async (tx: any) => {
         await tx.canonicalOrder.update({ where: { id: existing.id }, data });
       });
 
@@ -318,7 +324,7 @@ export class BigCommerceOrderSyncService {
     }
 
     const newId = crypto.randomUUID();
-    await prisma.$transaction(async (tx) => {
+    await db.$transaction(async (tx: any) => {
       await tx.canonicalOrder.create({ data: { id: newId, ...data } });
       await tx.orderSnapshot.create({
         data: {

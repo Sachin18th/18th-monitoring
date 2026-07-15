@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import {
     getSinceCursor,
     computeMaxCheckpoint,
@@ -78,6 +79,11 @@ export class ShopifyProductSyncService {
             throw new Error('Shopify integration is missing adminApiAccessToken credentials.');
         }
 
+        // DATA-PLANE routing: canonical products/categories live in the
+        // integration's physical store DB when the data plane is enabled (else
+        // this is the shared control client). Connector bookkeeping stays on `prisma`.
+        const db = await getDataPlaneClient(instance.id);
+
         const runId = crypto.randomUUID();
         const startedAt = new Date();
 
@@ -112,7 +118,7 @@ export class ShopifyProductSyncService {
 
             for (const product of products) {
                 try {
-                    const result = await this.upsertProduct(instance, product);
+                    const result = await this.upsertProduct(db, instance, product);
                     if (result === 'created') {
                         created += 1;
                     } else {
@@ -274,7 +280,7 @@ export class ShopifyProductSyncService {
      * (variants are collapsed): price/sku come from the first variant, inventory is summed
      * across variants.
      */
-    private static async upsertProduct(instance: ConnectorRecord, rawProduct: any): Promise<'created' | 'updated'> {
+    private static async upsertProduct(db: any, instance: ConnectorRecord, rawProduct: any): Promise<'created' | 'updated'> {
         const externalId = String(rawProduct?.id || '').trim();
         if (!externalId) {
             throw new Error('Product record is missing an external identifier.');
@@ -303,7 +309,7 @@ export class ShopifyProductSyncService {
             lastSyncedAt: new Date().toISOString()
         } as Prisma.InputJsonValue;
 
-        const existing = await prisma.canonicalProduct.findUnique({
+        const existing = await db.canonicalProduct.findUnique({
             where: {
                 siteId_tenantId_sourceSystem_productId: {
                     siteId: instance.siteId,
@@ -316,7 +322,7 @@ export class ShopifyProductSyncService {
         });
 
         if (existing) {
-            await prisma.canonicalProduct.update({
+            await db.canonicalProduct.update({
                 where: { id: existing.id },
                 data: {
                     name,
@@ -328,11 +334,11 @@ export class ShopifyProductSyncService {
                     metadata
                 }
             });
-            await this.syncCategories(instance, externalId, rawProduct, sourceUpdatedAt);
+            await this.syncCategories(db, instance, externalId, rawProduct, sourceUpdatedAt);
             return 'updated';
         }
 
-        await prisma.canonicalProduct.create({
+        await db.canonicalProduct.create({
             data: {
                 id: crypto.randomUUID(),
                 siteId: instance.siteId,
@@ -349,7 +355,7 @@ export class ShopifyProductSyncService {
             }
         });
 
-        await this.syncCategories(instance, externalId, rawProduct, sourceUpdatedAt);
+        await this.syncCategories(db, instance, externalId, rawProduct, sourceUpdatedAt);
         return 'created';
     }
 
@@ -360,6 +366,7 @@ export class ShopifyProductSyncService {
      * a secondary category so category-affinity analytics have something to group on.
      */
     private static async syncCategories(
+        db: any,
         instance: ConnectorRecord,
         productId: string,
         rawProduct: any,
@@ -384,7 +391,7 @@ export class ShopifyProductSyncService {
         }
 
         for (const category of categories) {
-            await prisma.canonicalProductCategory.upsert({
+            await db.canonicalProductCategory.upsert({
                 where: {
                     siteId_tenantId_sourceSystem_productId_categoryName: {
                         siteId: instance.siteId,

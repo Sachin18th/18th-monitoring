@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import {
     getSinceCursor,
     computeMaxCheckpoint,
@@ -74,6 +75,11 @@ export class ShopifyCustomerSyncService {
             throw new Error('Shopify integration is missing adminApiAccessToken credentials.');
         }
 
+        // DATA-PLANE routing: customer profiles live in the integration's
+        // physical store DB when the data plane is enabled (else this is the
+        // shared control client). Connector bookkeeping stays on `prisma`.
+        const db = await getDataPlaneClient(instance.id);
+
         const runId = crypto.randomUUID();
         const startedAt = new Date();
 
@@ -108,7 +114,7 @@ export class ShopifyCustomerSyncService {
 
             for (const customer of customers) {
                 try {
-                    const result = await this.upsertCustomerProfile(instance, customer);
+                    const result = await this.upsertCustomerProfile(db, instance, customer);
                     if (result === 'created') {
                         created += 1;
                     } else {
@@ -264,13 +270,13 @@ export class ShopifyCustomerSyncService {
         return withoutPath.replace(/\/+$/, '').trim();
     }
 
-    private static async upsertCustomerProfile(instance: ConnectorRecord, rawCustomer: any): Promise<'created' | 'updated'> {
+    private static async upsertCustomerProfile(db: any, instance: ConnectorRecord, rawCustomer: any): Promise<'created' | 'updated'> {
         const customerId = String(rawCustomer?.id || '');
         const email = String(rawCustomer?.email || '').trim();
         const phone = rawCustomer?.phone ? String(rawCustomer.phone).trim() : null;
 
         // Check if customer already exists by external ID
-        const existing = await prisma.customerProfile.findFirst({
+        const existing = await db.customerProfile.findFirst({
             where: {
                 siteId: instance.siteId,
                 tenantId: instance.tenantId,
@@ -319,7 +325,7 @@ export class ShopifyCustomerSyncService {
         };
 
         if (existing) {
-            const updated = await prisma.customerProfile.update({
+            const updated = await db.customerProfile.update({
                 where: { id: existing.id },
                 data: {
                     lastSeenAt: new Date(rawCustomer?.updated_at || new Date()),
@@ -334,7 +340,7 @@ export class ShopifyCustomerSyncService {
             return 'updated';
         }
 
-        await prisma.customerProfile.create({
+        await db.customerProfile.create({
             data
         });
 

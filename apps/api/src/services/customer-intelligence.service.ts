@@ -1,4 +1,5 @@
 import { prisma, hashEmail, encryptEmail } from '@kpi-platform/db';
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
 import { 
     CustomerProfile, 
     CustomerEvent, 
@@ -28,9 +29,12 @@ export class CustomerIntelligenceService {
         });
         const tenantId = project?.tenantId || 'tenant_001';
 
+        // customer_profiles lives in the site's store DB (database-per-integration).
+        const db = await getSiteDataPlaneClient(options.siteId);
+
         // 1. ATTEMPT MATCH BY EMAIL HASH (Strong Link)
         if (emailHash) {
-            const existing = await prisma.customerProfile.findFirst({
+            const existing = await db.customerProfile.findFirst({
                 where: {
                     siteId: options.siteId,
                     emailHash
@@ -47,7 +51,7 @@ export class CustomerIntelligenceService {
 
         // 3. CREATE NEW PROFILE IF NO MATCH
         const newId = crypto.randomUUID();
-        await prisma.customerProfile.create({
+        await db.customerProfile.create({
             data: {
                 id: newId,
                 siteId: options.siteId,
@@ -82,7 +86,7 @@ export class CustomerIntelligenceService {
         // customerEvent table removed — query neutralized
 
         // 3. COMPUTE LIFECYCLE PROGRESSION (Requirement 14)
-        await this.updateLifecycle(customerId, event.eventCategory);
+        await this.updateLifecycle(event.siteId, customerId, event.eventCategory);
 
         return { eventId, customerId, sessionId };
     }
@@ -102,13 +106,14 @@ export class CustomerIntelligenceService {
         return newSessionId;
     }
 
-    private static async updateLifecycle(id: string, category: string) {
+    private static async updateLifecycle(siteId: string, id: string, category: string) {
         // Requirement 14: Lifecycle computation
         let nextState: CustomerLifecycleState = 'ENGAGED_USER';
         if (category === 'CART') nextState = 'CART_STARTER';
         if (category === 'PURCHASE') nextState = 'PURCHASER';
 
-        await prisma.customerProfile.updateMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        await db.customerProfile.updateMany({
             where: { id },
             data: { lifecycleState: nextState, lastSeenAt: new Date() }
         });

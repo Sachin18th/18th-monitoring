@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, encryptEmail, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 
 type ConnectorRecord = {
     id: string;
@@ -113,6 +114,11 @@ export class ShopifyJourneySyncService {
             throw new Error('Shopify integration is missing adminApiAccessToken credentials.');
         }
 
+        // DATA-PLANE routing: customer profiles/sessions/events live in the
+        // integration's physical store DB when the data plane is enabled (else
+        // this is the shared control client). Connector bookkeeping stays on `prisma`.
+        const db = await getDataPlaneClient(instance.id);
+
         const runId = crypto.randomUUID();
         const startedAt = new Date();
 
@@ -142,7 +148,7 @@ export class ShopifyJourneySyncService {
 
             for (const order of orders) {
                 try {
-                    const result = await this.persistOrderJourney(instance, order);
+                    const result = await this.persistOrderJourney(db, instance, order);
                     sessionsUpserted += result.sessions;
                     eventsUpserted += result.events;
                 } catch (err) {
@@ -301,6 +307,7 @@ export class ShopifyJourneySyncService {
     }
 
     private static async persistOrderJourney(
+        db: any,
         instance: ConnectorRecord,
         order: ShopifyJourneyOrder
     ): Promise<{ sessions: number; events: number }> {
@@ -323,7 +330,7 @@ export class ShopifyJourneySyncService {
             return { sessions: 0, events: 0 };
         }
 
-        const customerId = await this.resolveCustomerProfileId(instance, order);
+        const customerId = await this.resolveCustomerProfileId(db, instance, order);
         const convertingVisitId = journey.lastVisit?.id || visits[visits.length - 1]?.id || null;
 
         const orderAmount = Number(order.totalPriceSet?.shopMoney?.amount || 0);
@@ -369,6 +376,7 @@ export class ShopifyJourneySyncService {
      * Mirrors the externalIds.shopify lookup used by ShopifyCustomerSyncService.
      */
     private static async resolveCustomerProfileId(
+        db: any,
         instance: ConnectorRecord,
         order: ShopifyJourneyOrder
     ): Promise<string> {
@@ -377,7 +385,7 @@ export class ShopifyJourneySyncService {
         const emailHash = hashEmail(email);
 
         if (shopifyCustomerId) {
-            const byExternalId = await prisma.customerProfile.findFirst({
+            const byExternalId = await db.customerProfile.findFirst({
                 where: {
                     siteId: instance.siteId,
                     tenantId: instance.tenantId,
@@ -389,7 +397,7 @@ export class ShopifyJourneySyncService {
         }
 
         if (emailHash) {
-            const byEmail = await prisma.customerProfile.findFirst({
+            const byEmail = await db.customerProfile.findFirst({
                 where: { siteId: instance.siteId, tenantId: instance.tenantId, emailHash },
                 select: { id: true }
             });
@@ -403,7 +411,7 @@ export class ShopifyJourneySyncService {
             : `guest:${instance.siteId}:${order.id}`;
         const profileId = stableUuid(seed);
 
-        await prisma.customerProfile.upsert({
+        await db.customerProfile.upsert({
             where: { id: profileId },
             create: {
                 id: profileId,

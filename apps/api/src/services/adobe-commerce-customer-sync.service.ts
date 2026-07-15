@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 import {
     getSinceCursor,
@@ -83,6 +84,11 @@ export class AdobeCommerceCustomerSyncService {
             maskedToken: `${accessToken.slice(0, 4)}...${accessToken.slice(-4)}`
         });
 
+        // DATA-PLANE routing: customer profiles live in the integration's
+        // physical store DB when the data plane is enabled (else this is the
+        // shared control client). Connector bookkeeping stays on `prisma`.
+        const db = await getDataPlaneClient(instance.id);
+
         const runId = crypto.randomUUID();
         const startedAt = new Date();
 
@@ -116,7 +122,7 @@ export class AdobeCommerceCustomerSyncService {
 
             for (const rawCustomer of customers) {
                 try {
-                    const result = await this.upsertCustomerProfile(instance, rawCustomer);
+                    const result = await this.upsertCustomerProfile(db, instance, rawCustomer);
                     if (result === 'created') {
                         created += 1;
                     } else {
@@ -306,7 +312,7 @@ export class AdobeCommerceCustomerSyncService {
         return all;
     }
 
-    private static async upsertCustomerProfile(instance: ConnectorRecord, rawCustomer: any): Promise<'created' | 'updated'> {
+    private static async upsertCustomerProfile(db: any, instance: ConnectorRecord, rawCustomer: any): Promise<'created' | 'updated'> {
         const customerId = String(rawCustomer?.id || '');
         const email = String(rawCustomer?.email || '').trim();
         const phone = rawCustomer?.addresses?.[0]?.telephone ? String(rawCustomer.addresses[0].telephone).trim() : null;
@@ -314,7 +320,7 @@ export class AdobeCommerceCustomerSyncService {
         const isSubscribed = Boolean(rawCustomer?.is_subscribed ?? rawCustomer?.extension_attributes?.is_subscribed ?? false);
 
         // Check if customer already exists by external ID
-        const existing = await prisma.customerProfile.findFirst({
+        const existing = await db.customerProfile.findFirst({
             where: {
                 siteId: instance.siteId,
                 tenantId: instance.tenantId,
@@ -360,7 +366,7 @@ export class AdobeCommerceCustomerSyncService {
         };
 
         if (existing) {
-            await prisma.customerProfile.update({
+            await db.customerProfile.update({
                 where: { id: existing.id },
                 data: {
                     lastSeenAt: new Date(rawCustomer?.updated_at || new Date()),
@@ -374,7 +380,7 @@ export class AdobeCommerceCustomerSyncService {
             return 'updated';
         }
 
-        await prisma.customerProfile.create({
+        await db.customerProfile.create({
             data: {
                 ...data
             }

@@ -1,6 +1,7 @@
 //apps/api/src/services/dashboard.service.ts
 import { prisma, decryptEmail } from '@kpi-platform/db';
 import { Prisma } from '@prisma/client';
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
 import type { MetricFilterDto, KpiSummaryResponse, AlertSummaryResponse } from '../models/dashboard.dto';
 import { AnalyticsEngine } from './analytics-engine.service';
 import { PaymentGatewayService } from './payment-gateway.service';
@@ -343,9 +344,10 @@ export class DashboardService {
 
     static async getPerformanceAnomalies(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
+        const db = await getSiteDataPlaneClient(siteId);
+
         // Query for anomalies based on thresholds
-        const metrics = await prisma.performanceMetric.findMany({
+        const metrics = await db.performanceMetric.findMany({
             where: { siteId },
             select: { metricName: true, metricValue: true, region: true, timestamp: true }
         });
@@ -353,9 +355,9 @@ export class DashboardService {
         const anomalies = [];
         
         // Check for high latency
-        const latencyMetrics = metrics.filter(m => m.metricName === 'pageLoadTime');
+        const latencyMetrics = metrics.filter((m: any) => m.metricName === 'pageLoadTime');
         if (latencyMetrics.length > 0) {
-            const avgLatency = latencyMetrics.reduce((s, m) => s + Number(m.metricValue), 0) / latencyMetrics.length;
+            const avgLatency = latencyMetrics.reduce((s: number, m: any) => s + Number(m.metricValue), 0) / latencyMetrics.length;
             if (avgLatency > 3000) {
                 anomalies.push({
                     id: 'anom-latency',
@@ -371,9 +373,9 @@ export class DashboardService {
         }
 
         // Check for high error rate
-        const errorMetrics = metrics.filter(m => m.metricName === 'errorRate');
+        const errorMetrics = metrics.filter((m: any) => m.metricName === 'errorRate');
         if (errorMetrics.length > 0) {
-            const avgError = errorMetrics.reduce((s, m) => s + Number(m.metricValue), 0) / errorMetrics.length;
+            const avgError = errorMetrics.reduce((s: number, m: any) => s + Number(m.metricValue), 0) / errorMetrics.length;
             if (avgError > 5) {
                 anomalies.push({
                     id: 'anom-error',
@@ -393,13 +395,14 @@ export class DashboardService {
 
     static async getRegionalPerformance(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const metrics = await prisma.performanceMetric.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const metrics = await db.performanceMetric.findMany({
             where: { siteId, metricName: 'latencyByRegion' },
             select: { region: true, metricValue: true }
         });
-        
-        const regions = metrics.map(m => ({
+
+        const regions = metrics.map((m: any) => ({
             region: m.region || 'Unknown',
             countryCode: m.region || '??',
             avgLatency: Math.round(Number(m.metricValue)),
@@ -428,7 +431,8 @@ export class DashboardService {
         const connectorIds = connectors.map(c => c.id);
         if (connectorIds.length === 0) return [];
 
-        const sessions = await prisma.storefrontSession.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const sessions = await db.storefrontSession.findMany({
             where: { connectorInstanceId: { in: connectorIds } },
             select: { connectorInstanceId: true, deviceType: true }
         });
@@ -468,8 +472,9 @@ export class DashboardService {
 
     static async getResourceBreakdown(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const resources = await prisma.performanceMetric.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const resources = await db.performanceMetric.findMany({
             where: { siteId, metricName: { in: ['resourceSizeImages', 'resourceSizeJS', 'resourceSizeCSS', 'resourceSizeFonts', 'resourceSizeOther'] } },
             select: { metricName: true, metricValue: true }
         });
@@ -482,7 +487,7 @@ export class DashboardService {
             'Other': 0
         };
 
-        resources.forEach(r => {
+        resources.forEach((r: any) => {
             const name = r.metricName.replace('resourceSize', '');
             if (resourceMap[name] !== undefined) {
                 resourceMap[name] = Number(r.metricValue);
@@ -503,8 +508,9 @@ export class DashboardService {
 
     static async getPerformanceTrends(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const records = await prisma.performanceMetric.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const records = await db.performanceMetric.findMany({
             where: { siteId, metricName: 'pageLoadTime' },
             orderBy: { timestamp: 'desc' },
             take: 12,
@@ -516,7 +522,7 @@ export class DashboardService {
             return [];
         }
 
-        return records.map(r => ({
+        return records.map((r: any) => ({
             timestamp: r.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             pageLoadTime: Number(r.metricValue),
             ttfb: Number(r.metricValue) * 0.15,
@@ -527,13 +533,14 @@ export class DashboardService {
 
     static async getSlowestPages(filters: MetricFilterDto) {
         const { siteId } = filters;
-        const records = await prisma.performanceMetric.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const records = await db.performanceMetric.findMany({
             where: { siteId, metricName: 'pageLoadTime' },
             select: { route: true, metricValue: true }
         });
-        
+
         const urlMap: Record<string, { total: number, count: number }> = {};
-        records.forEach(r => {
+        records.forEach((r: any) => {
             const url = r.route || '/unknown';
             if (!urlMap[url]) urlMap[url] = { total: 0, count: 0 };
             urlMap[url].total += Number(r.metricValue);
@@ -557,8 +564,9 @@ export class DashboardService {
 
     static async getUserActivitySummary(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const metrics = await prisma.performanceMetric.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const metrics = await db.performanceMetric.findMany({
             where: { siteId, metricName: 'activeUsers' },
             select: { device: true }
         });
@@ -580,7 +588,8 @@ export class DashboardService {
     static async getCustomerIntelligence(filters: MetricFilterDto) {
         const { siteId } = filters;
         const tenantId = (filters as any).tenantId;
-        
+        const db = await getSiteDataPlaneClient(siteId);
+
                 const { connectorInstanceId } = filters;
                 // Avoid showing platform-provisioned default gateways (e.g. demo Razorpay)
                 // unless a manual gateway config exists for the project. This prevents
@@ -607,16 +616,16 @@ export class DashboardService {
                     lastLoginAt: true
                 }
             }),
-            prisma.canonicalOrder.count({
+            db.canonicalOrder.count({
                 where: {
                     siteId,
                     ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
                 }
             }),
-            prisma.performanceMetric.count({
+            db.performanceMetric.count({
                 where: { siteId, metricName: 'sessionStart' }
             }),
-            prisma.performanceMetric.count({
+            db.performanceMetric.count({
                 where: { siteId, metricName: 'pageView' }
             }),
             // Only sync configured gateways if there is at least one manual config.
@@ -691,7 +700,7 @@ export class DashboardService {
         // an email is known (hash or reversible envelope present).
         const profileFrom = (filters as any).startDate ? new Date((filters as any).startDate) : from;
         const profileTo = (filters as any).endDate ? new Date((filters as any).endDate) : to;
-        const profiles = await prisma.customerProfile.findMany({
+        const profiles = await db.customerProfile.findMany({
             where: {
                 siteId,
                 ...connectorFilter,
@@ -704,7 +713,7 @@ export class DashboardService {
         });
 
         const totalProfiles = profiles.length;
-        const identifiedCount = profiles.filter(p => p.emailHash || p.emailEncrypted).length;
+        const identifiedCount = profiles.filter((p: any) => p.emailHash || p.emailEncrypted).length;
         const identifiedPct = totalProfiles > 0 ? Math.round((identifiedCount / totalProfiles) * 1000) / 10 : 0;
 
         // Repeat buyers come from canonical_orders, not profile metadata (the
@@ -715,7 +724,7 @@ export class DashboardService {
         const connectorSql = connectorInstanceId && connectorInstanceId !== 'all'
             ? Prisma.sql`AND connector_instance_id = ${connectorInstanceId}`
             : Prisma.empty;
-        const buyerRows = await prisma.$queryRaw<Array<{ order_count: bigint }>>(Prisma.sql`
+        const buyerRows: Array<{ order_count: bigint }> = await db.$queryRaw(Prisma.sql`
             SELECT COUNT(*) AS order_count
             FROM canonical_orders
             WHERE site_id = ${siteId}
@@ -786,21 +795,22 @@ export class DashboardService {
 
     static async getUserTrends(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const sessionCount = await prisma.performanceMetric.count({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const sessionCount = await db.performanceMetric.count({
             where: { siteId, metricName: 'sessionStart' }
         });
 
-        const pageViewCount = await prisma.performanceMetric.count({
+        const pageViewCount = await db.performanceMetric.count({
             where: { siteId, metricName: 'pageView' }
         });
 
-        const metrics = await prisma.performanceMetric.findMany({
+        const metrics = await db.performanceMetric.findMany({
             where: { siteId, metricName: 'sessionStart' },
             select: { device: true }
         });
 
-        const userCount = new Set(metrics.map(e => e.device || 'session')).size;
+        const userCount = new Set(metrics.map((e: any) => e.device || 'session')).size;
 
         return {
             sessions: sessionCount,
@@ -829,7 +839,8 @@ export class DashboardService {
         const activeSessions = sessions.filter(s => s.expiresAt.getTime() > now);
 
         // Estimate device/browser breakdown from performance metrics
-        const metrics = await prisma.performanceMetric.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const metrics = await db.performanceMetric.findMany({
             where: { siteId, metricName: 'userAgent' },
             take: activeSessions.length,
             select: { device: true, browser: true }
@@ -838,7 +849,7 @@ export class DashboardService {
         const deviceBreakdown: Record<string, number> = { desktop: 0, mobile: 0, tablet: 0 };
         const browserBreakdown: Record<string, number> = { chrome: 0, safari: 0, edge: 0, firefox: 0, other: 0 };
         
-        metrics.forEach(m => {
+        metrics.forEach((m: any) => {
             const device = (m.device || 'desktop').toLowerCase();
             if (deviceBreakdown[device] !== undefined) deviceBreakdown[device]++;
             else deviceBreakdown.desktop++;
@@ -870,14 +881,15 @@ export class DashboardService {
 
     static async getTopPages(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const records = await prisma.performanceMetric.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const records = await db.performanceMetric.findMany({
             where: { siteId, metricName: 'pageView' },
             select: { route: true }
         });
-        
+
         const urlMap: Record<string, number> = {};
-        records.forEach(r => {
+        records.forEach((r: any) => {
             const url = r.route || '/';
             urlMap[url] = (urlMap[url] || 0) + 1;
         });
@@ -890,13 +902,14 @@ export class DashboardService {
 
     static async getFunnelData(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const orders = await prisma.canonicalOrder.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const orders = await db.canonicalOrder.findMany({
             where: { siteId },
             select: { id: true, normalizedStatus: true }
         });
 
-        const sessionCount = await prisma.performanceMetric.count({
+        const sessionCount = await db.performanceMetric.count({
             where: { siteId, metricName: 'sessionStart' }
         }) || orders.length * 8;
 
@@ -904,8 +917,8 @@ export class DashboardService {
             { step: 'Landing Page', count: sessionCount },
             { step: 'Product View', count: Math.round(sessionCount * 0.65) },
             { step: 'Add to Cart', count: Math.round(sessionCount * 0.22) },
-            { step: 'Checkout', count: orders.filter(o => ['placed','paid','shipped','delivered'].includes((o.normalizedStatus || '').toLowerCase())).length || Math.round(sessionCount * 0.12) },
-            { step: 'Purchase', count: orders.filter(o => ['paid','shipped','delivered'].includes((o.normalizedStatus || '').toLowerCase())).length || Math.round(sessionCount * 0.08) }
+            { step: 'Checkout', count: orders.filter((o: any) => ['placed','paid','shipped','delivered'].includes((o.normalizedStatus || '').toLowerCase())).length || Math.round(sessionCount * 0.12) },
+            { step: 'Purchase', count: orders.filter((o: any) => ['paid','shipped','delivered'].includes((o.normalizedStatus || '').toLowerCase())).length || Math.round(sessionCount * 0.08) }
         ];
         const top = stages[0].count || 1;
         return stages.map(s => ({ ...s, percentage: Math.round((s.count / top) * 100) }));
@@ -917,13 +930,14 @@ export class DashboardService {
      */
     static async getOrderSummary(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId, startDate, endDate } = filters as any;
+        const db = await getSiteDataPlaneClient(siteId);
 
         // Scope to the selected time period (orders placed within the window).
         const from = startDate ? new Date(startDate) : null;
         const to = endDate ? new Date(endDate) : new Date();
         const dateFilter = from ? { placedAt: { gte: from, lte: to } } : {};
 
-        const allOrders = await prisma.canonicalOrder.findMany({
+        const allOrders = await db.canonicalOrder.findMany({
             where: {
                 siteId,
                 ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {}),
@@ -969,31 +983,31 @@ export class DashboardService {
 
         const failedCount = allOrders.filter(isFailedOrder).length;
         const delayedCount = allOrders.filter(isDelayedOrder).length;
-        const mismatches = allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'MISMATCH').length;
+        const mismatches = allOrders.filter((o: any) => (o.normalizedStatus || '').toUpperCase() === 'MISMATCH').length;
 
         // Real revenue at risk: the actual order value tied up in orders that are
         // either failed (critical states) or delayed (still processing). An order
         // can match both predicates, so we de-dupe on id before summing.
-        const atRiskOrders = allOrders.filter(o => isFailedOrder(o) || isDelayedOrder(o));
-        const revenueAtRisk = atRiskOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-        
+        const atRiskOrders = allOrders.filter((o: any) => isFailedOrder(o) || isDelayedOrder(o));
+        const revenueAtRisk = atRiskOrders.reduce((sum: number, order: any) => sum + Number(order.totalAmount || 0), 0);
+
         const now = Date.now();
         const hourAgo = now - 3600000;
-        const ordersThisHour = allOrders.filter(o => {
+        const ordersThisHour = allOrders.filter((o: any) => {
             const orderTimestamp = o.placedAt ?? o.createdAt;
             return orderTimestamp.getTime() > hourAgo;
         }).length;
 
-        const totalRevenue = allOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
-        const taxTotal = allOrders.reduce((sum, order) => sum + Number(order.taxAmount || 0), 0);
+        const totalRevenue = allOrders.reduce((sum: number, order: any) => sum + Number(order.totalAmount || 0), 0);
+        const taxTotal = allOrders.reduce((sum: number, order: any) => sum + Number(order.taxAmount || 0), 0);
         const averageOrderValue = allOrders.length > 0 ? totalRevenue / allOrders.length : 0;
-        
+
         const stages = [
-            { stage: 'Placed', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'PLACED').length, color: '#3b82f6' },
-            { stage: 'Processing', count: allOrders.filter(o => (o.lifecycleState || '').toUpperCase() === 'PROCESSING').length, color: '#f59e0b' },
-            { stage: 'Shipped', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'SHIPPED').length, color: '#10b981' },
-            { stage: 'Delivered', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'DELIVERED').length, color: '#059669' },
-            { stage: 'Cancelled', count: allOrders.filter(o => (o.normalizedStatus || '').toUpperCase() === 'CANCELLED').length, color: '#ef4444' },
+            { stage: 'Placed', count: allOrders.filter((o: any) => (o.normalizedStatus || '').toUpperCase() === 'PLACED').length, color: '#3b82f6' },
+            { stage: 'Processing', count: allOrders.filter((o: any) => (o.lifecycleState || '').toUpperCase() === 'PROCESSING').length, color: '#f59e0b' },
+            { stage: 'Shipped', count: allOrders.filter((o: any) => (o.normalizedStatus || '').toUpperCase() === 'SHIPPED').length, color: '#10b981' },
+            { stage: 'Delivered', count: allOrders.filter((o: any) => (o.normalizedStatus || '').toUpperCase() === 'DELIVERED').length, color: '#059669' },
+            { stage: 'Cancelled', count: allOrders.filter((o: any) => (o.normalizedStatus || '').toUpperCase() === 'CANCELLED').length, color: '#ef4444' },
         ];
 
         return {
@@ -1018,8 +1032,9 @@ export class DashboardService {
 
     static async getOrderTrends(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId, timeRange, startDate, endDate } = filters as any;
+        const db = await getSiteDataPlaneClient(siteId);
 
-        const orders = await prisma.canonicalOrder.findMany({
+        const orders = await db.canonicalOrder.findMany({
             where: {
                 siteId,
                 ...(connectorInstanceId && connectorInstanceId !== 'all' ? { connectorInstanceId } : {})
@@ -1043,7 +1058,7 @@ export class DashboardService {
         // "all" has no real lower bound — anchor it to the earliest order so we
         // don't render thousands of empty monthly buckets back to the epoch.
         if (timeRange === 'all') {
-            const times = orders.map(o => (o.placedAt ?? o.createdAt).getTime());
+            const times = orders.map((o: any) => (o.placedAt ?? o.createdAt).getTime());
             from = times.length ? new Date(Math.min(...times)) : new Date(to.getTime() - 30 * 24 * 3600000);
         }
 
@@ -1083,7 +1098,7 @@ export class DashboardService {
         }
 
         const fromMs = from.getTime();
-        orders.forEach(o => {
+        orders.forEach((o: any) => {
             const ts = (o.placedAt ?? o.createdAt).getTime();
             if (ts < fromMs || ts > endMs) return;
             const bucket = buckets.get(startOf(new Date(ts)).getTime());
@@ -1102,10 +1117,11 @@ export class DashboardService {
 
     static async getOrderRCA(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId } = filters;
+        const db = await getSiteDataPlaneClient(siteId);
         const anomalies = [];
-        
+
         // 1. Check for Performance Correlation
-        const perfMetrics = await prisma.performanceMetric.findMany({
+        const perfMetrics = await db.performanceMetric.findMany({
             where: {
                 siteId,
                 metricName: 'pageLoadTime',
@@ -1114,8 +1130,8 @@ export class DashboardService {
             select: { metricValue: true }
         });
 
-        const avgLatency = perfMetrics.length > 0 
-            ? perfMetrics.reduce((acc, m) => acc + Number(m.metricValue), 0) / perfMetrics.length 
+        const avgLatency = perfMetrics.length > 0
+            ? perfMetrics.reduce((acc: number, m: any) => acc + Number(m.metricValue), 0) / perfMetrics.length
             : 0;
         
         if (avgLatency > 3000) {
@@ -1144,7 +1160,7 @@ export class DashboardService {
         }
 
         // 3. Check for JS Errors
-        const jsErrors = await prisma.performanceMetric.count({
+        const jsErrors = await db.performanceMetric.count({
             where: { siteId, metricName: 'jsError' }
         });
 
@@ -1206,7 +1222,8 @@ export class DashboardService {
 
     static async getDelayedOrders(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId } = filters;
-        const orders = await prisma.canonicalOrder.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const orders = await db.canonicalOrder.findMany({
             where: {
                 siteId,
                 normalizedStatus: 'PLACED',
@@ -1216,8 +1233,8 @@ export class DashboardService {
             take: 10,
             select: { id: true, createdAt: true, placedAt: true, channel: true }
         });
-        
-        return orders.map(o => ({
+
+        return orders.map((o: any) => ({
             orderId: o.id,
             placedAt: (o.placedAt ?? o.createdAt).toISOString(),
             channel: o.channel || 'Unknown',
@@ -1227,14 +1244,15 @@ export class DashboardService {
 
     static async getOrderSourceBreakdown(filters: MetricFilterDto) {
         const { siteId } = filters;
-        
-        const orders = await prisma.canonicalOrder.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+
+        const orders = await db.canonicalOrder.findMany({
             where: { siteId },
             select: { channel: true }
         });
-        
+
         const channels: Record<string, number> = { 'Web': 0, 'Mobile': 0, 'POS': 0, 'API': 0 };
-        orders.forEach(o => {
+        orders.forEach((o: any) => {
             const ch = (o.channel || 'Web').charAt(0).toUpperCase() + (o.channel || 'Web').slice(1);
             channels[ch] = (channels[ch] || 0) + 1;
         });
@@ -1349,7 +1367,8 @@ export class DashboardService {
         const take = Math.min(Math.max(Number(filters.limit) || 1000, 1), 10000);
         const skip = Math.max(Number(filters.offset) || 0, 0);
 
-        const orders = await prisma.canonicalOrder.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const orders = await db.canonicalOrder.findMany({
             where: { siteId },
             orderBy: { placedAt: 'desc' },
             take,
@@ -1363,8 +1382,8 @@ export class DashboardService {
         // siteId mismatch between the sync (writer) and the dashboard (reader).
         if (orders.length === 0) {
             const [totalInDb, siteRows] = await Promise.all([
-                prisma.canonicalOrder.count(),
-                prisma.canonicalOrder.findMany({ distinct: ['siteId'], select: { siteId: true }, take: 25 })
+                db.canonicalOrder.count(),
+                db.canonicalOrder.findMany({ distinct: ['siteId'], select: { siteId: true }, take: 25 })
             ]);
             console.warn('[DashboardService.getOrders] 0 orders for this siteId — diagnostics', {
                 requestedSiteId: siteId,
@@ -1402,7 +1421,8 @@ export class DashboardService {
 
     static async getCustomers(filters: MetricFilterDto) {
         const { siteId } = filters;
-        const customers = await prisma.customerProfile.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const customers = await db.customerProfile.findMany({
             where: { siteId },
             orderBy: { lastSeenAt: 'desc' }
         });
@@ -1412,8 +1432,8 @@ export class DashboardService {
         // Diagnostic: same siteId-mismatch check as getOrders.
         if (customers.length === 0) {
             const [totalInDb, siteRows] = await Promise.all([
-                prisma.customerProfile.count(),
-                prisma.customerProfile.findMany({ distinct: ['siteId'], select: { siteId: true }, take: 25 })
+                db.customerProfile.count(),
+                db.customerProfile.findMany({ distinct: ['siteId'], select: { siteId: true }, take: 25 })
             ]);
             console.warn('[DashboardService.getCustomers] 0 customers for this siteId — diagnostics', {
                 requestedSiteId: siteId,
@@ -1601,6 +1621,7 @@ export class DashboardService {
      */
     static async getStorefrontDigest(filters: MetricFilterDto) {
         const { siteId, connectorInstanceId, startDate, endDate } = filters as any;
+        const db = await getSiteDataPlaneClient(siteId);
         const from = startDate ? new Date(startDate) : new Date(Date.now() - 24 * 60 * 60 * 1000);
         const to = endDate ? new Date(endDate) : new Date();
         const connectorScope = connectorInstanceId && connectorInstanceId !== 'all'
@@ -1615,7 +1636,7 @@ export class DashboardService {
         };
 
         const [errorRows, errorTotal] = await Promise.all([
-            (prisma.storefrontError as any).findMany({
+            (db.storefrontError as any).findMany({
                 where: errorWhere,
                 orderBy: { occurredAt: 'desc' },
                 take: 200,
@@ -1627,7 +1648,7 @@ export class DashboardService {
                     occurredAt: true,
                 },
             }),
-            (prisma.storefrontError as any).count({ where: errorWhere }),
+            (db.storefrontError as any).count({ where: errorWhere }),
         ]);
 
         const byTypeMap = new Map<string, number>();

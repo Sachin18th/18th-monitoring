@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, hashPhone, encryptEmail, scrubEmails, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import {
   getSinceCursor,
   computeMaxCheckpoint,
@@ -60,6 +61,11 @@ export class BigCommerceCustomerSyncService {
       throw new Error('BigCommerce integration is missing accessToken credentials.');
     }
 
+    // DATA-PLANE routing: customer profiles live in the integration's
+    // physical store DB when the data plane is enabled (else this is the
+    // shared control client). Connector bookkeeping stays on `prisma`.
+    const db = await getDataPlaneClient(instance.id);
+
     const runId = crypto.randomUUID();
     const startedAt = new Date();
 
@@ -88,7 +94,7 @@ export class BigCommerceCustomerSyncService {
 
       for (const rawCustomer of customers) {
         try {
-          const result = await this.upsertCustomerProfile(instance, rawCustomer);
+          const result = await this.upsertCustomerProfile(db, instance, rawCustomer);
           if (result === 'created') {
             created += 1;
           } else {
@@ -218,7 +224,7 @@ export class BigCommerceCustomerSyncService {
     return allCustomers;
   }
 
-  private static async upsertCustomerProfile(instance: ConnectorRecord, rawCustomer: any): Promise<'created' | 'updated'> {
+  private static async upsertCustomerProfile(db: any, instance: ConnectorRecord, rawCustomer: any): Promise<'created' | 'updated'> {
     const customerId = String(rawCustomer?.id || '');
     if (!customerId) {
       throw new Error('BigCommerce customer record is missing an id.');
@@ -227,7 +233,7 @@ export class BigCommerceCustomerSyncService {
     const email = String(rawCustomer?.email || '').trim().toLowerCase();
     const phone = String(rawCustomer?.phone || rawCustomer?.addresses?.[0]?.phone || rawCustomer?.addresses?.[0]?.telephone || '').trim();
 
-    const existing = await prisma.customerProfile.findFirst({
+    const existing = await db.customerProfile.findFirst({
       where: {
         siteId: instance.siteId,
         tenantId: instance.tenantId,
@@ -280,7 +286,7 @@ export class BigCommerceCustomerSyncService {
     };
 
     if (existing) {
-      await prisma.customerProfile.update({
+      await db.customerProfile.update({
         where: { id: existing.id },
         data: {
           // Re-assert the real registration date so records synced before this
@@ -299,7 +305,7 @@ export class BigCommerceCustomerSyncService {
       return 'updated';
     }
 
-    await prisma.customerProfile.create({
+    await db.customerProfile.create({
       data
     });
 

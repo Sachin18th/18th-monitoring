@@ -1,4 +1,5 @@
 import { prisma } from '@kpi-platform/db';
+import { getDataPlaneClient, getSiteDataPlaneClient } from '../lib/tenant-prisma';
 import { Prisma } from '@prisma/client';
 import { 
     CanonicalOrder, 
@@ -57,8 +58,13 @@ export class OrderIntelligenceService {
         };
 
         // 5. ATOMIC OPS: UPSERT ORDER + SNAPSHOT (Requirement 3)
-        // Using a transaction usually, but here we'll chain
-        await prisma.$transaction(async tx => {
+        // DATABASE-PER-INTEGRATION: canonical_orders / order_snapshots are
+        // data-plane tables — route via the connector's store DB when a
+        // connector id is in scope, else the site's store DB.
+        const db = connectorInstanceId
+            ? await getDataPlaneClient(connectorInstanceId)
+            : await getSiteDataPlaneClient(siteId);
+        await db.$transaction(async (tx: any) => {
             await tx.canonicalOrder.create({ data: orderData });
 
             await tx.orderSnapshot.create({
@@ -74,7 +80,7 @@ export class OrderIntelligenceService {
         });
 
         // 6. INTELLIGENCE RULES (Requirement 10)
-        await this.runIntelligenceRules(internalId, orderData);
+        await this.runIntelligenceRules(db, internalId, orderData);
 
         return internalId;
     }
@@ -125,7 +131,7 @@ export class OrderIntelligenceService {
     /**
      * Requirement 10: Order Exception Intelligence
      */
-    private static async runIntelligenceRules(id: string, order: any) {
+    private static async runIntelligenceRules(db: any, id: string, order: any) {
         let intelligenceState: OrderIntelligenceState = 'HEALTHY';
         
         // Rule: Stuck in Created (Requirement 10)
@@ -140,12 +146,12 @@ export class OrderIntelligenceService {
         }
 
         if (intelligenceState !== 'HEALTHY') {
-            const existing = await prisma.canonicalOrder.findUnique({
+            const existing = await db.canonicalOrder.findUnique({
                 where: { id },
                 select: { metadata: true }
             });
 
-            await prisma.canonicalOrder.update({
+            await db.canonicalOrder.update({
                 where: { id },
                 data: {
                     metadata: {

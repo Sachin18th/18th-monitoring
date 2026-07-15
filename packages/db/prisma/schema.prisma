@@ -22,28 +22,20 @@ model Tenant {
   users                         User[]
   auditLogs                     IamAuditLog[]
   customerProfiles              CustomerProfile[]
-  identityLinks                 IdentityLink[]
   connectorInstances            ConnectorInstance[]
   connectorResyncJobs           ConnectorResyncJob[]
   projectAccessKeys             ProjectAccessKey[]
-  webhookSubscriptions          WebhookSubscription[]
   connectorCredentials          ConnectorCredential[]
   connectorLifecycleEvents      ConnectorLifecycleEvent[]
   paymentGatewayConfigs         PaymentGatewayConfig[]
   paymentGatewayStatusSnapshots PaymentGatewayStatusSnapshot[]
   alerts                        Alert[]
   alertRules                    AlertRule[]
-  systemLogs                    SystemLog[]
   performanceMetrics            PerformanceMetric[]
-  kpiValues                     KpiValue[]
   canonicalOrders               CanonicalOrder[]
-  ingestionEvents               IngestionEvent[]
-  pipelineJobs                  PipelineJob[]
-  deadLetterQueues              DeadLetterQueue[]
-  recoveryJobs                  RecoveryJob[]
   canonicalProducts             CanonicalProduct[]
   canonicalProductCategories    CanonicalProductCategory[]
-  canonicalCheckouts            CanonicalCheckout[]
+  tenantDatabases               TenantDatabase[]
 
   @@map("tenants")
 }
@@ -65,34 +57,21 @@ model Project {
   configVersions                ConfigVersion[]
   userAccess                    UserProjectAccess[]
   customerProfiles              CustomerProfile[]
-  customerSessions              CustomerSession[]
-  customerEvents                CustomerEvent[]
   connectorInstances            ConnectorInstance[]
   connectorResyncJobs           ConnectorResyncJob[]
   connectorCredentials          ConnectorCredential[]
   projectAccessKeys             ProjectAccessKey[]
-  webhookSubscriptions          WebhookSubscription[]
   connectorLifecycleEvents      ConnectorLifecycleEvent[]
   alerts                        Alert[]
   alertRules                    AlertRule[]
-  systemLogs                    SystemLog[]
   iamAuditLogs                  IamAuditLog[]
   systemHealthMetrics           SystemHealthMetric[]
-  connectorHealthSnapshots      ConnectorHealthSnapshot[]
   performanceMetrics            PerformanceMetric[]
-  performanceRollups            PerformanceRollup[]
-  kpiValues                     KpiValue[]
   canonicalOrders               CanonicalOrder[]
   orderSnapshots                OrderSnapshot[]
   orderEvents                   OrderEvent[]
-  ingestionEvents               IngestionEvent[]
-  pipelineJobs                  PipelineJob[]
-  pipelineCheckpoints           PipelineCheckpoint[]
-  deadLetterQueues              DeadLetterQueue[]
-  recoveryJobs                  RecoveryJob[]
   canonicalProducts             CanonicalProduct[]
   canonicalProductCategories    CanonicalProductCategory[]
-  canonicalCheckouts            CanonicalCheckout[]
   paymentGatewayConfigs         PaymentGatewayConfig[]
   paymentGatewayStatusSnapshots PaymentGatewayStatusSnapshot[]
   userPagePermissions           UserPagePermission[]
@@ -295,77 +274,11 @@ model CustomerProfile {
   project           Project            @relation(fields: [siteId], references: [id])
   tenant            Tenant             @relation(fields: [tenantId], references: [id])
   connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
-  sessions          CustomerSession[]
-  events            CustomerEvent[]
 
   @@index([siteId], map: "idx_cust_profile_site")
   @@index([connectorInstanceId], map: "idx_cust_profile_connector")
   @@index([emailHash], map: "idx_cust_profile_email")
   @@map("customer_profiles")
-}
-
-model CustomerSession {
-  id                  String    @id @db.VarChar(36)
-  customerId          String    @map("customer_id") @db.VarChar(36)
-  siteId              String    @map("site_id") @db.VarChar(255)
-  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
-  startTime           DateTime  @map("start_time")
-  endTime             DateTime? @map("end_time")
-  durationSeconds     Int?      @map("duration_seconds")
-  device              String?   @db.VarChar(100)
-  browser             String?   @db.VarChar(100)
-  trafficSource       String?   @map("traffic_source") @db.VarChar(255)
-  isConverted         Int?      @default(0) @map("is_converted")
-  eventCount          Int?      @default(0) @map("event_count")
-
-  customer          CustomerProfile    @relation(fields: [customerId], references: [id])
-  project           Project            @relation(fields: [siteId], references: [id])
-  connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
-  events            CustomerEvent[]
-
-  @@index([customerId], map: "idx_session_customer")
-  @@index([siteId], map: "idx_session_site")
-  @@index([connectorInstanceId], map: "idx_session_connector")
-  @@map("customer_sessions")
-}
-
-model IdentityLink {
-  id                  Int      @id @default(autoincrement())
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
-  primaryCustomerId   String   @map("primary_customer_id") @db.VarChar(36)
-  secondaryCustomerId String   @map("secondary_customer_id") @db.VarChar(36)
-  linkType            String   @map("link_type") @db.VarChar(50)
-  confidence          Decimal
-  createdAt           DateTime @default(now()) @map("created_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id])
-
-  @@map("identity_links")
-}
-
-model CustomerEvent {
-  id                  String   @id @db.VarChar(36)
-  customerId          String   @map("customer_id") @db.VarChar(36)
-  sessionId           String?  @map("session_id") @db.VarChar(36)
-  siteId              String   @map("site_id") @db.VarChar(255)
-  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
-  eventName           String   @map("event_name") @db.VarChar(255)
-  category            String   @db.VarChar(50)
-  timestamp           DateTime @map("timestamp")
-  utmSource           String?  @map("utm_source") @db.VarChar(100)
-  utmMedium           String?  @map("utm_medium") @db.VarChar(100)
-  utmCampaign         String?  @map("utm_campaign") @db.VarChar(100)
-  metadata            Json     @default("{}")
-
-  customer          CustomerProfile    @relation(fields: [customerId], references: [id])
-  session           CustomerSession?   @relation(fields: [sessionId], references: [id])
-  project           Project            @relation(fields: [siteId], references: [id])
-  connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
-
-  @@index([sessionId], map: "idx_cust_event_session")
-  @@index([customerId, timestamp], map: "idx_cust_event_cust_ts")
-  @@index([connectorInstanceId], map: "idx_cust_event_connector")
-  @@map("customer_events")
 }
 
 model ConnectorInstance {
@@ -401,30 +314,23 @@ model ConnectorInstance {
   resyncJobs          ConnectorResyncJob[]
   credentials         ConnectorCredential[]
   lifecycleEvents     ConnectorLifecycleEvent[]
-  ingestionEvents     IngestionEvent[]
-  pipelineJobs        PipelineJob[]
-  pipelineCheckpoints PipelineCheckpoint[]
 
   customerProfiles   CustomerProfile[]
-  customerSessions   CustomerSession[]
-  customerEvents     CustomerEvent[]
   canonicalOrders    CanonicalOrder[]
   orderSnapshots     OrderSnapshot[]
   orderEvents        OrderEvent[]
   canonicalProducts          CanonicalProduct[]
   canonicalProductCategories CanonicalProductCategory[]
-  canonicalCheckouts CanonicalCheckout[]
   auditLogs          IamAuditLog[]
   alerts             Alert[]
   alertRules         AlertRule[]
   performanceMetrics PerformanceMetric[]
-  performanceRollups PerformanceRollup[]
-  kpiValues          KpiValue[]
   storefrontSessions StorefrontSession[]
   storefrontEvents   StorefrontEvent[]
   storefrontErrors   StorefrontError[]
   apiHealthChecks    ConnectorHealthCheck[]
   discoveredPageUrls DiscoveredPageUrl[]
+  storeDatabase      TenantDatabase?
 
   @@index([siteId], map: "idx_connector_site")
   @@index([tenantId], map: "idx_connector_tenant")
@@ -492,25 +398,6 @@ model ProjectAccessKey {
 
   @@index([siteId], map: "idx_key_site")
   @@map("project_access_keys")
-}
-
-model WebhookSubscription {
-  id          String   @id @db.VarChar(36)
-  siteId      String   @map("site_id") @db.VarChar(255)
-  tenantId    String   @map("tenant_id") @db.VarChar(36)
-  label       String   @db.VarChar(255)
-  callbackUrl String   @map("callback_url") @db.Text
-  secret      String   @db.VarChar(255)
-  status      String   @default("ACTIVE") @db.VarChar(50)
-  eventTypes  Json     @default("[]") @map("event_types")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @default(now()) @map("updated_at")
-
-  project Project @relation(fields: [siteId], references: [id])
-  tenant  Tenant  @relation(fields: [tenantId], references: [id])
-
-  @@index([siteId], map: "idx_webhook_sub_site")
-  @@map("webhook_subscriptions")
 }
 
 model ConnectorCredential {
@@ -613,26 +500,6 @@ model AlertRule {
   @@map("alert_rules")
 }
 
-model SystemLog {
-  id            Int      @id @default(autoincrement())
-  siteId        String?  @map("site_id") @db.VarChar(255)
-  tenantId      String?  @map("tenant_id") @db.VarChar(36)
-  level         String   @db.VarChar(20)
-  module        String   @db.VarChar(100)
-  message       String   @db.Text
-  metadata      Json     @default("{}")
-  correlationId String?  @map("correlation_id") @db.VarChar(255)
-  timestamp     DateTime @default(now())
-
-  project Project? @relation(fields: [siteId], references: [id])
-  tenant  Tenant?  @relation(fields: [tenantId], references: [id])
-
-  @@index([siteId, timestamp], map: "idx_log_site_ts")
-  @@index([tenantId, timestamp], map: "idx_log_tenant_ts")
-  @@index([correlationId], map: "idx_log_correlation")
-  @@map("system_logs")
-}
-
 model SystemHealthMetric {
   id          Int      @id @default(autoincrement())
   projectId   String?  @map("project_id") @db.VarChar(255)
@@ -646,23 +513,6 @@ model SystemHealthMetric {
   @@index([metricName, timestamp], map: "idx_health_name_ts")
   @@index([projectId, timestamp], map: "idx_health_project_ts")
   @@map("system_health_metrics")
-}
-
-model ConnectorHealthSnapshot {
-  id                  Int      @id @default(autoincrement())
-  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
-  projectId           String?  @map("project_id") @db.VarChar(255)
-  siteId              String   @map("site_id") @db.VarChar(255)
-  status              String   @db.VarChar(50)
-  healthScore         Int?     @map("health_score")
-  dimensions          Json     @default("{}")
-  timestamp           DateTime @default(now())
-
-  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-
-  @@index([connectorInstanceId, timestamp], map: "idx_health_shot_connector_ts")
-  @@index([projectId, timestamp], map: "idx_health_shot_project_ts")
-  @@map("connector_health_snapshots")
 }
 
 // One row per store-API health probe (Backend API Observability). The
@@ -724,53 +574,6 @@ model PerformanceMetric {
   @@index([tenantId, timestamp], map: "idx_perf_tenant_ts")
   @@index([connectorInstanceId, timestamp], map: "idx_perf_connector_ts")
   @@map("performance_metrics")
-}
-
-model PerformanceRollup {
-  id                  Int      @id @default(autoincrement())
-  siteId              String   @map("site_id") @db.VarChar(255)
-  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
-  metricName          String   @map("metric_name") @db.VarChar(100)
-  bucketSize          String   @map("bucket_size") @db.VarChar(20)
-  timestamp           DateTime
-  count               Int
-  min                 Decimal? @db.Decimal(20, 4)
-  max                 Decimal? @db.Decimal(20, 4)
-  sum                 Decimal? @db.Decimal(20, 4)
-  avg                 Decimal? @db.Decimal(20, 4)
-  p50                 Decimal? @db.Decimal(20, 4)
-  p90                 Decimal? @db.Decimal(20, 4)
-  p99                 Decimal? @db.Decimal(20, 4)
-  dimensions          Json     @default("{}")
-
-  project           Project            @relation(fields: [siteId], references: [id])
-  connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
-
-  @@index([siteId, metricName, bucketSize, timestamp], map: "idx_perf_rollup")
-  @@index([connectorInstanceId, timestamp], map: "idx_perf_rollup_connector_ts")
-  @@map("performance_rollups")
-}
-
-model KpiValue {
-  id                  Int      @id @default(autoincrement())
-  siteId              String   @map("site_id") @db.VarChar(255)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
-  connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
-  kpiName             String   @map("kpi_name") @db.VarChar(100)
-  kpiValue            Decimal  @map("kpi_value") @db.Decimal(20, 4)
-  timeWindow          String   @map("time_window") @db.VarChar(20)
-  timestamp           DateTime
-  metadata            Json     @default("{}")
-  updatedAt           DateTime @default(now()) @map("updated_at")
-
-  project           Project            @relation(fields: [siteId], references: [id])
-  tenant            Tenant             @relation(fields: [tenantId], references: [id])
-  connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
-
-  @@index([siteId, kpiName, timestamp], map: "idx_kpi_site_name_ts")
-  @@index([tenantId, timestamp], map: "idx_kpi_tenant_ts")
-  @@index([connectorInstanceId, timestamp], map: "idx_kpi_connector_ts")
-  @@map("kpi_values")
 }
 
 // Sampled, representative PDP/PLP/checkout URLs resolved per connector by the
@@ -895,47 +698,6 @@ model CanonicalProductCategory {
   @@map("canonical_product_categories")
 }
 
-model CanonicalCheckout {
-  id                   String    @id @db.VarChar(36)
-  siteId               String    @map("site_id") @db.VarChar(255)
-  tenantId             String    @map("tenant_id") @db.VarChar(36)
-  connectorInstanceId  String?   @map("connector_instance_id") @db.VarChar(36)
-  checkoutId           String    @map("checkout_id") @db.VarChar(255)
-  sourceSystem         String    @map("source_system") @db.VarChar(255)
-  token                String?   @db.VarChar(255)
-  // Soft reference to customer_profiles.id (nullable; guest carts have no profile).
-  customerId           String?   @map("customer_id") @db.VarChar(36)
-  customerEmail        String?   @map("customer_email") @db.VarChar(255)
-  status               String    @db.VarChar(50) // ABANDONED | ACTIVE | COMPLETED
-  currency             String    @db.VarChar(10)
-  subtotalAmount       Decimal?  @map("subtotal_amount") @db.Decimal(20, 4)
-  totalAmount          Decimal   @map("total_amount") @db.Decimal(20, 4)
-  taxAmount            Decimal?  @map("tax_amount") @db.Decimal(20, 4)
-  discountAmount       Decimal?  @map("discount_amount") @db.Decimal(20, 4)
-  lineItemsCount       Int?      @default(0) @map("line_items_count")
-  lineItems            Json      @default("[]") @map("line_items")
-  abandonedCheckoutUrl String?   @map("abandoned_checkout_url") @db.Text
-  completedOrderId     String?   @map("completed_order_id") @db.VarChar(255)
-  startedAt            DateTime  @map("started_at")
-  lastActivityAt       DateTime? @map("last_activity_at")
-  completedAt          DateTime? @map("completed_at")
-  metadata             Json      @default("{}")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @default(now()) @map("updated_at")
-
-  project           Project            @relation(fields: [siteId], references: [id])
-  tenant            Tenant             @relation(fields: [tenantId], references: [id])
-  connectorInstance ConnectorInstance? @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
-
-  @@unique([siteId, tenantId, sourceSystem, checkoutId], map: "uq_checkout_source_ref")
-  @@index([siteId], map: "idx_checkout_site")
-  @@index([tenantId], map: "idx_checkout_tenant")
-  @@index([connectorInstanceId], map: "idx_checkout_connector")
-  @@index([status], map: "idx_checkout_status")
-  @@index([startedAt], map: "idx_checkout_started_ts")
-  @@map("canonical_checkouts")
-}
-
 model OrderSnapshot {
   id                  Int      @id @default(autoincrement())
   orderInternalId     String   @map("order_internal_id") @db.VarChar(36)
@@ -975,154 +737,6 @@ model OrderEvent {
   @@index([connectorInstanceId], map: "idx_order_event_connector")
   @@index([eventType], map: "idx_order_event_type")
   @@map("order_events")
-}
-
-model IngestionEvent {
-  id                String   @id @db.VarChar(36)
-  tenantId          String   @map("tenant_id") @db.VarChar(36)
-  projectId         String   @map("project_id") @db.VarChar(255)
-  integrationId     String?  @map("integration_id") @db.VarChar(36)
-  mode              String   @db.VarChar(20)
-  status            String   @db.VarChar(20)
-  sourceReferenceId String?  @map("source_reference_id") @db.VarChar(255)
-  correlationId     String   @map("correlation_id") @db.VarChar(100)
-  validationReport  Json?    @default("{}") @map("validation_report")
-  dedupeKey         String?  @map("dedupe_key") @db.VarChar(255)
-  receivedAt        DateTime @default(now()) @map("received_at")
-  updatedAt         DateTime @default(now()) @map("updated_at")
-  error             Json?    @default("{}")
-
-  tenant         Tenant              @relation(fields: [tenantId], references: [id])
-  project        Project             @relation(fields: [projectId], references: [id])
-  integration    ConnectorInstance?  @relation(fields: [integrationId], references: [id])
-  artifacts      IngestionArtifact[]
-  qualityResults QualityGateResult[]
-
-  @@index([tenantId], map: "idx_ingest_tenant")
-  @@index([projectId], map: "idx_ingest_project")
-  @@index([correlationId], map: "idx_ingest_correlation")
-  @@index([dedupeKey], map: "idx_ingest_dedupe")
-  @@map("ingestion_events")
-}
-
-model IngestionArtifact {
-  id               String   @id @db.VarChar(36)
-  ingestionEventId String   @map("ingestion_event_id") @db.VarChar(36)
-  type             String   @db.VarChar(50)
-  storagePath      String   @map("storage_path") @db.Text
-  contentType      String?  @map("content_type") @db.VarChar(100)
-  sizeBytes        Int?     @map("size_bytes")
-  checksum         String?  @db.VarChar(100)
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  event IngestionEvent @relation(fields: [ingestionEventId], references: [id])
-
-  @@index([ingestionEventId], map: "idx_artifact_event")
-  @@map("ingestion_artifacts")
-}
-
-model QualityGateResult {
-  id               Int      @id @default(autoincrement())
-  ingestionEventId String   @map("ingestion_event_id") @db.VarChar(36)
-  ruleName         String   @map("rule_name") @db.VarChar(255)
-  status           String   @db.VarChar(20)
-  details          String?  @db.Text
-  confidenceScore  Decimal? @map("confidence_score") @db.Decimal(5, 2)
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  event IngestionEvent @relation(fields: [ingestionEventId], references: [id])
-
-  @@index([ingestionEventId], map: "idx_qgate_event")
-  @@map("quality_gate_results")
-}
-
-model PipelineJob {
-  id            String    @id @db.VarChar(36)
-  siteId        String    @map("site_id") @db.VarChar(255)
-  tenantId      String    @map("tenant_id") @db.VarChar(36)
-  integrationId String?   @map("integration_id") @db.VarChar(36)
-  type          String    @db.VarChar(50)
-  status        String    @default("QUEUED") @db.VarChar(50)
-  correlationId String?   @map("correlation_id") @db.VarChar(100)
-  attempts      Int?      @default(0)
-  maxRetries    Int?      @default(3) @map("max_retries")
-  payloadRef    Json      @default("{}") @map("payload_ref")
-  errorSummary  Json?     @map("error_summary")
-  startedAt     DateTime? @map("started_at")
-  completedAt   DateTime? @map("completed_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-
-  project     Project            @relation(fields: [siteId], references: [id])
-  tenant      Tenant             @relation(fields: [tenantId], references: [id])
-  integration ConnectorInstance? @relation(fields: [integrationId], references: [id])
-  deadLetters DeadLetterQueue[]
-
-  @@index([siteId, type, status], map: "idx_pipe_job_site_type_status")
-  @@index([correlationId], map: "idx_pipe_job_correlation")
-  @@map("pipeline_jobs")
-}
-
-model PipelineCheckpoint {
-  id            String   @id @db.VarChar(36)
-  siteId        String   @map("site_id") @db.VarChar(255)
-  integrationId String   @map("integration_id") @db.VarChar(36)
-  entityType    String   @map("entity_type") @db.VarChar(50)
-  cursorType    String   @map("cursor_type") @db.VarChar(50)
-  cursorValue   String   @map("cursor_value") @db.VarChar(255)
-  metadata      Json     @default("{}")
-  updatedAt     DateTime @default(now()) @map("updated_at")
-
-  project     Project           @relation(fields: [siteId], references: [id])
-  integration ConnectorInstance @relation(fields: [integrationId], references: [id])
-
-  @@index([integrationId, entityType], map: "idx_pipe_ckpt_integration_entity")
-  @@map("pipeline_checkpoints")
-}
-
-model DeadLetterQueue {
-  id              String   @id @db.VarChar(36)
-  jobId           String   @map("job_id") @db.VarChar(36)
-  siteId          String   @map("site_id") @db.VarChar(255)
-  tenantId        String   @map("tenant_id") @db.VarChar(36)
-  failureCategory String   @map("failure_category") @db.VarChar(50)
-  reason          String   @db.Text
-  payloadSnapshot Json?    @map("payload_snapshot")
-  reviewedBy      String?  @map("reviewed_by") @db.VarChar(255)
-  actionTaken     String?  @map("action_taken") @db.VarChar(50)
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @default(now()) @map("updated_at")
-
-  job     PipelineJob @relation(fields: [jobId], references: [id])
-  project Project     @relation(fields: [siteId], references: [id])
-  tenant  Tenant      @relation(fields: [tenantId], references: [id])
-
-  @@index([siteId, actionTaken], map: "idx_dlq_site_status")
-  @@map("dead_letter_queue")
-}
-
-model RecoveryJob {
-  id               String    @id @db.VarChar(36)
-  siteId           String    @map("site_id") @db.VarChar(255)
-  tenantId         String    @map("tenant_id") @db.VarChar(36)
-  jobType          String    @map("job_type") @db.VarChar(50)
-  status           String    @default("PENDING") @db.VarChar(50)
-  scope            Json
-  config           Json      @default("{}")
-  totalRecords     Int?      @default(0) @map("total_records")
-  processedRecords Int?      @default(0) @map("processed_records")
-  failedRecords    Int?      @default(0) @map("failed_records")
-  triggeredBy      String    @map("triggered_by") @db.VarChar(255)
-  reason           String?   @db.Text
-  startedAt        DateTime  @default(now()) @map("started_at")
-  updatedAt        DateTime  @default(now()) @map("updated_at")
-  finishedAt       DateTime? @map("finished_at")
-  lastError        Json?     @map("last_error")
-
-  project Project @relation(fields: [siteId], references: [id])
-  tenant  Tenant  @relation(fields: [tenantId], references: [id])
-
-  @@index([siteId, status], map: "idx_recovery_site_status")
-  @@map("recovery_jobs")
 }
 
 model StorefrontSession {
@@ -1228,4 +842,80 @@ model StorefrontError {
   @@index([projectId, errorType, occurredAt], map: "idx_storefront_error_type")
   @@index([projectId, pageType, occurredAt], map: "idx_storefront_error_page")
   @@map("storefront_errors")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHYSICAL DATABASE-PER-INTEGRATION — control-plane provisioning tables
+//
+// One row per CONNECTOR INSTANCE (a connected store) describing its dedicated
+// physical Postgres data-plane DB (canonical_orders, customer_profiles,
+// storefront_*, performance_metrics, ...). Rows with connectorInstanceId NULL
+// are legacy per-tenant databases and are ignored by the store-DB resolver.
+// These two tables live in the CONTROL-PLANE DB (this
+// schema) alongside tenants/projects/users/connector_instances. They deliberately
+// reuse two established patterns already in this schema:
+//   • connector_credentials — `vault_key` (path label) + `encrypted_secret`
+//     (enc:v1 AES-256-GCM envelope, via secret-cipher.ts). The tenant DB password
+//     is stored the same way; there is no external vault.
+//   • connector_lifecycle_events — a stateful lifecycle with an append-only event
+//     log. TenantDatabaseProvisioningEvent mirrors its shape.
+//
+// State machine: pending → provisioning → active | failed  (see
+// TenantDatabaseProvisioningService). A store database is provisioned when its
+// integration is created; sync writes fail closed until the row is `active`.
+model TenantDatabase {
+  id                   String    @id @db.VarChar(36)
+  tenantId             String    @map("tenant_id") @db.VarChar(36)
+  // DATABASE-PER-INTEGRATION: each ConnectorInstance (a connected store) owns
+  // its own physical database. One row per connector instance; the row for a
+  // legacy per-tenant database has connectorInstanceId NULL and is ignored by
+  // the store-DB resolver. projectId is denormalized for project-level read routing.
+  connectorInstanceId  String?   @unique @map("connector_instance_id") @db.VarChar(36)
+  projectId            String?   @map("project_id") @db.VarChar(255)
+  dbHost               String    @map("db_host") @db.VarChar(255)
+  dbPort               Int       @default(5432) @map("db_port")
+  dbName               String    @map("db_name") @db.VarChar(255)
+  dbUser               String    @map("db_user") @db.VarChar(255)
+  // Path-style label for the credential (e.g. vault/tenant_{slug}/database/credentials).
+  vaultKey             String?   @map("vault_key") @db.VarChar(255)
+  // enc:v1 AES-256-GCM envelope of the DB password / connection secret. NEVER plaintext.
+  encryptedSecret      String?   @map("encrypted_secret") @db.Text
+  status               String    @default("pending") @db.VarChar(50) // pending | provisioning | active | failed
+  provisionedAt        DateTime? @map("provisioned_at")
+  lastMigrationVersion String?   @map("last_migration_version") @db.VarChar(255)
+  lastError            Json?     @map("last_error")
+  // Set when a row enters `provisioning`; lets a reaper detect a dead/stuck provision.
+  provisioningStartedAt DateTime? @map("provisioning_started_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @map("updated_at")
+
+  tenant             Tenant                             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  connectorInstance  ConnectorInstance?                 @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
+  provisioningEvents TenantDatabaseProvisioningEvent[]
+
+  @@index([status], map: "idx_tenant_database_status")
+  @@index([tenantId], map: "idx_tenant_database_tenant")
+  @@index([projectId], map: "idx_tenant_database_project")
+  @@map("tenant_databases")
+}
+
+model TenantDatabaseProvisioningEvent {
+  id               String   @id @db.VarChar(36)
+  tenantDatabaseId String   @map("tenant_database_id") @db.VarChar(36)
+  tenantId         String   @map("tenant_id") @db.VarChar(36)
+  eventType        String   @map("event_type") @db.VarChar(100)
+  fromStatus       String?  @map("from_status") @db.VarChar(50)
+  toStatus         String?  @map("to_status") @db.VarChar(50)
+  severity         String   @db.VarChar(20)
+  payload          Json?    @default("{}")
+  errorDetail      String?  @map("error_detail") @db.Text
+  correlationId    String?  @map("correlation_id") @db.VarChar(100)
+  triggeredBy      String   @map("triggered_by") @db.VarChar(50)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  tenantDatabase TenantDatabase @relation(fields: [tenantDatabaseId], references: [id], onDelete: Cascade)
+
+  @@index([tenantDatabaseId], map: "idx_tenant_db_event_db")
+  @@index([tenantId], map: "idx_tenant_db_event_tenant")
+  @@map("tenant_database_provisioning_events")
 }

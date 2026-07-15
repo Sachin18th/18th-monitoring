@@ -1,13 +1,14 @@
-import { prisma } from '@kpi-platform/db';
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
 
 export class CustomerAnalyticsService {
-    
+
     /**
      * Requirement 11: Cohort Modeling
      * Fetches customers acquired within a specific date range (First Seen).
      */
     static async getAcquisitionCohort(siteId: string, startDate: Date, endDate: Date) {
-        return prisma.customerProfile.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        return db.customerProfile.findMany({
             where: {
                 siteId,
                 firstSeenAt: {
@@ -51,7 +52,8 @@ export class CustomerAnalyticsService {
      * Example: segmenting 'High Value' customers (e.g. repeat purchasers).
      */
     static async getHighValueSegments(siteId: string) {
-        return prisma.customerProfile.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        return db.customerProfile.findMany({
             where: {
                 siteId,
                 lifecycleState: 'REPEAT_PURCHASER'

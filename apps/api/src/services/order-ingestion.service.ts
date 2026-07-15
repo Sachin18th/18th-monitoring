@@ -1,4 +1,5 @@
 import { prisma } from "@kpi-platform/db";
+import { getDataPlaneClient, getSiteDataPlaneClient } from "../lib/tenant-prisma";
 import { orderNormalizationService } from "./order-normalization.service";
 import crypto from "crypto";
 
@@ -25,6 +26,10 @@ export class OrderIngestionService {
     };
 
     const batchId = `csv_${Date.now()}`;
+
+    // DATABASE-PER-INTEGRATION: canonical_orders is a data-plane table — no
+    // connector id in scope here, so route via the site's store DB.
+    const db = await getSiteDataPlaneClient(siteId);
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -75,7 +80,7 @@ export class OrderIngestionService {
           tenantId,
         );
 
-        await prisma.canonicalOrder.create({
+        await db.canonicalOrder.create({
           data: {
             ...canonical,
             siteId: siteId,
@@ -182,6 +187,10 @@ export class OrderIngestionService {
 
     results.connectorId = connectorId;
 
+    // DATABASE-PER-INTEGRATION: canonical_orders rows for this connector must
+    // land in the connector's physical store DB (fails closed if not active).
+    const db = await getDataPlaneClient(connectorId);
+
     // 2. Normalize + persist each row.
     for (let i = 0; i < rows.length; i++) {
       try {
@@ -193,7 +202,7 @@ export class OrderIngestionService {
           { defaultCurrency: resolvedCurrency },
         );
 
-        await prisma.canonicalOrder.create({
+        await db.canonicalOrder.create({
           data: {
             id: canonical.id,
             siteId,

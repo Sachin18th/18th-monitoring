@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, decryptSecret } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { orderNormalizationService } from './order-normalization.service';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 import {
@@ -71,6 +72,11 @@ export class AdobeCommerceOrderSyncService {
     if (!instance) throw new Error('Integration instance not found.');
     if (instance.providerId !== 'adobe_commerce') throw new Error(`Provider "${instance.providerId}" is not supported by AdobeCommerceOrderSyncService.`);
 
+    // DATA-PLANE routing: canonical orders/snapshots/events live in the
+    // integration's physical store DB when the data plane is enabled (else
+    // this is the shared control client). Connector bookkeeping stays on `prisma`.
+    const db = await getDataPlaneClient(instance.id);
+
     const runId = crypto.randomUUID();
     const startedAt = new Date();
 
@@ -105,7 +111,7 @@ export class AdobeCommerceOrderSyncService {
           const customerEmail = this.extractCustomerEmail(raw);
 
           // Upsert similar to Shopify but mark sourceSystem = 'adobe_commerce'
-          const existing = await prisma.canonicalOrder.findFirst({
+          const existing = await db.canonicalOrder.findFirst({
             where: {
               siteId: instance.siteId,
               tenantId: instance.tenantId,
@@ -158,14 +164,14 @@ export class AdobeCommerceOrderSyncService {
           };
 
           if (existing) {
-            await prisma.$transaction(async (tx) => {
+            await db.$transaction(async (tx: any) => {
               await tx.canonicalOrder.update({ where: { id: existing.id }, data });
               await tx.orderSnapshot.create({ data: { orderInternalId: existing.id, projectId: instance.siteId, connectorInstanceId: instance.id, lifecycleState: String(canonical.lifecycleState), totalAmount: Number(canonical.totalAmount || 0), metadata: { syncSource: 'adobe_commerce', connectorInstanceId: instance.id } as Prisma.InputJsonValue } });
             });
             updated += 1;
           } else {
             const newId = crypto.randomUUID();
-            await prisma.$transaction(async (tx) => {
+            await db.$transaction(async (tx: any) => {
               await tx.canonicalOrder.create({ data: { id: newId, ...data } });
               await tx.orderSnapshot.create({ data: { orderInternalId: newId, projectId: instance.siteId, connectorInstanceId: instance.id, lifecycleState: String(canonical.lifecycleState), totalAmount: Number(canonical.totalAmount || 0), metadata: { syncSource: 'adobe_commerce', connectorInstanceId: instance.id } as Prisma.InputJsonValue } });
               await tx.orderEvent.create({ data: { id: crypto.randomUUID(), orderInternalId: newId, projectId: instance.siteId, connectorInstanceId: instance.id, eventType: 'ADOBECOMMERCE_SYNC_IMPORT', timestamp: new Date(), payload: raw as Prisma.InputJsonValue, correlationId: instance.id } });

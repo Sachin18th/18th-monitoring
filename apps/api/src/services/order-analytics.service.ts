@@ -1,14 +1,15 @@
-import { prisma } from '@kpi-platform/db';
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
 
 export class OrderAnalyticsService {
-    
+
     /**
      * Requirement 15: Trusted Order Aggregates
      * Computes aggregates only from orders that have passed validation (VALID quality state).
      */
     static async getDailyRevenue(siteId: string, days = 30) {
+        const db = await getSiteDataPlaneClient(siteId);
         // Ensuring only high-confidence data is used for KPIs (Requirement 15)
-        const orders = await prisma.canonicalOrder.findMany({
+        const orders = await db.canonicalOrder.findMany({
             where: {
                 siteId,
                 normalizedStatus: 'ACTIVE'
@@ -45,7 +46,8 @@ export class OrderAnalyticsService {
      * Requirement 15: Segmented Aggregation (Channel & Lifecycle)
      */
     static async getChannelPerformance(siteId: string) {
-        const orders = await prisma.canonicalOrder.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const orders = await db.canonicalOrder.findMany({
             where: {
                 siteId,
                 normalizedStatus: 'ACTIVE'

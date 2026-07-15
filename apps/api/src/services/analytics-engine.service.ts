@@ -1,5 +1,5 @@
 // import { GlobalMemoryStore } from '../../../../packages/db/src/adapters/in-memory.adapter';
-import { prisma } from '@kpi-platform/db';
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
 
 /**
  * AnalyticsEngine
@@ -31,7 +31,8 @@ export class AnalyticsEngine {
         if (startDate) whereClause.placedAt = { gte: startDate };
         if (endDate) whereClause.placedAt = { ...whereClause.placedAt, lte: endDate };
 
-        const orders = await prisma.canonicalOrder.findMany({
+        const db = await getSiteDataPlaneClient(siteId);
+        const orders = await db.canonicalOrder.findMany({
             where: whereClause,
             select: {
                 totalAmount: true,
@@ -43,13 +44,13 @@ export class AnalyticsEngine {
         });
 
         // 1. Revenue Computation
-        const totalRevenue = orders.reduce((sum, o) => sum + Number(o.totalAmount || 0), 0);
-        
+        const totalRevenue = orders.reduce((sum: number, o: any) => sum + Number(o.totalAmount || 0), 0);
+
         // 2. AOV (Average Order Value)
         const aov = orders.length > 0 ? totalRevenue / orders.length : 0;
-        
+
         // 3. Tax
-        const totalTax = orders.reduce((sum, o) => sum + Number(o.taxAmount || 0), 0);
+        const totalTax = orders.reduce((sum: number, o: any) => sum + Number(o.taxAmount || 0), 0);
 
         return {
             revenue: Math.round(totalRevenue * 100) / 100,

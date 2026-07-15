@@ -1,4 +1,5 @@
 import { prisma } from '@kpi-platform/db';
+import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { AuthService } from '../services/auth.service';
 import { PagePermissionsService } from '../services/page-permissions.service';
 import { PROJECT_PAGE_KEYS, normalizeRole as normalizeAppRole } from '@kpi-platform/shared-types';
@@ -632,9 +633,22 @@ export const purgeDemoData = async (req: any, reply: any) => {
     }
 
     try {
+        // DATABASE-PER-INTEGRATION: canonical_orders lives in each integration's
+        // physical store DB. Purge every active store DB as well as any legacy
+        // rows still in the control DB. (Flag off → getDataPlaneClient returns
+        // the control client, so this collapses to the pre-cutover purge.)
+        const stores = await prisma.tenantDatabase.findMany({
+            where: { status: 'active', connectorInstanceId: { not: null } },
+            select: { connectorInstanceId: true },
+        });
+
         // Delete all demo data from database (orders, events, logs)
         await Promise.all([
             prisma.canonicalOrder.deleteMany({}),
+            ...stores.map(async (s) => {
+                const db = await getDataPlaneClient(s.connectorInstanceId as string);
+                await db.canonicalOrder.deleteMany({});
+            }),
             // ingestionEvent table removed — query neutralized
             // kpiValue table removed — query neutralized
         ]);

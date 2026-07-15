@@ -13,12 +13,26 @@ import {
   Loader2,
 } from 'lucide-react';
 
+type Platform = 'shopify' | 'bigcommerce' | 'adobe';
+
 interface TrackingInstallCardProps {
   connectorInstanceId?: string;
   ingestBaseUrl?: string;
+  // Platform of the currently-selected store. When provided, the card opens on
+  // that platform's tab so the merchant sees the instructions for the store they
+  // actually connected. Accepts the connector platform code ('adobe_commerce')
+  // as well as the card's own 'adobe' alias.
+  platform?: Platform | 'adobe_commerce';
 }
 
-type Platform = 'shopify' | 'bigcommerce' | 'adobe';
+// Normalises the connector-context platform code ('adobe_commerce') to the tab
+// key this card uses ('adobe'). Unknown values fall back to Shopify.
+const toPlatformKey = (value?: string | null): Platform => {
+  const v = String(value || '').toLowerCase();
+  if (v.includes('adobe') || v.includes('magento')) return 'adobe';
+  if (v.includes('bigcommerce')) return 'bigcommerce';
+  return 'shopify';
+};
 
 type VerifyState =
   | { status: 'idle' }
@@ -177,6 +191,7 @@ const Step: React.FC<{ n: number; children: React.ReactNode }> = ({ n, children 
 export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
   connectorInstanceId,
   ingestBaseUrl,
+  platform: platformProp,
 }) => {
   // CRITICAL: the connector id is populated via an effect that watches the prop,
   // never in a useState initialiser — the prop arrives async (after the store
@@ -187,7 +202,12 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
     setConnectorId(isValidUuid(connectorInstanceId) ? connectorInstanceId!.trim() : '');
   }, [connectorInstanceId]);
 
-  const [platform, setPlatform] = useState<Platform>('shopify');
+  const [platform, setPlatform] = useState<Platform>(() => toPlatformKey(platformProp));
+  // Follow the selected store's platform: when the merchant switches the active
+  // store (and its platform changes), re-open the matching tab.
+  useEffect(() => {
+    if (platformProp) setPlatform(toPlatformKey(platformProp));
+  }, [platformProp]);
   const [verify, setVerify] = useState<VerifyState>({ status: 'idle' });
 
   // Reset the verification result whenever the active store changes.
@@ -210,6 +230,16 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
   const snippet = useMemo(
     () =>
       `<script src="${host}/api/track/tracker.js"\n        data-connector-id="${connectorId}"\n        data-ingest-url="${host}/api/track"\n        async></script>`,
+    [host, connectorId],
+  );
+
+  // Shopify snippet enriched with logged-in shopper identity. Shopify's `customer`
+  // Liquid object is rendered per-request in theme.liquid, so templating the
+  // data-customer-* attributes onto the tag is the most authoritative identity
+  // source (the tracker reads these attributes first, before any DOM probe).
+  const shopifySnippet = useMemo(
+    () =>
+      `<script\n  src="${host}/api/track/tracker.js"\n  data-connector-id="${connectorId}"\n  data-ingest-url="${host}/api/track"\n  {% if customer %}\n    data-customer-id="{{ customer.id }}"\n    data-customer-name="{{ customer.name | escape }}"\n    data-customer-email="{{ customer.email }}"\n  {% endif %}\n  async></script>`,
     [host, connectorId],
   );
 
@@ -320,11 +350,15 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
         })}
       </div>
 
-      {/* Pre-substituted snippet for the active platform */}
-      <CodeBlock code={snippet} label={`${PLATFORMS.find((p) => p.key === platform)!.label} — embed snippet`} />
+      {/* Pre-substituted snippet for the active platform. Shopify carries the
+          logged-in shopper identity via Liquid; the others use the base tag. */}
+      <CodeBlock
+        code={platform === 'shopify' ? shopifySnippet : snippet}
+        label={`${PLATFORMS.find((p) => p.key === platform)!.label} — embed snippet`}
+      />
 
       {/* Collapsible admin instructions, closed by default */}
-      {platform === 'shopify' ? <ShopifyInstructions snippet={snippet} /> : null}
+      {platform === 'shopify' ? <ShopifyInstructions snippet={shopifySnippet} /> : null}
       {platform === 'bigcommerce' ? <BigCommerceInstructions /> : null}
       {platform === 'adobe' ? <AdobeInstructions host={host} connectorId={connectorId} /> : null}
 
@@ -406,6 +440,11 @@ const ShopifyInstructions: React.FC<{ snippet: string }> = ({ snippet }) => (
     <Step n={2}>On your live theme: <strong>⋯ (Actions)</strong> → <strong>Edit code</strong>.</Step>
     <Step n={3}>Under <strong>Layout</strong>, open <code>theme.liquid</code>.</Step>
     <Step n={4}>Paste the snippet immediately before the closing <code>&lt;/head&gt;</code> tag, then <strong>Save</strong>.</Step>
+    <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.55 }}>
+      The <code>{'{% if customer %}'}</code> block stamps the logged-in shopper&apos;s id, name and
+      email onto the tag so sessions are attributed to a known customer. Shopify only exposes
+      these to Liquid, so this is the most reliable identity source — guests simply omit them.
+    </p>
     <p style={{ margin: '6px 0 0', fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Method B — Theme App Extension (App Embed Block)</p>
     <Step n={1}>Add a <code>blocks/tracker.liquid</code> to your theme app extension with the schema below.</Step>
     <Step n={2}>Merchant enables it via <strong>Customize</strong> → <strong>App embeds</strong> and fills in the Connector ID + API Host.</Step>
@@ -450,8 +489,25 @@ const AdobeInstructions: React.FC<{ host: string; connectorId: string }> = ({ ho
   const phtml = `<script src="${host}/api/track/tracker.js"\n        data-connector-id="${connectorId}"\n        data-ingest-url="${host}/api/track"\n        async></script>`;
   return (
     <Collapsible title="Admin instructions — Adobe Commerce (Magento 2)">
+      <div
+        style={{
+          borderRadius: '10px',
+          border: '1px solid rgba(59,130,246,0.28)',
+          background: 'rgba(59,130,246,0.08)',
+          padding: '10px 12px',
+          fontSize: '12px',
+          color: 'var(--text-secondary)',
+          lineHeight: 1.55,
+        }}
+      >
+        <strong>Customer identity is automatic on Adobe Commerce.</strong> The tracker reads the
+        logged-in customer from Magento&apos;s <code>customer-data</code> section, so you don&apos;t add
+        <code>data-customer-*</code> attributes to the tag. (Magento&apos;s Full Page Cache would serve a
+        stale, cached identity if it were templated into the <code>&lt;head&gt;</code>.) Just install the
+        base script in the store header below.
+      </div>
       <p style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Method A — Custom module (developers)</p>
-      <Step n={1}>Create <code>app/code/Vendor/StorefrontTracker/</code> with the four files below.</Step>
+      <Step n={1}>Create <code>app/code/Vendor/StorefrontTracker/</code> with the four files below. The layout file adds the script to the <strong>store header</strong> (<code>&lt;head&gt;</code>) on every frontend page.</Step>
       <CodeBlock
         label="registration.php"
         code={`<?php

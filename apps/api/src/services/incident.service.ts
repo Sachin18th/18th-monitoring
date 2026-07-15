@@ -32,7 +32,6 @@ export class IncidentService {
     };
 
     this.activeIncidents.set(incident.id, incident);
-    console.log(`[IncidentService] 🔥 New Incident Created: ${incident.id} - ${incident.title}`);
     
     return incident;
   }

@@ -13,7 +13,7 @@ import { sessionJourneyRoutes } from './routes/storefront/session-journeys';
 import { storeHealthRoutes } from './routes/store-health';
 import { login, getMe, getProjects } from './controllers/auth.controller';
 import { requestOtp, verifyOtp } from './controllers/otp.controller';
-import { createProject, updateProject, CreateProjectSchema } from './controllers/project.controller';
+import { createProject, updateProject, CreateProjectSchema, getTenantDatabaseStatus } from './controllers/project.controller';
 import { listPlatformUsers, createPlatformUser, updatePlatformUser, updatePlatformUserStatus, deletePlatformUser, purgeDemoData, listPageKeys, getCurrentUserPermissions, invitePlatformUser, updateUserPagePermissions } from './controllers/admin.controller';
 import { tenantAuthHandler } from './middlewares/auth.middleware';
 import { viewOnlyGuard, roleGuard } from './middlewares/rbac.middleware';
@@ -329,6 +329,7 @@ export const bootstrapApi = async () => {
     server.get('/api/v1/projects',    { preHandler: [tenantAuthHandler, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN', 'VIEWER'])] }, getProjects);
     server.post('/api/v1/projects',   { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN']), validateRequest({ body: CreateProjectSchema })] }, createProject);
     server.patch('/api/v1/projects/:siteId', { preHandler: [tenantAuthHandler, tenantIsolationGuard, roleGuard(['TENANT_ADMIN', 'SUPER_ADMIN', 'PROJECT_ADMIN'])] }, updateProject);
+    server.get('/api/v1/tenant-database/status', { preHandler: [tenantAuthHandler] }, getTenantDatabaseStatus);
 
     // System Access Management APIs
     server.get('/api/v1/admin/page-keys', { preHandler: [tenantAuthHandler, roleGuard(['SUPER_ADMIN'])] }, listPageKeys);
