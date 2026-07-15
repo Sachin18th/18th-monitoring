@@ -28,8 +28,20 @@ const getFilters = (req: any) => {
             startDate = new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
     }
 
-    // Extract connector_instance_id for multi-store data isolation
-    const connectorInstanceId = req.query.connector_instance_id || req.query.connectorInstanceId || req.query.connectorId;
+    const firstScalar = (value: any): string | null => {
+        if (Array.isArray(value)) return firstScalar(value[0]);
+        if (value === null || value === undefined) return null;
+        const text = String(value).trim();
+        return text ? text : null;
+    };
+
+    // Extract connector_instance_id for multi-store data isolation.
+    // Fastify can surface duplicate query params as arrays; take the first
+    // non-empty scalar so a double-passed connector id does not break scoping.
+    const connectorInstanceId =
+        firstScalar(req.query.connector_instance_id) ||
+        firstScalar(req.query.connectorInstanceId) ||
+        firstScalar(req.query.connectorId);
 
     return {
         tenantId: req.tenantId, // Attached by auth middleware

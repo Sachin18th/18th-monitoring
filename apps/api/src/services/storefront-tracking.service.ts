@@ -490,14 +490,17 @@ export class StorefrontTrackingService {
   }): Promise<void> {
     const a = s.aggregate;
     const hasIdentity = Boolean(a.customerId || a.customerName || a.emailEncrypted);
-    const identitySource = hasIdentity ? s.platform : null;
-    const identityMeta = hasIdentity
+    const metadata = hasIdentity
       ? JSON.stringify({
-          customer_id: a.customerId,
-          customer_name: a.customerName,
-          source: identityCacheKey(s.platform),
+          identity: {
+            customer_id: a.customerId,
+            customer_name: a.customerName,
+            customer_email_encrypted: a.emailEncrypted,
+            customer_email_hash: a.emailHash,
+            source: identityCacheKey(s.platform),
+          },
         })
-      : null;
+      : JSON.stringify({});
     // First-sight columns (started_at / landing_page / referrer / device_type /
     // platform) are preserved on conflict; last_active_at only ever advances.
     // The funnel aggregate merges across batches:
@@ -511,17 +514,13 @@ export class StorefrontTrackingService {
       `INSERT INTO storefront_sessions
          (connector_instance_id, tenant_id, session_id, visitor_id, last_active_at,
           user_agent, referrer, landing_page, device_type,
-          page_view_count, page_urls_visited, funnel_stage, funnel_stages_reached,
+         metadata, page_view_count, page_urls_visited, funnel_stage, funnel_stages_reached,
           product_viewed, product_ids_viewed, add_to_cart, checkout_started, purchase_completed,
-          last_page_url, last_page_title, platform,
-          customer_id, customer_name, customer_email_encrypted, customer_email_hash,
-          identity_source, identity_meta)
+         last_page_url, last_page_title, platform)
        VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9,
-               $10::int, $11::jsonb, $12, $13::jsonb,
-               $14::bool, $15::jsonb, $16::bool, $17::bool, $18::bool,
-               $19, $20, $21,
-               $22, $23, $24, $25,
-               $26, $27::jsonb)
+            $10::jsonb, $11::int, $12::jsonb, $13, $14::jsonb,
+            $15::bool, $16::jsonb, $17::bool, $18::bool, $19::bool,
+            $20, $21, $22)
        ON CONFLICT (connector_instance_id, session_id) DO UPDATE SET
          last_active_at = GREATEST(storefront_sessions.last_active_at, EXCLUDED.last_active_at),
          user_agent     = COALESCE(storefront_sessions.user_agent, EXCLUDED.user_agent),
@@ -529,6 +528,7 @@ export class StorefrontTrackingService {
          landing_page   = COALESCE(storefront_sessions.landing_page, EXCLUDED.landing_page),
          device_type    = COALESCE(storefront_sessions.device_type, EXCLUDED.device_type),
          platform       = COALESCE(storefront_sessions.platform, EXCLUDED.platform),
+        metadata       = COALESCE(storefront_sessions.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
          page_view_count = storefront_sessions.page_view_count + EXCLUDED.page_view_count,
          page_urls_visited = COALESCE((
            SELECT jsonb_agg(url ORDER BY ord)
@@ -579,15 +579,8 @@ export class StorefrontTrackingService {
            ) s
          ), storefront_sessions.funnel_stages_reached),
          last_page_url   = COALESCE(EXCLUDED.last_page_url, storefront_sessions.last_page_url),
-         last_page_title = COALESCE(EXCLUDED.last_page_title, storefront_sessions.last_page_title),
-         -- Identity: adopt a freshly-captured value, else keep what we already had
-         -- (a later batch with no identity must never wipe a resolved shopper).
-         customer_id              = COALESCE(EXCLUDED.customer_id, storefront_sessions.customer_id),
-         customer_name            = COALESCE(EXCLUDED.customer_name, storefront_sessions.customer_name),
-         customer_email_encrypted = COALESCE(EXCLUDED.customer_email_encrypted, storefront_sessions.customer_email_encrypted),
-         customer_email_hash      = COALESCE(EXCLUDED.customer_email_hash, storefront_sessions.customer_email_hash),
-         identity_source          = COALESCE(EXCLUDED.identity_source, storefront_sessions.identity_source),
-         identity_meta            = COALESCE(EXCLUDED.identity_meta, storefront_sessions.identity_meta)`,
+         last_page_title = COALESCE(EXCLUDED.last_page_title, storefront_sessions.last_page_title)
+        `,
       s.connectorInstanceId,
       s.tenantId,
       s.sessionId,
@@ -597,6 +590,7 @@ export class StorefrontTrackingService {
       a.referrer,
       a.landingPage,
       s.deviceType,
+      metadata,
       a.pageViewCount,
       JSON.stringify(a.pageUrls),
       a.funnelStage,
@@ -609,12 +603,6 @@ export class StorefrontTrackingService {
       a.lastPageUrl,
       a.lastPageTitle,
       s.platform,
-      a.customerId,
-      a.customerName,
-      a.emailEncrypted,
-      a.emailHash,
-      identitySource,
-      identityMeta,
     );
   }
 
@@ -631,31 +619,25 @@ export class StorefrontTrackingService {
     ident: { customerId: string | null; customerName: string | null; emailEncrypted: string | null; emailHash: string | null },
   ): Promise<void> {
     const identityMeta = JSON.stringify({
-      customer_id: ident.customerId,
-      customer_name: ident.customerName,
-      source: identityCacheKey(platform),
+      identity: {
+        customer_id: ident.customerId,
+        customer_name: ident.customerName,
+        customer_email_encrypted: ident.emailEncrypted,
+        customer_email_hash: ident.emailHash,
+        source: identityCacheKey(platform),
+      },
     });
     try {
       await db.$executeRawUnsafe(
         `UPDATE storefront_sessions SET
-           customer_id              = COALESCE(customer_id, $3),
-           customer_name            = COALESCE(customer_name, $4),
-           customer_email_encrypted = COALESCE(customer_email_encrypted, $5),
-           customer_email_hash      = COALESCE(customer_email_hash, $6),
-           identity_source          = COALESCE(identity_source, $7),
-           identity_meta            = COALESCE(identity_meta, $8::jsonb)
+           metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb
          WHERE connector_instance_id = $1
            AND visitor_id = $2
-           AND customer_id IS NULL
-           AND customer_name IS NULL
-           AND customer_email_encrypted IS NULL`,
+           AND COALESCE(metadata->'identity'->>'customer_id', '') = ''
+           AND COALESCE(metadata->'identity'->>'customer_name', '') = ''
+           AND COALESCE(metadata->'identity'->>'customer_email_encrypted', '') = ''`,
         connectorInstanceId,
         visitorId,
-        ident.customerId,
-        ident.customerName,
-        ident.emailEncrypted,
-        ident.emailHash,
-        platform,
         identityMeta,
       );
     } catch (err) {

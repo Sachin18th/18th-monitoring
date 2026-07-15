@@ -102,20 +102,28 @@ function buildTenantClient(url: string) {
 
 /** Resolve an integration's active store-DB connection URL from the control plane. */
 async function resolveStoreUrl(connectorInstanceId: string): Promise<string> {
-  const row = await controlPrisma.tenantDatabase.findUnique({ where: { connectorInstanceId } });
+  const normalizedConnectorInstanceId = Array.isArray(connectorInstanceId)
+    ? String(connectorInstanceId[0] || '').trim()
+    : String(connectorInstanceId || '').trim();
+
+  if (!normalizedConnectorInstanceId) {
+    throw new Error('[tenant-prisma] connectorInstanceId is required to resolve a store database.');
+  }
+
+  const row = await controlPrisma.tenantDatabase.findUnique({ where: { connectorInstanceId: normalizedConnectorInstanceId } });
   if (!row || row.status !== 'active') {
-    throw new StoreDatabaseNotActive(connectorInstanceId, row?.status ?? null);
+    throw new StoreDatabaseNotActive(normalizedConnectorInstanceId, row?.status ?? null);
   }
   const secret = decryptString(row.encryptedSecret);
   if (!secret) {
-    throw new Error(`[tenant-prisma] Store DB for ${connectorInstanceId} active but credentials could not be decrypted.`);
+    throw new Error(`[tenant-prisma] Store DB for ${normalizedConnectorInstanceId} active but credentials could not be decrypted.`);
   }
   try {
     const parsed = JSON.parse(secret);
     if (!parsed?.url) throw new Error('no url');
     return parsed.url as string;
   } catch {
-    throw new Error(`[tenant-prisma] Store DB credential envelope for ${connectorInstanceId} is malformed.`);
+    throw new Error(`[tenant-prisma] Store DB credential envelope for ${normalizedConnectorInstanceId} is malformed.`);
   }
 }
 

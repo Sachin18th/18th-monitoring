@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { prisma, decryptEmail } from '@kpi-platform/db';
 import { tenantAuthHandler } from '../../middlewares/auth.middleware';
 import { successResponse, errorResponse } from '../../utils/response';
+import { getDataPlaneClient } from '../../lib/tenant-prisma';
 
 /**
  * Session Journey Timeline routes — individual visitor paths through the
@@ -79,6 +80,7 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
         const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
 
         try {
+            const db = await getDataPlaneClient(connectorId);
             // Platform key for resolving a tracker-captured numeric customer_id
             // back to a synced customer_profiles row (name/email). Shopify only
             // exposes the numeric id client-side on normal pages, so this join is
@@ -90,7 +92,7 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
             });
             const extIdKey = externalIdKeyForProvider(connectorMeta?.providerId);
 
-            const rows = await prisma.$queryRaw<any[]>`
+            const rows = await db.$queryRaw<any[]>`
                 SELECT
                     s.id,
                     s.session_id,
@@ -105,9 +107,7 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                     s.purchase_completed,
                     s.checkout_started,
                     s.funnel_stage,
-                    s.customer_email_encrypted AS sess_email_encrypted,
-                    s.customer_name AS sess_customer_name,
-                    s.customer_id AS sess_customer_id,
+                    s.metadata AS sess_metadata,
                     email_lookup.email_encrypted,
                     name_lookup.customer_name,
                     cid_lookup.customer_id,
@@ -188,12 +188,12 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                 const ids = Array.from(
                     new Set(
                         rows
-                            .map((r) => r.sess_customer_id || r.customer_id || r.v_customer_id)
-                            .filter((v): v is string => typeof v === 'string' && v.length > 0)
+                            .map((r: any) => r.sess_metadata?.identity?.customer_id || r.customer_id || r.v_customer_id)
+                            .filter((v: any): v is string => typeof v === 'string' && v.length > 0)
                     )
                 );
                 if (ids.length > 0) {
-                    const profiles = await prisma.$queryRawUnsafe<any[]>(
+                    const profiles: any[] = await db.$queryRawUnsafe(
                         `SELECT external_ids->>$1 AS ext_id, email_encrypted, metadata
                            FROM customer_profiles
                           WHERE connector_instance_id = $2
@@ -214,22 +214,22 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                 }
             }
 
-            const sessions = rows.map((r) => {
+            const sessions = rows.map((r: any) => {
                 // Resolution order for each field:
-                //   1. identity persisted on the session itself (populated + visitor-
-                //      backfilled at ingest — the durable path, survives session
-                //      expiry / tab close / a dropped beacon);
+                //   1. identity persisted on the session metadata itself (populated
+                //      + visitor-backfilled at ingest — durable across restarts);
                 //   2. this session's own events (historical rows not yet backfilled);
                 //   3. any event from the same visitor_id;
                 //   4. the synced customer_profiles row (Shopify numeric-id path).
-                const resolvedCid = r.sess_customer_id || r.customer_id || r.v_customer_id || null;
+                const sessionIdentity = r.sess_metadata?.identity || null;
+                const resolvedCid = sessionIdentity?.customer_id || r.customer_id || r.v_customer_id || null;
                 const profile = resolvedCid ? profileByExtId.get(String(resolvedCid)) : undefined;
-                const persistedEmail = r.sess_email_encrypted ? decryptEmail(r.sess_email_encrypted) : null;
+                const persistedEmail = sessionIdentity?.customer_email_encrypted ? decryptEmail(sessionIdentity.customer_email_encrypted) : null;
                 const sessionEmail = r.email_encrypted ? decryptEmail(r.email_encrypted) : null;
                 const visitorEmail = r.v_email_encrypted ? decryptEmail(r.v_email_encrypted) : null;
                 const email = persistedEmail || sessionEmail || visitorEmail || profile?.email || null;
                 const customerName =
-                    (r.sess_customer_name ? String(r.sess_customer_name) : null) ||
+                    (sessionIdentity?.customer_name ? String(sessionIdentity.customer_name) : null) ||
                     (r.customer_name ? String(r.customer_name) : null) ||
                     (r.v_customer_name ? String(r.v_customer_name) : null) ||
                     profile?.name ||
@@ -278,7 +278,8 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
         }
 
         try {
-            const rows = await prisma.$queryRaw<any[]>`
+            const db = await getDataPlaneClient(connectorId);
+            const rows = await db.$queryRaw<any[]>`
                 SELECT
                     id,
                     event_type,
@@ -293,7 +294,7 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                 ORDER BY occurred_at ASC
             `;
 
-            const events = rows.map((r) => ({
+            const events = rows.map((r: any) => ({
                 id: r.id,
                 event_type: r.event_type,
                 page_url: r.page_url,

@@ -154,7 +154,7 @@ function Donut({
 export default function JourneyIntelligencePage() {
   const { projectId } = useParams();
   const { apiFetch, token, user } = useAuth();
-  const { connectorInstanceId } = useConnectorFilter();
+  const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
   const { connectedStores } = useConnectorPlatform();
   const initialLoadKeyRef = useRef<string | null>(null);
 
@@ -186,7 +186,15 @@ export default function JourneyIntelligencePage() {
 
       if (!nextAllowedPageKeys.includes('observability/journeys')) return;
 
-      const res = await apiFetch(`/api/v1/dashboard/customers/intelligence?siteId=${projectId}&range=${range}`);
+      const qs = new URLSearchParams({
+        siteId: String(projectId),
+        range,
+      });
+      if (connectorInstanceId && connectorInstanceId !== 'all') {
+        qs.set('connector_instance_id', connectorInstanceId);
+      }
+
+      const res = await apiFetch(`/api/v1/dashboard/customers/intelligence?${qs.toString()}`);
       const funnel = Array.isArray(res?.funnel) ? res.funnel : [];
       setFunnelSteps(
         funnel.map((s: any) => ({
@@ -203,14 +211,14 @@ export default function JourneyIntelligencePage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token, range]);
+  }, [apiFetch, projectId, token, range, connectorInstanceId]);
 
   useEffect(() => {
     if (!token || !projectId) {
       return;
     }
 
-    const loadKey = `${projectId}:${token}:${range}`;
+    const loadKey = `${projectId}:${token}:${range}:${connectorInstanceId || 'all'}:${connectorSelectionTick}`;
 
     if (initialLoadKeyRef.current === loadKey) {
       return;
@@ -218,7 +226,7 @@ export default function JourneyIntelligencePage() {
 
     initialLoadKeyRef.current = loadKey;
     loadData();
-  }, [loadData, projectId, token, range]);
+  }, [loadData, projectId, token, range, connectorInstanceId, connectorSelectionTick]);
 
   const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('observability/journeys');
 
