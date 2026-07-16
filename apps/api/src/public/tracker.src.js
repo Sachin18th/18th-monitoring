@@ -85,6 +85,7 @@
     var VID_KEY = '__plat_vid';   // localStorage  — persists across sessions
     var SID_KEY = '__plat_sid';   // sessionStorage — rotating session id
     var SLA_KEY = '__plat_sla';   // sessionStorage — session last-active epoch ms
+    var ATTR_KEY = '__plat_attr'; // sessionStorage — first-touch attribution for this session
     var SESSION_TTL = 30 * 60 * 1000; // 30 min inactivity → new session
     var FLUSH_MS = 5000;          // flush cadence
     var MAX_BATCH = 10;           // flush threshold
@@ -148,6 +149,30 @@
         var el = document.querySelector('meta[' + (attr || 'property') + '="' + name + '"]');
         return el ? el.getAttribute('content') : null;
       } catch (e) { return null; }
+    }
+
+    // First-touch acquisition attribution for this session. Parsed once from the
+    // landing URL's query string (utm_*, gclid, fbclid, …) and cached in
+    // sessionStorage, so later page views / SPA navigations keep the landing
+    // attribution even after the query string has been stripped. The server
+    // classifies the channel (Google Ads / Meta / Organic / Direct / Other) from
+    // these signals + the referrer.
+    var ATTR_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'gclid', 'fbclid', 'msclkid', 'gbraid', 'wbraid'];
+    function attribution() {
+      try {
+        var cached = store('s', ATTR_KEY);
+        if (cached != null) { try { return JSON.parse(cached); } catch (e) { return {}; } }
+        var q = {};
+        try {
+          var sp = new URL(location.href).searchParams;
+          for (var i = 0; i < ATTR_KEYS.length; i++) {
+            var v = sp.get(ATTR_KEYS[i]);
+            if (v) q[ATTR_KEYS[i]] = String(v).slice(0, 200);
+          }
+        } catch (e) {}
+        store('s', ATTR_KEY, JSON.stringify(q));
+        return q;
+      } catch (e) { return {}; }
     }
 
     // ── Identity ───────────────────────────────────────────────────────────
@@ -811,11 +836,14 @@
       emit('page_view', {
         page_type: pageType(),
         referrer: document.referrer ? scrubUrl(document.referrer) : null,
+        // First-touch attribution (utm_*, gclid, fbclid, …). The server derives
+        // the acquisition channel from this + the referrer.
+        attribution: attribution(),
         platform: platform(),
         path: location.pathname,
         // Tracker build marker — lets the backend tell which script version a
         // storefront is actually running (stale CDN/browser caches).
-        tracker_v: 4
+        tracker_v: 5
       });
     }
 

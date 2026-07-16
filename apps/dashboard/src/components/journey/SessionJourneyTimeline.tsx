@@ -1,6 +1,28 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
+import {
+  FileText,
+  ShoppingBag,
+  MousePointerClick,
+  ShoppingCart,
+  CheckCircle2,
+  AlertTriangle,
+  Circle,
+  Search,
+  Share2,
+  Leaf,
+  ArrowRight,
+  Link2,
+  Globe,
+  Monitor,
+  Cpu,
+  CornerDownLeft,
+  Clock,
+  Eye,
+  ChevronRight,
+  Check,
+} from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
 interface Props {
@@ -16,8 +38,14 @@ interface Session {
   started_at: string;
   last_active_at: string;
   device_type: string | null;
+  browser: string | null;
+  os: string | null;
   landing_page: string | null;
   referrer: string | null;
+  channel: string | null;
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
   page_view_count: number;
   funnel_stages_reached: string[];
   purchase_completed: boolean;
@@ -45,16 +73,41 @@ const GREEN = '#22c55e';
 const ORANGE = '#f59e0b';
 const RED = '#ef4444';
 
-const EVENT_ICONS: Record<string, string> = {
-  page_view: '📄',
-  product_view: '🛍️',
-  element_click: '👆',
-  checkout_step: '🛒',
-  checkout_complete: '✅',
-  checkout_abandon: '⚠️',
+type IconCmp = React.ComponentType<{ size?: number; color?: string; style?: React.CSSProperties }>;
+
+const EVENT_ICONS: Record<string, IconCmp> = {
+  page_view: FileText,
+  product_view: ShoppingBag,
+  element_click: MousePointerClick,
+  checkout_step: ShoppingCart,
+  checkout_complete: CheckCircle2,
+  checkout_abandon: AlertTriangle,
 };
 
-const eventIcon = (type: string) => EVENT_ICONS[type] || '•';
+// Renders the lucide icon for an event type (falls back to a neutral dot).
+const EventIcon: React.FC<{ type: string; size?: number; color?: string }> = ({ type, size = 14, color }) => {
+  const Icon = EVENT_ICONS[type] || Circle;
+  return <Icon size={size} color={color} />;
+};
+
+// ── Acquisition channels (classified server-side; see classifyChannel).
+type ChannelFilter = 'all' | 'google' | 'meta' | 'organic' | 'direct' | 'other';
+const CHANNEL_PILLS: Array<{ key: ChannelFilter; label: string }> = [
+  { key: 'all', label: 'All channels' },
+  { key: 'google', label: 'Google' },
+  { key: 'meta', label: 'Meta' },
+  { key: 'organic', label: 'Organic' },
+  { key: 'direct', label: 'Direct' },
+  { key: 'other', label: 'Other' },
+];
+const CHANNEL_META: Record<string, { label: string; color: string; Icon: IconCmp }> = {
+  google: { label: 'Google', color: '#4285F4', Icon: Search },
+  meta: { label: 'Meta', color: '#1877F2', Icon: Share2 },
+  organic: { label: 'Organic', color: '#22c55e', Icon: Leaf },
+  direct: { label: 'Direct', color: '#6b7280', Icon: ArrowRight },
+  other: { label: 'Other', color: '#f59e0b', Icon: Link2 },
+};
+const channelMeta = (c: string | null) => (c && CHANNEL_META[c]) || CHANNEL_META.other;
 
 const PAGE_SIZE = 10;
 
@@ -154,6 +207,7 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
   const [sessionEvents, setSessionEvents] = useState<Record<string, JourneyEvent[]>>({});
   const [loadingEventsFor, setLoadingEventsFor] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [channel, setChannel] = useState<ChannelFilter>('all');
 
   // ── Load session list on mount / when scope changes.
   useEffect(() => {
@@ -177,6 +231,7 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
           connectorInstanceId: String(connectorInstanceId),
           limit: '50',
         });
+        if (channel !== 'all') qs.set('channel', channel);
         const res = await apiFetch(`/api/storefront/session-journeys?${qs.toString()}`);
         if (cancelled) return;
         const list: Session[] = Array.isArray(res?.sessions) ? res.sessions : [];
@@ -198,7 +253,7 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
     return () => {
       cancelled = true;
     };
-  }, [apiFetch, projectId, connectorInstanceId, tenantId]);
+  }, [apiFetch, projectId, connectorInstanceId, tenantId, channel]);
 
   const handleRowClick = useCallback(
     async (session: Session) => {
@@ -247,15 +302,44 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
       <div style={{ padding: '16px 18px', background: ROW_ALT, borderTop: `1px solid ${BORDER}` }}>
         {/* Session metadata bar */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
-          <span style={pillStyle}>{session.device_type || 'unknown device'}</span>
+          {(() => {
+            const cm = channelMeta(session.channel);
+            const CmIcon = cm.Icon;
+            const tags = [session.source, session.medium, session.campaign].filter(Boolean).join(' · ');
+            return (
+              <span
+                style={{ ...pillStyle, color: cm.color, borderColor: `${cm.color}55` }}
+                title={tags ? `${cm.label} — ${tags}` : cm.label}
+              >
+                <CmIcon size={13} /> {cm.label}{tags ? ` · ${truncate(tags, 32)}` : ''}
+              </span>
+            );
+          })()}
+          <span style={pillStyle}>
+            <Monitor size={13} /> {session.device_type ? titleCase(session.device_type) : 'Unknown device'}
+          </span>
+          {session.browser && (
+            <span style={pillStyle}>
+              <Globe size={13} /> {session.browser}
+            </span>
+          )}
+          {session.os && (
+            <span style={pillStyle}>
+              <Cpu size={13} /> {session.os}
+            </span>
+          )}
           <span style={pillStyle} title={session.landing_page || ''}>
-            🔗 {session.landing_page ? truncate(session.landing_page, 40) : '(no landing page)'}
+            <Link2 size={13} /> {session.landing_page ? truncate(session.landing_page, 40) : '(no landing page)'}
           </span>
           <span style={pillStyle} title={session.referrer || 'Direct'}>
-            ↩ {session.referrer ? truncate(session.referrer, 40) : 'Direct'}
+            <CornerDownLeft size={13} /> {session.referrer ? truncate(session.referrer, 40) : 'Direct'}
           </span>
-          <span style={pillStyle}>⏱ {formatDuration(session.started_at, session.last_active_at)}</span>
-          <span style={pillStyle}>👁 {session.page_view_count} page views</span>
+          <span style={pillStyle}>
+            <Clock size={13} /> {formatDuration(session.started_at, session.last_active_at)}
+          </span>
+          <span style={pillStyle}>
+            <Eye size={13} /> {session.page_view_count} page views
+          </span>
         </div>
 
         {/* Event timeline */}
@@ -285,10 +369,10 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        fontSize: '14px',
+                        color: MUTED,
                       }}
                     >
-                      {eventIcon(evt.event_type)}
+                      <EventIcon type={evt.event_type} size={14} />
                     </span>
                     {!isLast && <span style={{ flex: 1, width: '2px', background: BORDER, minHeight: '18px' }} />}
                   </div>
@@ -309,7 +393,9 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
                     {showPurchase && (
                       <span
                         style={{
-                          display: 'inline-block',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
                           marginTop: '8px',
                           padding: '3px 10px',
                           borderRadius: '999px',
@@ -320,7 +406,7 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
                           border: `1px solid ${GREEN}`,
                         }}
                       >
-                        ✓ Purchase completed
+                        <Check size={13} /> Purchase completed
                       </span>
                     )}
 
@@ -371,6 +457,33 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
         </p>
       </div>
 
+      {/* Acquisition-channel filter pills — filter the live session list by origin. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+        {CHANNEL_PILLS.map((p) => {
+          const active = channel === p.key;
+          return (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => { setChannel(p.key); setPage(1); }}
+              style={{
+                padding: '5px 14px',
+                borderRadius: '999px',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: `1px solid ${active ? '#111827' : BORDER}`,
+                background: active ? '#111827' : '#ffffff',
+                color: active ? '#ffffff' : TEXT,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+
       {!connectorInstanceId ? (
         <div style={{ padding: '24px 0', textAlign: 'center', color: MUTED, fontSize: '13px' }}>
           Select a store to view individual session journeys.
@@ -391,6 +504,30 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
         return (
         <>
         <div style={{ border: `1px solid ${BORDER}`, borderRadius: '10px', overflow: 'hidden' }}>
+          {/* Column headers — clarify what each column represents. */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '14px',
+              padding: '9px 16px',
+              background: ROW_ALT,
+              borderBottom: `1px solid ${BORDER}`,
+              fontSize: '11px',
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+              color: MUTED,
+            }}
+          >
+            <span style={{ width: '9px', flexShrink: 0 }} />
+            <span style={{ width: '150px', flexShrink: 0 }}>Visitor</span>
+            <span style={{ width: '90px', flexShrink: 0 }}>Started</span>
+            <span style={{ width: '90px', flexShrink: 0, textAlign: 'center' }}>Channel</span>
+            <span style={{ width: '150px', flexShrink: 0 }}>Device / Client</span>
+            <span style={{ flex: 1, minWidth: 0 }}>Furthest stage</span>
+            <span style={{ width: '16px', flexShrink: 0 }} />
+          </div>
           {pageSessions.map((session, idx) => {
             const sid = session.session_id;
             const isExpanded = expandedSessionId === sid;
@@ -435,18 +572,54 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
                     );
                   })()}
                   <span style={{ fontSize: '12px', color: MUTED, width: '90px', flexShrink: 0 }}>{relativeTime(session.started_at)}</span>
-                  <span style={{ fontSize: '12px', color: TEXT, width: '90px', flexShrink: 0, textTransform: 'capitalize' }}>
-                    {session.device_type || '—'}
-                  </span>
+                  {(() => {
+                    const cm = channelMeta(session.channel);
+                    const CmIcon = cm.Icon;
+                    return (
+                      <span
+                        title={`Channel: ${cm.label}${session.source ? ` · ${session.source}` : ''}`}
+                        style={{
+                          display: 'inline-flex', alignItems: 'center', gap: '5px',
+                          fontSize: '11px', fontWeight: 600, color: cm.color,
+                          background: `${cm.color}14`, border: `1px solid ${cm.color}33`,
+                          borderRadius: '999px', padding: '2px 9px', width: '90px',
+                          flexShrink: 0, justifyContent: 'center',
+                        }}
+                      >
+                        <CmIcon size={12} /> {cm.label}
+                      </span>
+                    );
+                  })()}
+                  {(() => {
+                    // Device / client column: device type with browser + OS beneath,
+                    // so the visitor's environment is legible at a glance.
+                    const client = [session.browser, session.os].filter(Boolean).join(' · ');
+                    return (
+                      <span style={{ display: 'flex', flexDirection: 'column', width: '150px', flexShrink: 0, minWidth: 0 }} title={client || undefined}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: TEXT }}>
+                          <Monitor size={13} style={{ flexShrink: 0, color: MUTED }} />
+                          <span style={{ textTransform: 'capitalize', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {session.device_type || 'Unknown'}
+                          </span>
+                        </span>
+                        {client && (
+                          <span style={{ fontSize: '11px', color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: '18px' }}>
+                            {client}
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })()}
                   <span
                     style={{ fontSize: '12px', color: MUTED, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                     title={lastStage || ''}
                   >
                     {lastStage ? titleCase(lastStage) : '—'}
                   </span>
-                  <span style={{ fontSize: '14px', color: MUTED, flexShrink: 0, transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}>
-                    ›
-                  </span>
+                  <ChevronRight
+                    size={16}
+                    style={{ color: MUTED, flexShrink: 0, transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s ease' }}
+                  />
                 </div>
 
                 {/* Expanded detail */}

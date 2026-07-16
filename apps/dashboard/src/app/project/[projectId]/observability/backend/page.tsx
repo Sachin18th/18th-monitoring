@@ -15,9 +15,11 @@ import {
   KeyRound,
   CreditCard,
   MessageSquare,
+  Store,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { PageRestricted } from '@/components/PageRestricted';
+import { PageHero } from '@/components/PageHero';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { PaymentGatewayPanel } from '@/components/observability/PaymentGatewayPanel';
 import { SmsGatewayPanel } from '@/components/observability/SmsGatewayPanel';
@@ -120,7 +122,7 @@ function relativeTime(iso: string | null): string {
 export default function BackendObservabilityPage() {
   const { projectId } = useParams();
   const { apiFetch, token } = useAuth();
-  const { connectorInstanceId } = useConnectorFilter();
+  const { connectorInstanceId, connectorLabel, isAllStores, connectorSelectionTick } = useConnectorFilter();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -165,7 +167,7 @@ export default function BackendObservabilityPage() {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiFetch, projectId, token, connectorInstanceId]);
+  }, [apiFetch, projectId, token, connectorInstanceId, connectorSelectionTick]);
 
   useEffect(() => {
     loadData();
@@ -333,28 +335,39 @@ export default function BackendObservabilityPage() {
   return (
     <div style={pageStyle}>
       {/* Header */}
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '6px' }}>
+      <PageHero
+        icon={Server}
+        accent="#3b82f6"
+        eyebrow="Backend Observability"
+        title="Backend API Observability"
+        subtitle={
+          isAllStores
+            ? "Live health of each connected store's API — reachability, token validity, and latency across all stores."
+            : `Live API health scoped to ${connectorLabel} — reachability, token validity, and latency.`
+        }
+        live
+        right={
           <div
             style={{
-              width: '36px',
-              height: '36px',
-              borderRadius: '8px',
-              background: 'rgba(59,130,246,0.1)',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              boxSizing: 'border-box',
+              gap: '8px',
+              padding: '7px 14px',
+              borderRadius: '999px',
+              border: '1px solid var(--border-card)',
+              background: 'var(--bg-card)',
+              flexShrink: 0,
             }}
+            title={isAllStores ? 'Showing all connected stores' : `Scoped to ${connectorLabel}`}
           >
-            <Server style={{ width: '18px', height: '18px', color: '#3b82f6' }} />
+            <Store style={{ width: '14px', height: '14px', color: '#3b82f6', flexShrink: 0 }} />
+            <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', fontWeight: 600 }}>Store</span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {isAllStores ? 'All Stores' : connectorLabel}
+            </span>
           </div>
-          <h1 style={{ fontSize: '22px', fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>Backend API Observability</h1>
-        </div>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0 }}>
-          Live health of each connected store&apos;s API — reachability, token validity, and latency for {projectId as string}
-        </p>
-      </div>
+        }
+      />
 
       {/* Inline error (shown when a refresh/probe fails but stale data is still on screen) */}
       {error && (

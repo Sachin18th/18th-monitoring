@@ -271,6 +271,14 @@ model StorefrontSession {
   referrer            String?
   landingPage         String?  @map("landing_page")
   deviceType          String?  @map("device_type")
+  // Acquisition attribution (first-touch): classified channel + raw utm signals.
+  channel             String?  @db.VarChar(20)
+  source              String?
+  medium              String?
+  campaign            String?
+  // Client identification parsed from the user_agent header.
+  browser             String?  @db.VarChar(40)
+  os                  String?  @db.VarChar(40)
   metadata            Json     @default("{}")
 
   pageViewCount       Int     @default(0) @map("page_view_count")
@@ -293,6 +301,7 @@ model StorefrontSession {
   @@index([connectorInstanceId, lastActiveAt], map: "idx_storefront_session_last_active")
   @@index([connectorInstanceId, funnelStage], map: "idx_storefront_session_funnel_stage")
   @@index([connectorInstanceId, platform], map: "idx_storefront_session_platform")
+  @@index([connectorInstanceId, channel], map: "idx_storefront_session_channel")
   @@index([connectorInstanceId, funnelStage, startedAt(sort: Desc)], map: "idx_ss_funnel")
   @@index([connectorInstanceId, purchaseCompleted, startedAt(sort: Desc)], map: "idx_ss_purchase")
   @@map("storefront_sessions")

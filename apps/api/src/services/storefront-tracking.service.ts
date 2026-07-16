@@ -119,6 +119,14 @@ type SessionAggregate = {
   purchaseCompleted: boolean;
   lastPageUrl: string | null;
   lastPageTitle: string | null;
+  // First-touch acquisition attribution, classified from the landing event's
+  // utm_*/gclid/fbclid signals + referrer. `channel` is one of CHANNELS.
+  channel: string | null;
+  source: string | null;
+  medium: string | null;
+  campaign: string | null;
+  /** Raw attribution signals (utm_term/content, click ids) kept in metadata. */
+  attributionMeta: Record<string, string> | null;
   // Resolved shopper identity (latest non-null values seen across the session's
   // events). Email is the AES envelope + hash only — never plaintext.
   customerId: string | null;
@@ -149,6 +157,110 @@ export class StorefrontTrackingService {
     if (/ipad|tablet|(android(?!.*mobile))|kindle|silk|playbook/.test(ua)) return 'tablet';
     if (/mobi|iphone|ipod|android|blackberry|opera mini|iemobile/.test(ua)) return 'mobile';
     return 'desktop';
+  }
+
+  /** Best-effort browser name from a user-agent string (order matters). */
+  static detectBrowser(userAgent?: string | null): string | null {
+    if (!userAgent) return null;
+    const ua = userAgent.toLowerCase();
+    if (/edg(a|ios|e)?\//.test(ua)) return 'Edge';
+    if (/opr\/|opera/.test(ua)) return 'Opera';
+    if (/samsungbrowser/.test(ua)) return 'Samsung Internet';
+    if (/ucbrowser/.test(ua)) return 'UC Browser';
+    if (/firefox|fxios/.test(ua)) return 'Firefox';
+    // Chrome must precede Safari (Chrome UA also contains "safari").
+    if (/chrome|crios|chromium/.test(ua)) return 'Chrome';
+    if (/safari/.test(ua)) return 'Safari';
+    if (/msie|trident/.test(ua)) return 'Internet Explorer';
+    return 'Other';
+  }
+
+  /** Best-effort OS name from a user-agent string. */
+  static detectOS(userAgent?: string | null): string | null {
+    if (!userAgent) return null;
+    const ua = userAgent.toLowerCase();
+    if (/windows/.test(ua)) return 'Windows';
+    if (/iphone|ipad|ipod/.test(ua)) return 'iOS';
+    if (/android/.test(ua)) return 'Android';
+    if (/mac os x|macintosh/.test(ua)) return 'macOS';
+    if (/cros/.test(ua)) return 'ChromeOS';
+    if (/linux/.test(ua)) return 'Linux';
+    return 'Other';
+  }
+
+  /**
+   * Classify a session's acquisition channel from first-touch attribution
+   * signals + the referrer. Precedence: paid click-ids → utm → referrer host →
+   * direct → other. Returns the channel (one of CHANNELS) plus normalized
+   * source/medium/campaign for display.
+   */
+  static classifyChannel(
+    attr: Record<string, unknown> | null | undefined,
+    referrer?: string | null,
+  ): { channel: string; source: string | null; medium: string | null; campaign: string | null } {
+    const a = (attr && typeof attr === 'object' ? attr : {}) as Record<string, unknown>;
+    const str = (v: unknown): string | null => {
+      if (v == null) return null;
+      const s = String(v).trim();
+      return s ? s.slice(0, 255) : null;
+    };
+    const utmSource = str(a.utm_source);
+    const utmMedium = str(a.utm_medium);
+    const campaign = str(a.utm_campaign);
+    const gclid = str(a.gclid) || str(a.gbraid) || str(a.wbraid);
+    const fbclid = str(a.fbclid);
+    const msclkid = str(a.msclkid);
+
+    // 1) Paid click-ids are the strongest signal.
+    if (gclid) return { channel: 'google', source: utmSource || 'google', medium: utmMedium || 'cpc', campaign };
+    if (fbclid) return { channel: 'meta', source: utmSource || 'facebook', medium: utmMedium || 'cpc', campaign };
+    if (msclkid) return { channel: 'other', source: utmSource || 'bing', medium: utmMedium || 'cpc', campaign };
+
+    // 2) UTM tags. utm_medium decides paid-vs-organic; utm_source decides which
+    //    channel bucket. Meta/social sources map to `meta` regardless (there is
+    //    no "organic social" pill); search engines split by medium.
+    if (utmSource || utmMedium) {
+      const s = (utmSource || '').toLowerCase();
+      const m = (utmMedium || '').toLowerCase();
+      const isOrganic = m === 'organic';
+      const paid = /(^|[-_])(cpc|ppc|paid|ads?|sem|display|retargeting)([-_]|$)/.test(m);
+      if (/facebook|fb|instagram|ig|meta/.test(s)) return { channel: 'meta', source: utmSource, medium: utmMedium, campaign };
+      if (/google|youtube|gdn|adwords/.test(s)) {
+        return isOrganic
+          ? { channel: 'organic', source: utmSource, medium: utmMedium, campaign }
+          : { channel: 'google', source: utmSource, medium: utmMedium, campaign };
+      }
+      if (isOrganic || (/bing|yahoo|duckduckgo/.test(s) && !paid)) {
+        return { channel: 'organic', source: utmSource, medium: utmMedium || 'organic', campaign };
+      }
+      return { channel: 'other', source: utmSource, medium: utmMedium, campaign };
+    }
+
+    // 3) Referrer host.
+    const host = this.referrerHost(referrer);
+    if (host) {
+      if (/(^|\.)google\./.test(host) || /(^|\.)bing\.|duckduckgo\.|(^|\.)yahoo\./.test(host)) {
+        return { channel: 'organic', source: host, medium: 'organic', campaign: null };
+      }
+      if (/(^|\.)(facebook|instagram|fb|fbcdn)\.|(^|\.)t\.co$|(^|\.)l\.facebook/.test(host)) {
+        return { channel: 'meta', source: host, medium: 'social', campaign: null };
+      }
+      // Any other external referrer → referral (grouped under "other").
+      return { channel: 'other', source: host, medium: 'referral', campaign: null };
+    }
+
+    // 4) No signals at all → direct.
+    return { channel: 'direct', source: null, medium: null, campaign: null };
+  }
+
+  /** Hostname of a referrer URL (lowercased), or null if unparseable/empty. */
+  private static referrerHost(referrer?: string | null): string | null {
+    if (!referrer) return null;
+    try {
+      return new URL(referrer).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return null;
+    }
   }
 
   private static normalizeEvent(raw: any): NormalizedEvent | null {
@@ -454,11 +566,25 @@ export class StorefrontTrackingService {
       stagesReached.add('checkout');
     }
 
+    // First-touch attribution: the landing (earliest) event carries the utm_*/
+    // gclid/fbclid captured on entry; classify the acquisition channel from it.
+    const referrer = (first.properties?.referrer as string | undefined) ?? null;
+    const rawAttr = (first.properties?.attribution && typeof first.properties.attribution === 'object'
+      ? (first.properties.attribution as Record<string, string>)
+      : null);
+    const attr = this.classifyChannel(rawAttr, referrer);
+    const attributionMeta = rawAttr && Object.keys(rawAttr).length ? rawAttr : null;
+
     return {
       visitorId: first.visitorId,
       lastActiveAt: last.occurredAt,
       landingPage: first.pageUrl,
-      referrer: (first.properties?.referrer as string | undefined) ?? null,
+      referrer,
+      channel: attr.channel,
+      source: attr.source,
+      medium: attr.medium,
+      campaign: attr.campaign,
+      attributionMeta,
       pageViewCount: ordered.length,
       pageUrls: pageUrls.slice(0, 50),
       funnelStage: highest,
@@ -490,17 +616,22 @@ export class StorefrontTrackingService {
   }): Promise<void> {
     const a = s.aggregate;
     const hasIdentity = Boolean(a.customerId || a.customerName || a.emailEncrypted);
-    const metadata = hasIdentity
-      ? JSON.stringify({
-          identity: {
-            customer_id: a.customerId,
-            customer_name: a.customerName,
-            customer_email_encrypted: a.emailEncrypted,
-            customer_email_hash: a.emailHash,
-            source: identityCacheKey(s.platform),
-          },
-        })
-      : JSON.stringify({});
+    const metaObj: Record<string, unknown> = {};
+    if (hasIdentity) {
+      metaObj.identity = {
+        customer_id: a.customerId,
+        customer_name: a.customerName,
+        customer_email_encrypted: a.emailEncrypted,
+        customer_email_hash: a.emailHash,
+        source: identityCacheKey(s.platform),
+      };
+    }
+    // Raw attribution signals (utm_term/content, click ids) kept for debugging.
+    if (a.attributionMeta) metaObj.attribution = a.attributionMeta;
+    const metadata = JSON.stringify(metaObj);
+    // Client identification parsed from the UA header (device already resolved).
+    const browser = StorefrontTrackingService.detectBrowser(s.userAgent);
+    const os = StorefrontTrackingService.detectOS(s.userAgent);
     // First-sight columns (started_at / landing_page / referrer / device_type /
     // platform) are preserved on conflict; last_active_at only ever advances.
     // The funnel aggregate merges across batches:
@@ -516,11 +647,13 @@ export class StorefrontTrackingService {
           user_agent, referrer, landing_page, device_type,
          metadata, page_view_count, page_urls_visited, funnel_stage, funnel_stages_reached,
           product_viewed, product_ids_viewed, add_to_cart, checkout_started, purchase_completed,
-         last_page_url, last_page_title, platform)
+         last_page_url, last_page_title, platform,
+          channel, source, medium, campaign, browser, os)
        VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9,
             $10::jsonb, $11::int, $12::jsonb, $13, $14::jsonb,
             $15::bool, $16::jsonb, $17::bool, $18::bool, $19::bool,
-            $20, $21, $22)
+            $20, $21, $22,
+            $23, $24, $25, $26, $27, $28)
        ON CONFLICT (connector_instance_id, session_id) DO UPDATE SET
          last_active_at = GREATEST(storefront_sessions.last_active_at, EXCLUDED.last_active_at),
          user_agent     = COALESCE(storefront_sessions.user_agent, EXCLUDED.user_agent),
@@ -528,6 +661,12 @@ export class StorefrontTrackingService {
          landing_page   = COALESCE(storefront_sessions.landing_page, EXCLUDED.landing_page),
          device_type    = COALESCE(storefront_sessions.device_type, EXCLUDED.device_type),
          platform       = COALESCE(storefront_sessions.platform, EXCLUDED.platform),
+         channel        = COALESCE(storefront_sessions.channel, EXCLUDED.channel),
+         source         = COALESCE(storefront_sessions.source, EXCLUDED.source),
+         medium         = COALESCE(storefront_sessions.medium, EXCLUDED.medium),
+         campaign       = COALESCE(storefront_sessions.campaign, EXCLUDED.campaign),
+         browser        = COALESCE(storefront_sessions.browser, EXCLUDED.browser),
+         os             = COALESCE(storefront_sessions.os, EXCLUDED.os),
         metadata       = COALESCE(storefront_sessions.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
          page_view_count = storefront_sessions.page_view_count + EXCLUDED.page_view_count,
          page_urls_visited = COALESCE((
@@ -603,6 +742,12 @@ export class StorefrontTrackingService {
       a.lastPageUrl,
       a.lastPageTitle,
       s.platform,
+      a.channel,
+      a.source,
+      a.medium,
+      a.campaign,
+      browser,
+      os,
     );
   }
 
@@ -1406,6 +1551,7 @@ export class StorefrontTrackingService {
       avg_session_duration_seconds: 0,
       repeat_visitor_rate: 0,
       device_breakdown: [] as Array<{ device: string; sessions: number }>,
+      channel_breakdown: [] as Array<{ channel: string; sessions: number }>,
       top_entry_pages: [] as Array<{ page: string; sessions: number }>,
       top_exit_pages: [] as Array<{ page: string; sessions: number }>,
       top_referrers: [] as Array<{ referrer: string; sessions: number }>,
@@ -1438,7 +1584,7 @@ export class StorefrontTrackingService {
     if (groups.length === 0) return blank;
 
     const queryGroup = async (db: any, groupIds: string[]) => {
-      const [engagement, repeat, device, entry, exit, referrer, products, steps, productEng, ttp, friction] = await Promise.all([
+      const [engagement, repeat, device, channel, entry, exit, referrer, products, steps, productEng, ttp, friction] = await Promise.all([
         // rows: { total: bigint, bounced: bigint, avg_seconds: number | null }
         db.$queryRawUnsafe(
           `SELECT
@@ -1458,6 +1604,12 @@ export class StorefrontTrackingService {
         db.$queryRawUnsafe(
           `SELECT device_type AS device, COUNT(*)::bigint AS sessions
            FROM storefront_sessions WHERE ${sessWhere} GROUP BY device_type ORDER BY sessions DESC`,
+          groupIds, from, to,
+        ),
+        // rows: { channel: string | null, sessions: bigint }
+        db.$queryRawUnsafe(
+          `SELECT COALESCE(NULLIF(channel, ''), 'direct') AS channel, COUNT(*)::bigint AS sessions
+           FROM storefront_sessions WHERE ${sessWhere} GROUP BY COALESCE(NULLIF(channel, ''), 'direct') ORDER BY sessions DESC`,
           groupIds, from, to,
         ),
         // rows: { page: string | null, sessions: bigint }
@@ -1552,7 +1704,7 @@ export class StorefrontTrackingService {
           groupIds, from, to,
         ),
       ]);
-      return { engagement, repeat, device, entry, exit, referrer, products, steps, productEng, ttp, friction };
+      return { engagement, repeat, device, channel, entry, exit, referrer, products, steps, productEng, ttp, friction };
     };
     const perGroup = await Promise.all(groups.map((g) => queryGroup(g.db, g.ids)));
 
@@ -1564,6 +1716,7 @@ export class StorefrontTrackingService {
     let repeatVisitors = 0;
     let visitors = 0;
     const deviceMap = new Map<string, number>();
+    const channelMap = new Map<string, number>();
     const entryMap = new Map<string, number>();
     const exitMap = new Map<string, number>();
     const referrerMap = new Map<string, number>();
@@ -1586,6 +1739,7 @@ export class StorefrontTrackingService {
       repeatVisitors += Number(g.repeat[0]?.repeat_visitors ?? 0);
       visitors += Number(g.repeat[0]?.visitors ?? 0);
       for (const d of g.device) bump(deviceMap, d.device ?? 'unknown', Number(d.sessions));
+      for (const c of g.channel) bump(channelMap, (c.channel as string) ?? 'direct', Number(c.sessions));
       for (const e of g.entry) bump(entryMap, e.page as string, Number(e.sessions));
       for (const e of g.exit) bump(exitMap, e.page as string, Number(e.sessions));
       for (const r of g.referrer) bump(referrerMap, r.referrer as string, Number(r.sessions));
@@ -1618,6 +1772,9 @@ export class StorefrontTrackingService {
       device_breakdown: [...deviceMap.entries()]
         .sort((x, y) => y[1] - x[1])
         .map(([device, sessions]) => ({ device, sessions })),
+      channel_breakdown: [...channelMap.entries()]
+        .sort((x, y) => y[1] - x[1])
+        .map(([channel, sessions]) => ({ channel, sessions })),
       top_entry_pages: top(entryMap, 8).map(([page, sessions]) => ({ page, sessions })),
       top_exit_pages: top(exitMap, 8).map(([page, sessions]) => ({ page, sessions })),
       top_referrers: top(referrerMap, 8).map(([referrer, sessions]) => ({ referrer, sessions })),

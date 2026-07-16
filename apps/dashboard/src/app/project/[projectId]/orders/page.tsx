@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "../../../../context/AuthContext";
 import { PageRestricted } from "../../../../components/PageRestricted";
+import { PageHero } from "../../../../components/PageHero";
 import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 import { useParams } from "next/navigation";
 import { DiagnosticDrawer } from "@kpi-platform/ui";
@@ -710,41 +711,14 @@ export default function OrdersPage() {
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          <div style={{ maxWidth: "44rem", minWidth: 0 }}>
-            <h1
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "12px",
-                marginBottom: "4px",
-                fontSize: "20px",
-                lineHeight: 1.25,
-                fontWeight: 500,
-                color: "var(--text-primary)",
-              }}
-            >
-              <Package
-                style={{
-                  width: "20px",
-                  height: "20px",
-                  color: "#60a5fa",
-                  flexShrink: 0,
-                }}
-              />
-              <span>Order Operations Console</span>
-            </h1>
-            <p
-              style={{
-                marginBottom: "16px",
-                fontSize: "14px",
-                color: "var(--text-muted)",
-                lineHeight: 1.6,
-                overflowWrap: "anywhere",
-              }}
-            >
-              Real-time oversight and intelligence for high-volume order flows.
-            </p>
-          </div>
+          <PageHero
+            icon={Package}
+            accent="#60a5fa"
+            eyebrow="Order Operations"
+            title="Order Operations Console"
+            subtitle="Real-time oversight and intelligence for high-volume order flows."
+            live
+          />
 
           <div
             style={{

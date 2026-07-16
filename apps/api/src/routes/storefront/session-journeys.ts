@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { Prisma } from '.prisma/tenant-client';
 import { prisma, decryptEmail } from '@kpi-platform/db';
 import { tenantAuthHandler } from '../../middlewares/auth.middleware';
 import { successResponse, errorResponse } from '../../utils/response';
@@ -79,6 +80,13 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
 
         const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
 
+        // Optional acquisition-channel filter (pills). 'all'/absent → no filter.
+        const CHANNELS = new Set(['google', 'meta', 'organic', 'direct', 'other']);
+        const channelParam = String(req.query.channel || '').toLowerCase();
+        const channelFilter = CHANNELS.has(channelParam)
+            ? Prisma.sql`AND s.channel = ${channelParam}`
+            : Prisma.empty;
+
         try {
             const db = await getDataPlaneClient(connectorId);
             // Platform key for resolving a tracker-captured numeric customer_id
@@ -100,8 +108,14 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                     s.started_at,
                     s.last_active_at,
                     s.device_type,
+                    s.browser,
+                    s.os,
                     s.landing_page,
                     s.referrer,
+                    s.channel,
+                    s.source,
+                    s.medium,
+                    s.campaign,
                     s.page_view_count,
                     s.funnel_stages_reached,
                     s.purchase_completed,
@@ -176,6 +190,7 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                 ) v_cid_lookup ON true
                 WHERE s.connector_instance_id = ${connectorId}
                   AND s.tenant_id = ${req.tenantId}
+                  ${channelFilter}
                 ORDER BY s.started_at DESC
                 LIMIT ${limit}
             `;
@@ -241,8 +256,14 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                     started_at: r.started_at instanceof Date ? r.started_at.toISOString() : r.started_at,
                     last_active_at: r.last_active_at instanceof Date ? r.last_active_at.toISOString() : r.last_active_at,
                     device_type: r.device_type,
+                    browser: r.browser,
+                    os: r.os,
                     landing_page: r.landing_page,
                     referrer: r.referrer,
+                    channel: r.channel,
+                    source: r.source,
+                    medium: r.medium,
+                    campaign: r.campaign,
                     page_view_count: Number(r.page_view_count ?? 0),
                     // funnel_stages_reached is JSONB — Prisma returns it already parsed.
                     funnel_stages_reached: Array.isArray(r.funnel_stages_reached) ? r.funnel_stages_reached : [],

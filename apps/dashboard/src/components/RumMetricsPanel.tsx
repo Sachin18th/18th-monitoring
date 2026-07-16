@@ -10,13 +10,21 @@ import PageSpeedCharts from './rum/PageSpeedCharts';
 type MetricKey = 'lcp' | 'fid' | 'tbt' | 'cls' | 'ttfb';
 type MetricStatus = 'good' | 'needs-improvement' | 'poor';
 
-const metricMeta: Record<MetricKey, { label: string; unit: string; icon: React.ComponentType<any>; thresholds: [number, number]; formatter: (value: number) => string }> = {
+// Each vital gets its own icon + accent color so the cards are scannable at a glance.
+const metricMeta: Record<MetricKey, { label: string; unit: string; icon: React.ComponentType<any>; color: string; thresholds: [number, number]; formatter: (value: number) => string }> = {
   // LCP is stored in ms (thresholds stay in ms for status), but displayed in seconds.
-  lcp: { label: 'LCP', unit: 's', icon: Gauge, thresholds: [2500, 4000], formatter: (value) => (value / 1000).toFixed(2) },
-  fid: { label: 'FID', unit: 'ms', icon: Zap, thresholds: [200, 500], formatter: (value) => `${Math.round(value)}` },
-  tbt: { label: 'TBT', unit: 'ms', icon: Zap, thresholds: [200, 600], formatter: (value) => `${Math.round(value)}` },
-  cls: { label: 'CLS', unit: '', icon: Timer, thresholds: [0.1, 0.25], formatter: (value) => value.toFixed(2) },
-  ttfb: { label: 'TTFB', unit: 'ms', icon: Clock3, thresholds: [800, 1800], formatter: (value) => `${Math.round(value)}` },
+  lcp: { label: 'LCP', unit: 's', icon: Gauge, color: '#6366f1', thresholds: [2500, 4000], formatter: (value) => (value / 1000).toFixed(2) },
+  fid: { label: 'FID', unit: 'ms', icon: Zap, color: '#f59e0b', thresholds: [200, 500], formatter: (value) => `${Math.round(value)}` },
+  tbt: { label: 'TBT', unit: 'ms', icon: Zap, color: '#f59e0b', thresholds: [200, 600], formatter: (value) => `${Math.round(value)}` },
+  cls: { label: 'CLS', unit: '', icon: Timer, color: '#a855f7', thresholds: [0.1, 0.25], formatter: (value) => value.toFixed(2) },
+  ttfb: { label: 'TTFB', unit: 'ms', icon: Clock3, color: '#06b6d4', thresholds: [800, 1800], formatter: (value) => `${Math.round(value)}` },
+};
+
+// Lighthouse-style score color: green ≥90, amber 50–89, red <50.
+const scoreColor = (status: MetricStatus | null, score: number | null): string => {
+  if (status === 'good' || (score != null && score >= 90)) return '#22c55e';
+  if (status === 'poor' || (score != null && score < 50)) return '#ef4444';
+  return '#f59e0b';
 };
 
 const statusStyleMap: Record<MetricStatus, { background: string; color: string; border: string }> = {
@@ -61,7 +69,9 @@ function VitalCard({
           <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>{meta.label}</p>
           <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>PageSpeed Insights — {device}</p>
         </div>
-        <Icon size={18} style={{ color: 'var(--text-label)' }} />
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '34px', height: '34px', borderRadius: '10px', background: `${meta.color}1f`, border: `1px solid ${meta.color}40`, flexShrink: 0 }}>
+          <Icon size={17} style={{ color: meta.color }} />
+        </span>
       </div>
 
       <div style={{ fontSize: '34px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1 }}>
@@ -91,6 +101,47 @@ function VitalCard({
         </span>
       </div>
     </article>
+  );
+}
+
+// Lighthouse-style circular performance score (0–100) shown in each section header.
+function ScoreRing({ score, status, loading }: { score: number | null; status: MetricStatus | null; loading?: boolean }) {
+  const size = 60;
+  const stroke = 5;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const hasScore = score != null && Number.isFinite(Number(score));
+  const pct = hasScore ? Math.max(0, Math.min(100, Number(score))) : 0;
+  const color = scoreColor(status, hasScore ? Number(score) : null);
+  const dash = (pct / 100) * circumference;
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+      <div style={{ position: 'relative', width: `${size}px`, height: `${size}px`, flexShrink: 0 }}>
+        <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+          <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="var(--border-card)" strokeWidth={stroke} />
+          {hasScore && !loading ? (
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke={color}
+              strokeWidth={stroke}
+              strokeLinecap="round"
+              strokeDasharray={`${dash} ${circumference}`}
+            />
+          ) : null}
+        </svg>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '17px', fontWeight: 700, color: hasScore && !loading ? color : 'var(--text-muted)' }}>
+          {loading ? '…' : hasScore ? Math.round(pct) : '—'}
+        </div>
+      </div>
+      <div style={{ lineHeight: 1.3 }}>
+        <p style={{ margin: 0, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)', fontWeight: 700 }}>Performance</p>
+        <p style={{ margin: '2px 0 0', fontSize: '11px', color: 'var(--text-muted)' }}>Lighthouse score</p>
+      </div>
+    </div>
   );
 }
 
@@ -351,7 +402,9 @@ export default function RumMetricsPanel() {
     return (
       <section key={key} style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
+            <ScoreRing score={result?.score ?? null} status={result?.scoreStatus ?? null} loading={sectionLoading} />
+            <div style={{ minWidth: 0 }}>
             <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)' }}>{displayLabel}</h3>
             {result?.url ? (
               <a href={result.url} target="_blank" rel="noreferrer" title={result.url} style={{ display: 'block', marginTop: '4px', fontSize: '12px', color: 'var(--text-muted)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '460px' }}>
@@ -363,6 +416,7 @@ export default function RumMetricsPanel() {
               <Clock3 size={12} />
               {result?.timestamp ? `Last fetched ${new Date(result.timestamp).toLocaleString()}` : 'Not fetched yet'}
             </p>
+            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {badge ? (

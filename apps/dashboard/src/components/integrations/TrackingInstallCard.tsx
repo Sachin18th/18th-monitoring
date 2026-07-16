@@ -11,6 +11,7 @@ import {
   Clock,
   AlertCircle,
   Loader2,
+  Radio,
 } from 'lucide-react';
 
 type Platform = 'shopify' | 'bigcommerce' | 'adobe';
@@ -209,6 +210,10 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
     if (platformProp) setPlatform(toPlatformKey(platformProp));
   }, [platformProp]);
   const [verify, setVerify] = useState<VerifyState>({ status: 'idle' });
+  // Whole-card collapse: the install guidance is long, so let merchants fold it
+  // away once the snippet is in place. Open by default so first-time setup is
+  // visible without a click.
+  const [bodyOpen, setBodyOpen] = useState(true);
 
   // Reset the verification result whenever the active store changes.
   useEffect(() => {
@@ -240,6 +245,77 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
   const shopifySnippet = useMemo(
     () =>
       `<script\n  src="${host}/api/track/tracker.js"\n  data-connector-id="${connectorId}"\n  data-ingest-url="${host}/api/track"\n  {% if customer %}\n    data-customer-id="{{ customer.id }}"\n    data-customer-name="{{ customer.name | escape }}"\n    data-customer-email="{{ customer.email }}"\n  {% endif %}\n  async></script>`,
+    [host, connectorId],
+  );
+
+  // Shopify Custom Web Pixel — an alternative to the theme.liquid tag. Runs in
+  // Shopify's sandboxed pixel worker (no theme edit), subscribing to the
+  // standard customer events and forwarding them to /api/track in the exact
+  // envelope the tracker uses ({ connector_instance_id, events: [...] }).
+  const webPixelSnippet = useMemo(
+    () =>
+      `// Shopify admin → Settings → Customer events → Add custom pixel → paste below → Save & Connect.
+const CONNECTOR_INSTANCE_ID = "${connectorId}";
+const INGEST_URL = "${host}/api/track";
+
+// One session id per pixel-worker lifetime (survives SPA navigation).
+const SESSION_ID = "wp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+
+function track(event, eventType, properties) {
+  try {
+    const ctx = (event && event.context) || {};
+    const loc = (ctx.document && ctx.document.location) || {};
+    fetch(INGEST_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        connector_instance_id: CONNECTOR_INSTANCE_ID,
+        events: [{
+          event_type: eventType,
+          session_id: SESSION_ID,
+          visitor_id: event.clientId || null,
+          page_url: loc.href || null,
+          page_title: (ctx.document && ctx.document.title) || null,
+          occurred_at: new Date(event.timestamp || Date.now()).toISOString(),
+          properties: properties || {}
+        }]
+      })
+    });
+  } catch (e) {}
+}
+
+analytics.subscribe("page_viewed", (event) => track(event, "page_view", {}));
+
+analytics.subscribe("product_viewed", (event) => {
+  const v = event.data && event.data.productVariant;
+  track(event, "product_view", v ? {
+    product_id: v.product && v.product.id,
+    product_name: v.product && v.product.title,
+    price: v.price && v.price.amount
+  } : {});
+});
+
+analytics.subscribe("product_added_to_cart", (event) => {
+  const m = event.data && event.data.cartLine && event.data.cartLine.merchandise;
+  track(event, "add_to_cart", m ? {
+    product_id: m.product && m.product.id,
+    product_name: m.product && m.product.title,
+    price: m.price && m.price.amount
+  } : {});
+});
+
+analytics.subscribe("checkout_started", (event) => track(event, "checkout_step", { step: "checkout_started" }));
+
+analytics.subscribe("checkout_completed", (event) => {
+  const c = event.data && event.data.checkout;
+  track(event, "checkout_complete", c ? {
+    order_id: c.order && c.order.id,
+    order_number: c.order && c.order.id,
+    total: c.totalPrice && c.totalPrice.amount,
+    currency: c.currencyCode
+  } : {});
+});`,
     [host, connectorId],
   );
 
@@ -320,8 +396,47 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
     <div style={card}>
       {/* keyframes for the verify spinner */}
       <style>{'@keyframes tic-spin{to{transform:rotate(360deg)}}'}</style>
-      {header}
 
+      {/* Clickable header — collapses the whole guidance (open/close). */}
+      <button
+        type="button"
+        onClick={() => setBodyOpen((o) => !o)}
+        aria-expanded={bodyOpen}
+        style={{
+          appearance: 'none',
+          border: 'none',
+          background: 'transparent',
+          padding: 0,
+          margin: 0,
+          cursor: 'pointer',
+          textAlign: 'left',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px',
+        }}
+      >
+        {header}
+        <span
+          style={{
+            flex: '0 0 auto',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '30px',
+            height: '30px',
+            borderRadius: '8px',
+            border: '1px solid var(--border-input)',
+            background: 'var(--bg-input)',
+            color: 'var(--text-muted)',
+          }}
+        >
+          {bodyOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        </span>
+      </button>
+
+      {bodyOpen && (
+      <>
       {/* Platform tabs */}
       <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid var(--border-card)' }}>
         {PLATFORMS.map((p) => {
@@ -358,7 +473,7 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
       />
 
       {/* Collapsible admin instructions, closed by default */}
-      {platform === 'shopify' ? <ShopifyInstructions snippet={shopifySnippet} /> : null}
+      {platform === 'shopify' ? <ShopifyInstructions snippet={shopifySnippet} webPixelSnippet={webPixelSnippet} /> : null}
       {platform === 'bigcommerce' ? <BigCommerceInstructions /> : null}
       {platform === 'adobe' ? <AdobeInstructions host={host} connectorId={connectorId} /> : null}
 
@@ -396,6 +511,8 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
           Install the snippet, then open your storefront and load a page or two before verifying.
         </p>
       </div>
+      </>
+      )}
     </div>
   );
 };
@@ -433,7 +550,7 @@ const VerifyResult: React.FC<{ state: VerifyState }> = ({ state }) => {
 
 // ── Per-platform instruction bodies ─────────────────────────────────────────
 
-const ShopifyInstructions: React.FC<{ snippet: string }> = ({ snippet }) => (
+const ShopifyInstructions: React.FC<{ snippet: string; webPixelSnippet: string }> = ({ snippet, webPixelSnippet }) => (
   <Collapsible title="Admin instructions — Shopify">
     <p style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>Method A — theme.liquid</p>
     <Step n={1}>Shopify admin → <strong>Online Store</strong> → <strong>Themes</strong>.</Step>
@@ -463,6 +580,31 @@ const ShopifyInstructions: React.FC<{ snippet: string }> = ({ snippet }) => (
 }
 {% endschema %}`}
     />
+    <p style={{ margin: '6px 0 0', display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '13px', fontWeight: 700, color: 'var(--text-primary)' }}>
+      <Radio size={15} style={{ color: '#818cf8', flexShrink: 0 }} />
+      Method C — Custom Web Pixel (no theme edit)
+    </p>
+    <div
+      style={{
+        borderRadius: '10px',
+        border: '1px solid rgba(59,130,246,0.28)',
+        background: 'rgba(59,130,246,0.08)',
+        padding: '10px 12px',
+        fontSize: '12px',
+        color: 'var(--text-secondary)',
+        lineHeight: 1.55,
+      }}
+    >
+      A <strong>custom pixel</strong> runs in Shopify&apos;s sandboxed events worker, so it needs no
+      theme code and survives theme updates. It subscribes to Shopify&apos;s standard customer events
+      and forwards them to the ingest endpoint. Use this <em>or</em> Method A — not both, or events
+      double-count.
+    </div>
+    <Step n={1}>Shopify admin → <strong>Settings</strong> → <strong>Customer events</strong>.</Step>
+    <Step n={2}>Click <strong>Add custom pixel</strong>, give it a name (e.g. Storefront Tracker).</Step>
+    <Step n={3}>Paste the code below into the <strong>Code</strong> editor.</Step>
+    <Step n={4}>Click <strong>Save</strong>, then <strong>Connect</strong> to activate the pixel.</Step>
+    <CodeBlock label="Custom pixel code" code={webPixelSnippet} />
   </Collapsible>
 );
 
