@@ -31,6 +31,7 @@ import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { useAuth } from '../../../../context/AuthContext';
 import { PerformanceChart } from '../../../../components/ui/PerformanceChart';
 import { PageRestricted } from '../../../../components/PageRestricted';
+import { PageHero } from '../../../../components/PageHero';
 
 type Metric = {
   kpiName: string;
@@ -482,58 +483,19 @@ export default function ProjectOverviewPage() {
 
   return (
     <div style={pageStyle}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: '24px',
-          flexWrap: 'wrap',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: 0 }}>
-          <div
-            style={{
-              width: '52px',
-              height: '52px',
-              borderRadius: '16px',
-              background: 'rgba(59,130,246,0.1)',
-              border: '1px solid rgba(59,130,246,0.15)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-              boxSizing: 'border-box',
-            }}
-          >
-            <LayoutDashboard style={{ width: '22px', height: '22px', color: '#3b82f6' }} />
-          </div>
-
-          <div style={{ minWidth: 0 }}>
-            <p style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', margin: '0 0 4px' }}>Control Tower</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', marginBottom: '8px', flexWrap: 'wrap' }}>
-              <span
-                style={{
-                  padding: '2px 8px',
-                  borderRadius: '999px',
-                  fontSize: '10px',
-                  background: 'var(--success-bg)',
-                  color: 'var(--success-text)',
-                  fontWeight: 500,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                LIVE
-              </span>
-              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{user?.name || '18th Super Admin'}</span>
-            </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-              Unified executive observability and operational oversight for{' '}
-              <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{user?.name || 'the current operator'}</span>.
-            </p>
-          </div>
-        </div>
-      </div>
+      <PageHero
+        icon={LayoutDashboard}
+        accent="#3b82f6"
+        eyebrow="Command Center"
+        title="Control Tower"
+        subtitle={
+          <>
+            Unified executive observability and operational oversight for{' '}
+            <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{user?.name || 'the current operator'}</span>.
+          </>
+        }
+        live
+      />
 
       <div
         style={{

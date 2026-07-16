@@ -9,6 +9,7 @@ import { PROJECT_PAGE_ACCESS_OPTIONS, PROJECT_PAGE_KEYS, normalizeRole } from '@
 import { useAuth } from '../../../../../context/AuthContext';
 import { RoleGuard } from '../../../../../components/auth/RoleGuard';
 import { SectionHeader } from '../../../../../components/ui/SectionHeader';
+import { PageHero } from '../../../../../components/PageHero';
 import { SortableTable } from '../../../../../components/ui/SortableTable';
 
 const ROLE_OPTIONS_BY_ACCESS = {
@@ -158,17 +159,6 @@ const headerActionButtonStyle: React.CSSProperties = {
   color: 'var(--text-primary)',
   flexShrink: 0,
   cursor: 'pointer',
-};
-
-const heroTitleStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '12px',
-  marginBottom: '4px',
-  fontSize: '20px',
-  lineHeight: 1.25,
-  fontWeight: 500,
-  color: 'var(--text-primary)',
 };
 
 const errorBannerStyle: React.CSSProperties = {
@@ -561,15 +551,13 @@ export default function UserManagementPage() {
       <div style={{ minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
         <div style={{ ...pageStyle, ...sectionSpacingStyle }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ maxWidth: '42rem', minWidth: 0 }}>
-              <h1 style={heroTitleStyle}>
-                <ShieldCheck style={{ width: '20px', height: '20px', color: '#818cf8', flexShrink: 0 }} />
-                <span>User Management</span>
-              </h1>
-              <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>
-                Manage project access, permissions, and account status for {projectId}.
-              </p>
-            </div>
+            <PageHero
+              icon={ShieldCheck}
+              eyebrow="Governance"
+              title="Administration"
+              subtitle={`Manage project access, permissions, and account status for ${projectId}.`}
+              live
+            />
 
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
               <button onClick={loadUsers} style={headerActionButtonStyle}>

@@ -90,6 +90,28 @@ export class StorefrontScriptInstallService {
     return `<script src="${h}${TRACKER_PATH}" data-connector-id="${connectorId}" data-ingest-url="${h}/api/track" async></script>`;
   }
 
+  /**
+   * BigCommerce install snippet. Script Manager HTML is Handlebars-rendered
+   * server-side by BigCommerce, so we can template the logged-in shopper's
+   * id/name/email straight onto our own <script> tag as data-* attributes.
+   * The tracker's universal readTagIdentity() reads these first (id_probe
+   * `tag_attr:ok`) — full identity, no cart required and no theme edit.
+   *
+   * The `{{#if customer.id}}` guard means logged-out visitors get a bare tag.
+   * If a given store/page doesn't expose `customer` to Script Manager's
+   * Handlebars context, the attributes render empty (or, if Handlebars isn't
+   * processed at all, as literal `{{...}}` — readTagIdentity ignores both),
+   * so this can only add identity, never send garbage.
+   */
+  private static bcSnippet(host: string, connectorId: string): string {
+    const h = host.replace(/\/+$/, '');
+    return (
+      `<script src="${h}${TRACKER_PATH}" data-connector-id="${connectorId}" data-ingest-url="${h}/api/track"` +
+      `{{#if customer.id}} data-customer-id="{{customer.id}}" data-customer-name="{{customer.name}}" data-customer-email="{{customer.email}}"{{/if}}` +
+      ` async></script>`
+    );
+  }
+
   /** Merge the install record into syncConfig (without clobbering other keys). */
   private static async persistInstall(connectorInstanceId: string, syncConfig: Record<string, any>, record: any): Promise<void> {
     await prisma.connectorInstance.update({
@@ -239,7 +261,7 @@ export class StorefrontScriptInstallService {
       body: JSON.stringify({
         name: BC_SCRIPT_NAME,
         description: 'Session & funnel event capture',
-        html: this.snippet(host, conn.id),
+        html: this.bcSnippet(host, conn.id),
         auto_uninstall: true,
         load_method: 'default',
         location: 'head',

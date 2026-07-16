@@ -16,6 +16,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useConnectorFilter } from '@/hooks/useConnectorFilter';
 import { useConnectorPlatform } from '@/context/ConnectorPlatformContext';
 import { PageRestricted } from '@/components/PageRestricted';
+import { PageHero } from '@/components/PageHero';
 import { AlertRuleConfigDrawer, matchTemplate, CATEGORIES } from '@/components/observability/AlertRuleConfigDrawer';
 
 const pageStyle: React.CSSProperties = {
@@ -359,16 +360,18 @@ export default function AlertCenterPage() {
     <div style={{ ...pageStyle, ...sectionSpacingStyle, minHeight: '100vh', background: 'var(--bg-page)', color: 'var(--text-primary)' }}>
       {/* Header */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div style={{ maxWidth: '42rem', minWidth: 0 }}>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', fontSize: '20px', lineHeight: 1.25, fontWeight: 500, color: 'var(--text-primary)' }}>
-            <Bell style={{ width: '20px', height: '20px', color: '#818cf8', flexShrink: 0 }} />
-            <span>Alert Center</span>
-          </h1>
-          <p style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-muted)', lineHeight: 1.6, overflowWrap: 'anywhere' }}>
-            Rule-based alerts and threshold monitoring for {projectId as string} · configure rules via Rule Config. See every alert on the All Alerts page.
-            {connectorInstanceId ? <> · <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{connectorLabel}</span></> : ' · All stores'}
-          </p>
-        </div>
+        <PageHero
+          icon={Bell}
+          eyebrow="Command Center"
+          title="Alert Center"
+          subtitle={
+            <>
+              Rule-based alerts and threshold monitoring for {projectId as string} · configure rules via Rule Config. See every alert on the All Alerts page.
+              {connectorInstanceId ? <> · <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{connectorLabel}</span></> : ' · All stores'}
+            </>
+          }
+          live
+        />
 
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
           <button onClick={loadData} style={{ display: 'flex', alignItems: 'center', gap: '8px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', padding: '8px 16px', fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', flexShrink: 0, cursor: 'pointer' }}>

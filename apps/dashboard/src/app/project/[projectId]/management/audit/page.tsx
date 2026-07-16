@@ -2,10 +2,11 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { PageLayout, Typography, Card, Badge, OperationalTable } from '@kpi-platform/ui';
+import { Typography, Card, Badge, OperationalTable } from '@kpi-platform/ui';
 import { ShieldCheck, Calendar, Info, RefreshCw, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { PageRestricted } from '../../../../../components/PageRestricted';
+import { PageHero } from '../../../../../components/PageHero';
 
 const categoryVariant: Record<string, string> = {
   security:      'error',
@@ -141,11 +142,14 @@ export default function AuditPage() {
   ];
 
   return (
-    <PageLayout
-      title="Audit & Activity"
-      subtitle="Immutable record of all operational and system changes."
-      icon={<ShieldCheck size={24} />}
-    >
+    <div className="flex flex-col gap-8 min-w-0">
+      <PageHero
+        icon={ShieldCheck}
+        eyebrow="Governance"
+        title="Audit & Activity"
+        subtitle="Immutable record of all operational and system changes."
+        live
+      />
       <Card className="p-0 overflow-hidden border-subtle">
         {/* Header bar */}
         <div className="p-4 border-b border-subtle bg-muted/20 flex items-center justify-between">
@@ -227,6 +231,6 @@ export default function AuditPage() {
           />
         )}
       </Card>
-    </PageLayout>
+    </div>
   );
 }

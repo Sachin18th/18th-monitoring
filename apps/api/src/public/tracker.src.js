@@ -379,6 +379,17 @@
       try { store('s', key, JSON.stringify(out)); } catch (e) {}
     }
 
+    // The sessionStorage key each platform caches its resolved identity under
+    // (__plat_mid / __plat_bid / __plat_shid) — so a tag/element-sourced
+    // identity is persisted in the same slot the async probes use.
+    function idKeyForPlatform() {
+      var p = platform();
+      if (p === 'adobe_commerce') return MAGE_ID_KEY;
+      if (p === 'bigcommerce') return BC_ID_KEY;
+      if (p === 'shopify') return SHOP_ID_KEY;
+      return '';
+    }
+
     // The async probes resolve AFTER the page's first (often only) event has
     // been enveloped — on single-pageview visits the identity/diagnostic was
     // computed but never transmitted. Fix: once per session, fire one small
@@ -584,11 +595,40 @@
     // is logged in) and needs no platform-specific probe — so it wins outright.
     function readTagIdentity(out) {
       try {
-        if (ds.customerEmail) out.email = String(ds.customerEmail).slice(0, 320);
-        if (ds.customerName) out.customer_name = String(ds.customerName).slice(0, 200);
-        if (ds.customerId != null && ds.customerId !== '' && ds.customerId !== '0') {
-          out.customer_id = String(ds.customerId).slice(0, 100);
+        // A server-templated tag whose engine didn't run (e.g. BigCommerce
+        // Script Manager Handlebars left unprocessed on some page) leaves the
+        // literal "{{...}}" in the attribute. Reject those so we never send a
+        // bogus customer_id like "{{customer.id}}".
+        var clean = function (v) {
+          if (v == null) return '';
+          var s = String(v);
+          return s.indexOf('{{') > -1 ? '' : s;
+        };
+        // Identity source, in priority order:
+        //   1. data-customer-* on our own <script> tag (server-templated —
+        //      Shopify Liquid / BigCommerce Script Manager Handlebars);
+        //   2. a merchant-placed element with id "__plat_customer" carrying the
+        //      same data-customer-* attributes. This is the universal, platform-
+        //      agnostic way to expose a logged-in shopper to the tracker: any
+        //      store whose JS doesn't leak the customer (Shopify, BigCommerce
+        //      Stencil) drops this one snippet into its theme and identity flows
+        //      exactly like Adobe's mage-cache-storage does automatically.
+        var email = clean(ds.customerEmail);
+        var name = clean(ds.customerName);
+        var id = clean(ds.customerId);
+        if (!email && !name && !id) {
+          try {
+            var el = document.getElementById('__plat_customer');
+            if (el && el.dataset) {
+              email = clean(el.dataset.customerEmail);
+              name = clean(el.dataset.customerName);
+              id = clean(el.dataset.customerId);
+            }
+          } catch (e) {}
         }
+        if (email) out.email = email.slice(0, 320);
+        if (name) out.customer_name = name.slice(0, 200);
+        if (id && id !== '0') out.customer_id = id.slice(0, 100);
         if (out.email || out.customer_name || out.customer_id) _idProbe = 'tag_attr:ok';
       } catch (e) {}
       return out;
@@ -604,12 +644,14 @@
       if (out.email || out.customer_name || out.customer_id) {
         _identity = out;
         _identityAt = t;
-        // Mirror into the Shopify identity cache so it's visible in session
-        // storage (__plat_shid) just like the platform-probe path.
+        // Mirror into the platform's identity cache so it's visible in session
+        // storage (__plat_shid / __plat_bid / __plat_mid) exactly like the
+        // per-platform probe path — this is what makes BigCommerce's __plat_bid
+        // fill on its own once the theme exposes the customer, just as Adobe's
+        // __plat_mid does automatically.
         try {
-          if (platform() === 'shopify' && !store('s', SHOP_ID_KEY)) {
-            store('s', SHOP_ID_KEY, JSON.stringify(out));
-          }
+          var pk = idKeyForPlatform();
+          if (pk && !store('s', pk)) store('s', pk, JSON.stringify(out));
         } catch (e) {}
         return _identity;
       }

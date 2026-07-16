@@ -248,6 +248,19 @@ export const TrackingInstallCard: React.FC<TrackingInstallCardProps> = ({
     [host, connectorId],
   );
 
+  // BigCommerce snippet enriched with logged-in shopper identity. Stencil does
+  // NOT expose the customer to storefront JS (unlike Adobe's mage-cache-storage),
+  // so — like Shopify — we template the customer straight onto the tag using the
+  // Stencil `customer` Handlebars object. The tracker reads these data-customer-*
+  // attributes first (id_probe `tag_attr:ok`) and caches them into __plat_bid.
+  // Guests render a bare tag; unrendered {{...}} values are ignored by the tracker.
+  // Place this in a theme file (templates/layout/base.html), where Handlebars runs.
+  const bigcommerceSnippet = useMemo(
+    () =>
+      `<script src="${host}/api/track/tracker.js"\n        data-connector-id="${connectorId}"\n        data-ingest-url="${host}/api/track"\n        {{#if customer.id}}\n        data-customer-id="{{customer.id}}"\n        data-customer-name="{{customer.name}}"\n        data-customer-email="{{customer.email}}"\n        {{/if}}\n        async></script>`,
+    [host, connectorId],
+  );
+
   // Shopify Custom Web Pixel — an alternative to the theme.liquid tag. Runs in
   // Shopify's sandboxed pixel worker (no theme edit), subscribing to the
   // standard customer events and forwarding them to /api/track in the exact
@@ -465,10 +478,11 @@ analytics.subscribe("checkout_completed", (event) => {
         })}
       </div>
 
-      {/* Pre-substituted snippet for the active platform. Shopify carries the
-          logged-in shopper identity via Liquid; the others use the base tag. */}
+      {/* Pre-substituted snippet for the active platform. Shopify (Liquid) and
+          BigCommerce (Stencil Handlebars) carry the logged-in shopper identity;
+          Adobe reads it from mage-cache-storage, so it uses the base tag. */}
       <CodeBlock
-        code={platform === 'shopify' ? shopifySnippet : snippet}
+        code={platform === 'shopify' ? shopifySnippet : platform === 'bigcommerce' ? bigcommerceSnippet : snippet}
         label={`${PLATFORMS.find((p) => p.key === platform)!.label} — embed snippet`}
       />
 
@@ -609,21 +623,17 @@ const ShopifyInstructions: React.FC<{ snippet: string; webPixelSnippet: string }
 );
 
 const BigCommerceInstructions: React.FC = () => (
-  <Collapsible title="Admin instructions — BigCommerce (Script Manager)">
-    <Step n={1}>BigCommerce admin → <strong>Storefront</strong> → <strong>Script Manager</strong>.</Step>
-    <Step n={2}>Click <strong>Create a Script</strong>.</Step>
-    <Step n={3}>
-      Set the fields exactly:
-      <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
-        <li><strong>Name</strong>: Storefront Tracker</li>
-        <li><strong>Description</strong>: Session &amp; funnel event capture</li>
-        <li><strong>Location on page</strong>: Head</li>
-        <li><strong>Pages</strong>: All pages</li>
-        <li><strong>Script category</strong>: Essential</li>
-        <li><strong>Script type</strong>: Script</li>
-      </ul>
-    </Step>
-    <Step n={4}>Paste the embed snippet (above) into <strong>Script contents</strong>, then <strong>Save</strong>.</Step>
+  <Collapsible title="Admin instructions — BigCommerce (theme file)">
+    <p style={{ margin: '0 0 10px', fontSize: '13px', lineHeight: 1.5 }}>
+      The snippet uses the Stencil <code>{'{{customer}}'}</code> Handlebars object to capture the
+      logged-in shopper&apos;s name &amp; email. Handlebars only renders in a <strong>theme file</strong>,
+      so place it there — not in Script Manager (which serves the tag as-is and would not fill in the
+      customer). Guests render a bare tag; identity appears only when a shopper is signed in.
+    </p>
+    <Step n={1}>BigCommerce admin → <strong>Storefront</strong> → <strong>Themes</strong>.</Step>
+    <Step n={2}>On your active theme → <strong>⋯</strong> → <strong>Edit Theme Files</strong>.</Step>
+    <Step n={3}>Open <code>templates/layout/base.html</code>.</Step>
+    <Step n={4}>Paste the embed snippet (above) just before the closing <code>&lt;/body&gt;</code> tag, then <strong>Save &amp; apply</strong>.</Step>
   </Collapsible>
 );
 

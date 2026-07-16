@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
 import { PageRestricted } from '../../../../../components/PageRestricted';
+import { PageHero } from '../../../../../components/PageHero';
 import {
   ShieldAlert,
   CheckCircle2,
@@ -175,47 +176,14 @@ export default function MonitoringDashboardPage() {
   return (
     <>
       <div style={pageStyle}>
-        <div style={{ marginBottom: '8px', overflow: 'visible' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-            <div
-              style={{
-                width: '34px',
-                height: '34px',
-                borderRadius: '50%',
-                border: '1px solid var(--border-card)',
-                background: 'var(--bg-card)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0
-              }}
-            >
-              <ShieldAlert style={{ width: '16px', height: '16px', color: 'var(--text-secondary)' }} />
-            </div>
-            <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)' }}>
-              Operations Monitoring
-            </span>
-          </div>
-
-          <div style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '6px' }}>
-            System Monitoring
-            <span
-              style={{
-                width: '8px',
-                height: '8px',
-                borderRadius: '50%',
-                background: '#22c55e',
-                display: 'inline-block',
-                marginLeft: '10px',
-                verticalAlign: 'middle'
-              }}
-            />
-          </div>
-
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: '760px' }}>
-            Real-time health evaluation, alert management, and operational visibility.
-          </div>
-        </div>
+        <PageHero
+          icon={ShieldAlert}
+          accent="#22c55e"
+          eyebrow="Operations Monitoring"
+          title="System Monitoring"
+          subtitle="Real-time health evaluation, alert management, and operational visibility."
+          live
+        />
 
         <div
           style={{

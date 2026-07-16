@@ -9,6 +9,7 @@ import React, {
 import axios from "axios";
 import { useAuth } from "../../../../context/AuthContext";
 import { PageRestricted } from "../../../../components/PageRestricted";
+import { PageHero } from "../../../../components/PageHero";
 import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
 import { useParams } from "next/navigation";
 import {
@@ -22,6 +23,7 @@ import {
   MoreHorizontal,
   Plus,
   Plug,
+  Link2,
   Clock,
 } from "lucide-react";
 import { useToast } from "@kpi-platform/ui";
@@ -751,30 +753,13 @@ export default function IntegrationsPage() {
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-          <div style={{ maxWidth: "42rem", minWidth: 0 }}>
-            <h1
-              style={{
-                marginBottom: "4px",
-                fontSize: "24px",
-                lineHeight: 1.25,
-                fontWeight: 700,
-                color: "var(--text-primary)",
-              }}
-            >
-              Integrations
-            </h1>
-            <p
-              style={{
-                marginBottom: "8px",
-                fontSize: "14px",
-                color: "var(--text-muted)",
-                lineHeight: 1.6,
-                overflowWrap: "anywhere",
-              }}
-            >
-              Connector health and sync activity
-            </p>
-          </div>
+          <PageHero
+            icon={Link2}
+            eyebrow="System"
+            title="Integrations"
+            subtitle="Connector health and sync activity"
+            live
+          />
 
           <div
             style={{

@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
 import { useParams } from 'next/navigation';
 import { PageRestricted } from '../../../../../components/PageRestricted';
+import { PageHero } from '../../../../../components/PageHero';
 import PageSpeedCharts from '../../../../../components/rum/PageSpeedCharts';
 import { PaymentGatewayPanel } from '../../../../../components/observability/PaymentGatewayPanel';
 import { SmsGatewayPanel } from '../../../../../components/observability/SmsGatewayPanel';
@@ -333,58 +334,49 @@ export default function KpiAnalyticsPage() {
       <div style={PAGE}>
 
         {/* ── HEADER ─────────────────────────────────────────────── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
-              <div style={{ width: '34px', height: '34px', borderRadius: '50%', border: '1px solid var(--border-card)', background: 'var(--bg-card)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <BarChart3 style={{ width: '16px', height: '16px', color: 'var(--text-secondary)' }} />
+        <PageHero
+          icon={BarChart3}
+          eyebrow="KPI Governance"
+          title="KPI Analytics Engine"
+          subtitle="Unified business, operational, and experience intelligence across all connected data sources."
+          live
+          right={
+            <>
+              {/* Time period pill tabs */}
+              <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px', overflow: 'hidden' }}>
+                {TIME_PERIODS.map((p, i) => (
+                  <button
+                    key={p.value}
+                    onClick={() => setTimeRange(p.value)}
+                    style={{
+                      padding: '7px 14px',
+                      fontSize: '12px',
+                      border: 'none',
+                      borderRight: i < TIME_PERIODS.length - 1 ? '1px solid var(--border-card)' : 'none',
+                      cursor: 'pointer',
+                      background: timeRange === p.value ? 'rgba(96,165,250,0.12)' : 'transparent',
+                      color: timeRange === p.value ? C.blueText : 'var(--text-muted)',
+                      fontWeight: timeRange === p.value ? 600 : 400,
+                      transition: 'all 0.15s',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                ))}
               </div>
-              <span style={{ fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--text-label)' }}>KPI Governance</span>
-            </div>
-            <div style={{ fontSize: '26px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '4px' }}>
-              KPI Analytics Engine
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: C.green, display: 'inline-block', marginLeft: '10px', verticalAlign: 'middle' }} />
-            </div>
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              Unified business, operational, and experience intelligence across all connected data sources.
-            </div>
-          </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-            {/* Time period pill tabs */}
-            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: '8px', overflow: 'hidden' }}>
-              {TIME_PERIODS.map((p, i) => (
-                <button
-                  key={p.value}
-                  onClick={() => setTimeRange(p.value)}
-                  style={{
-                    padding: '7px 14px',
-                    fontSize: '12px',
-                    border: 'none',
-                    borderRight: i < TIME_PERIODS.length - 1 ? '1px solid var(--border-card)' : 'none',
-                    cursor: 'pointer',
-                    background: timeRange === p.value ? 'rgba(96,165,250,0.12)' : 'transparent',
-                    color: timeRange === p.value ? C.blueText : 'var(--text-muted)',
-                    fontWeight: timeRange === p.value ? 600 : 400,
-                    transition: 'all 0.15s',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-
-            <button
-              onClick={() => loadData(true)}
-              disabled={refreshing}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', fontSize: '12px', border: '1px solid var(--border-card)', borderRadius: '8px', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.7 : 1 }}
-            >
-              <RefreshCw style={{ width: '13px', height: '13px' }} />
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </button>
-          </div>
-        </div>
+              <button
+                onClick={() => loadData(true)}
+                disabled={refreshing}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', fontSize: '12px', border: '1px solid var(--border-card)', borderRadius: '8px', background: 'var(--bg-card)', color: 'var(--text-secondary)', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.7 : 1 }}
+              >
+                <RefreshCw style={{ width: '13px', height: '13px' }} />
+                {refreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </>
+          }
+        />
 
         {/* ── HERO KPI CARDS ─────────────────────────────────────── */}
         <div>
