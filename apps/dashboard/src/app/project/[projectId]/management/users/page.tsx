@@ -305,16 +305,9 @@ export default function UserManagementPage() {
     loadUsers();
   }, [loadUsers]);
 
-  const visibleUsers = useMemo(() => {
-    if (isSuperAdmin) {
-      return users;
-    }
-
-    return users.filter((entry) => {
-      const normalizedUserRole = normalizeRole(entry.role);
-      return normalizedUserRole === 'admin' || normalizedUserRole === 'ops_lead' || normalizedUserRole === 'analyst';
-    });
-  }, [isSuperAdmin, users]);
+  // The API already scopes the roster to this project's members plus super admins,
+  // so show exactly what it returns.
+  const visibleUsers = users;
 
   const stats = useMemo(() => {
     const activeUsers = visibleUsers.filter((user) => normalizeStatus(user.status) === 'ACTIVE');

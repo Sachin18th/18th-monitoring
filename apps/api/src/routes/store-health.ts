@@ -23,7 +23,12 @@ export const storeHealthRoutes = async (fastify: FastifyInstance) => {
         req.params?.siteId || req.query?.siteId || req.siteId || null;
 
     const connectorFrom = (req: any): string | null => {
-        const v = req.query?.connector_instance_id || req.query?.connectorInstanceId || req.query?.connectorId;
+        let v = req.query?.connector_instance_id || req.query?.connectorInstanceId || req.query?.connectorId;
+        // A duplicated query param (present in the URL and re-injected by the
+        // dashboard's axios layer) arrives as an array — collapse it to the first
+        // value so the filter matches a real connector id instead of "id,id",
+        // which would otherwise fall through and show every store in the project.
+        if (Array.isArray(v)) v = v[0];
         return v && v !== 'all' ? String(v) : null;
     };
 

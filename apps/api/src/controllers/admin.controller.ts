@@ -73,18 +73,20 @@ const writePagePermissions = async (tx: any, userId: string, projectId: string, 
 
 export const listPlatformUsers = async (req: any, reply: any) => {
     const { projectId } = req.params;
-    const requesterRole = normalizeRequesterRole(req.user.role);
-    
+
     // Additional security for non-SuperAdmins
     if (!canManageProjectAdministration(req.user.role, req.user.assignedProjects, projectId)) {
         return reply.code(403).send({ error: 'Forbidden', message: 'You do not have access to this project administration.' });
     }
 
+    // Roster for any project = users who have access to that project, plus super admins
+    // (super admins are global governance and always appear on every project's admin page).
     const users = await prisma.user.findMany({
-        where: requesterRole === 'super_admin' ? undefined : {
-            projectAccess: {
-                some: { projectId }
-            }
+        where: {
+            OR: [
+                { projectAccess: { some: { projectId } } },
+                { role: 'SUPER_ADMIN' }
+            ]
         },
         select: {
             id: true,
@@ -108,13 +110,6 @@ export const listPlatformUsers = async (req: any, reply: any) => {
         ...user,
         pagePermissions: Array.isArray(user.pagePermissions) ? user.pagePermissions : []
     }));
-
-    if (requesterRole === 'admin') {
-        return normalizedUsers.filter((user) => {
-            const role = normalizeRequesterRole(user.role);
-            return role === 'admin' || role === 'ops_lead' || role === 'analyst';
-        });
-    }
 
     return normalizedUsers;
 };

@@ -117,14 +117,25 @@ const normalizeGatewayDraft = (draft: any): GatewayDraft => {
 
 interface PaymentGatewayPanelProps {
   projectId: string;
+  /** Selected store (connector instance) to scope gateways to. `null`/omitted =
+   *  the "All Stores" view, which lists every configured gateway for the project
+   *  but cannot create new ones (a gateway belongs to a specific store). */
+  connectorInstanceId?: string | null;
   /** Read-only mode (e.g. KPI Engine): hides the "Configure/Manage Gateway" actions
    *  and the "Payment Gateway Missing" prompt — only already-configured gateways render. */
   readOnly?: boolean;
 }
 
-export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGatewayPanelProps) {
+export function PaymentGatewayPanel({ projectId, connectorInstanceId = null, readOnly = false }: PaymentGatewayPanelProps) {
   const { apiFetch, token } = useAuth();
-  const gatewayStorageKey = useMemo(() => (projectId ? `journeys-payment-gateways:${projectId}` : null), [projectId]);
+  // Drafts are remembered per project+store so switching stores doesn't leak
+  // one store's in-progress form into another.
+  const gatewayStorageKey = useMemo(
+    () => (projectId ? `journeys-payment-gateways:${projectId}:${connectorInstanceId ?? 'all'}` : null),
+    [projectId, connectorInstanceId]
+  );
+  // No specific store selected — gateways can be viewed but not configured.
+  const isAllStores = !connectorInstanceId;
 
   const [paymentGateways, setPaymentGateways] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,29 +177,39 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
     window.localStorage.setItem(gatewayStorageKey, JSON.stringify(drafts));
   }, [gatewayStorageKey]);
 
+  // Build the ?siteId=…[&connector_instance_id=…] query used by both GET and POST.
+  const gatewayQuery = useCallback(() => {
+    const params = new URLSearchParams({ siteId: String(projectId) });
+    if (connectorInstanceId) {
+      params.set('connector_instance_id', String(connectorInstanceId));
+    }
+    return params.toString();
+  }, [projectId, connectorInstanceId]);
+
   const loadGateways = useCallback(async () => {
     if (!token || !projectId) return;
     setLoading(true);
     try {
-      const res = await apiFetch(`/api/v1/dashboard/customers/payment-gateways?siteId=${projectId}`);
+      const res = await apiFetch(`/api/v1/dashboard/customers/payment-gateways?${gatewayQuery()}`);
       setPaymentGateways(Array.isArray(res) ? res : []);
     } catch (err) {
       console.error('[PaymentGateways] Load failed', err);
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token]);
+  }, [apiFetch, projectId, token, gatewayQuery]);
 
   useEffect(() => {
     loadGateways();
   }, [loadGateways]);
 
   const openGatewayConfig = useCallback(() => {
+    if (isAllStores) return; // Gateways are configured per store; need one selected.
     setGatewayConfigError(null);
     setGatewayConfigSuccess(null);
     setGatewayDrafts(readGatewayDrafts());
     setIsGatewayConfigOpen(true);
-  }, [readGatewayDrafts]);
+  }, [isAllStores, readGatewayDrafts]);
 
   const closeGatewayConfig = useCallback(() => {
     if (gatewayConfigSaving) return;
@@ -233,6 +254,11 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
       return;
     }
 
+    if (isAllStores) {
+      setGatewayConfigError('Select a specific store before configuring a payment gateway.');
+      return;
+    }
+
     setGatewayConfigSaving(true);
     setGatewayConfigError(null);
     setGatewayConfigSuccess(null);
@@ -266,7 +292,7 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
           }
         }
 
-        await apiFetch(`/api/v1/dashboard/customers/payment-gateways?siteId=${projectId}`, {
+        await apiFetch(`/api/v1/dashboard/customers/payment-gateways?${gatewayQuery()}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -285,7 +311,7 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
     } finally {
       setGatewayConfigSaving(false);
     }
-  }, [apiFetch, gatewayDrafts, loadGateways, persistGatewayDrafts, projectId]);
+  }, [apiFetch, gatewayDrafts, gatewayQuery, isAllStores, loadGateways, persistGatewayDrafts, projectId]);
 
   useEffect(() => {
     if (expandedInitRef.current) {
@@ -411,14 +437,17 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
                 Payment Gateway Missing
               </div>
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5, maxWidth: '560px' }}>
-                No payment gateway is configured for this project. Connect a gateway to monitor its API health and
-                surface scheduled maintenance or outages.
+                {isAllStores
+                  ? 'No payment gateway is configured. Select a specific store above, then connect a gateway to monitor its API health and surface scheduled maintenance or outages.'
+                  : 'No payment gateway is configured for this store. Connect a gateway to monitor its API health and surface scheduled maintenance or outages.'}
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={openGatewayConfig}
+            disabled={isAllStores}
+            title={isAllStores ? 'Select a specific store to configure a gateway' : undefined}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -431,7 +460,8 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
               fontSize: '13px',
               fontWeight: 600,
               color: '#1f1300',
-              cursor: 'pointer'
+              cursor: isAllStores ? 'not-allowed' : 'pointer',
+              opacity: isAllStores ? 0.55 : 1
             }}
           >
             Configure Gateway
@@ -481,6 +511,8 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
             <button
               type="button"
               onClick={openGatewayConfig}
+              disabled={isAllStores}
+              title={isAllStores ? 'Select a specific store to manage gateways' : undefined}
               style={{
                 border: '1px solid var(--border-card)',
                 background: 'transparent',
@@ -489,7 +521,8 @@ export function PaymentGatewayPanel({ projectId, readOnly = false }: PaymentGate
                 padding: '7px 12px',
                 fontSize: '12px',
                 fontWeight: 600,
-                cursor: 'pointer',
+                cursor: isAllStores ? 'not-allowed' : 'pointer',
+                opacity: isAllStores ? 0.55 : 1,
                 whiteSpace: 'nowrap'
               }}
             >

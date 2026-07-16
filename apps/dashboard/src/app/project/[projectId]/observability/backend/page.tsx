@@ -690,7 +690,10 @@ export default function BackendObservabilityPage() {
       {view === 'gateways' && (
         /* Payment gateway health + configuration — probes each configured gateway's
            API (Razorpay / Stripe / PayU) for live status and scheduled maintenance. */
-        <PaymentGatewayPanel projectId={String(projectId)} />
+        <PaymentGatewayPanel
+          projectId={String(projectId)}
+          connectorInstanceId={connectorInstanceId && connectorInstanceId !== 'all' ? String(connectorInstanceId) : null}
+        />
       )}
 
       {view === 'sms' && (

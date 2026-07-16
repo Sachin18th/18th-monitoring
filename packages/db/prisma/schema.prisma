@@ -65,28 +65,31 @@ model Project {
 }
 
 model PaymentGatewayConfig {
-  id            String    @id @db.VarChar(36)
-  projectId     String    @map("project_id") @db.VarChar(255)
-  tenantId      String    @map("tenant_id") @db.VarChar(36)
-  gatewayName   String    @map("gateway_name") @db.VarChar(50)
-  label         String    @db.VarChar(255)
-  apiKey        String?   @map("api_key") @db.VarChar(255)
-  apiSecret     String?   @map("api_secret") @db.VarChar(255)
-  isActive      Boolean   @default(true) @map("is_active")
-  lastCheckedAt DateTime? @map("last_checked_at")
-  lastStatus    String?   @map("last_status") @db.VarChar(20)
-  lastPayload   Json?     @map("last_payload")
-  metadata      Json      @default("{}")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @default(now()) @map("updated_at")
+  id                  String    @id @db.VarChar(36)
+  projectId           String    @map("project_id") @db.VarChar(255)
+  tenantId            String    @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
+  gatewayName         String    @map("gateway_name") @db.VarChar(50)
+  label               String    @db.VarChar(255)
+  apiKey              String?   @map("api_key") @db.VarChar(255)
+  apiSecret           String?   @map("api_secret") @db.VarChar(255)
+  isActive            Boolean   @default(true) @map("is_active")
+  lastCheckedAt       DateTime? @map("last_checked_at")
+  lastStatus          String?   @map("last_status") @db.VarChar(20)
+  lastPayload         Json?     @map("last_payload")
+  metadata            Json      @default("{}")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @map("updated_at")
 
-  project   Project                        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  tenant    Tenant                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  snapshots PaymentGatewayStatusSnapshot[]
+  project           Project                        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tenant            Tenant                         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  connectorInstance ConnectorInstance?             @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
+  snapshots         PaymentGatewayStatusSnapshot[]
 
-  @@unique([projectId, tenantId, gatewayName], map: "uq_payment_gateway_project_gateway")
+  @@unique([projectId, tenantId, connectorInstanceId, gatewayName], map: "uq_payment_gateway_project_connector_gateway")
   @@index([projectId], map: "idx_payment_gateway_project")
   @@index([tenantId], map: "idx_payment_gateway_tenant")
+  @@index([connectorInstanceId], map: "idx_payment_gateway_connector")
   @@index([gatewayName], map: "idx_payment_gateway_name")
   @@map("payment_gateway_configs")
 }
@@ -96,6 +99,7 @@ model PaymentGatewayStatusSnapshot {
   paymentGatewayConfigId String   @map("payment_gateway_config_id") @db.VarChar(36)
   projectId              String   @map("project_id") @db.VarChar(255)
   tenantId               String   @map("tenant_id") @db.VarChar(36)
+  connectorInstanceId    String?  @map("connector_instance_id") @db.VarChar(36)
   gatewayName            String   @map("gateway_name") @db.VarChar(50)
   status                 String   @db.VarChar(20)
   activeDowntimes        Json     @default("[]") @map("active_downtimes")
@@ -107,8 +111,10 @@ model PaymentGatewayStatusSnapshot {
   paymentGatewayConfig PaymentGatewayConfig @relation(fields: [paymentGatewayConfigId], references: [id], onDelete: Cascade)
   project              Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tenant               Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  connectorInstance    ConnectorInstance?   @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
 
   @@index([projectId, gatewayName, checkedAt], map: "idx_payment_gateway_snapshot_project_ts")
+  @@index([connectorInstanceId, checkedAt], map: "idx_payment_gateway_snapshot_connector_ts")
   @@index([paymentGatewayConfigId, checkedAt], map: "idx_payment_gateway_snapshot_config_ts")
   @@map("payment_gateway_status_snapshots")
 }
@@ -263,15 +269,17 @@ model ConnectorInstance {
   updatedAt      DateTime  @default(now()) @map("updated_at")
   disconnectedAt DateTime? @map("disconnected_at")
 
-  project             Project                   @relation(fields: [siteId], references: [id])
-  tenant              Tenant                    @relation(fields: [tenantId], references: [id])
-  syncRuns            ConnectorSyncRun[]
-  resyncJobs          ConnectorResyncJob[]
-  credentials         ConnectorCredential[]
-  lifecycleEvents     ConnectorLifecycleEvent[]
-  auditLogs          IamAuditLog[]
-  apiHealthChecks    ConnectorHealthCheck[]
-  storeDatabase      TenantDatabase?
+  project                       Project                        @relation(fields: [siteId], references: [id])
+  tenant                        Tenant                         @relation(fields: [tenantId], references: [id])
+  syncRuns                      ConnectorSyncRun[]
+  resyncJobs                    ConnectorResyncJob[]
+  credentials                   ConnectorCredential[]
+  lifecycleEvents               ConnectorLifecycleEvent[]
+  auditLogs                     IamAuditLog[]
+  apiHealthChecks               ConnectorHealthCheck[]
+  storeDatabase                 TenantDatabase?
+  paymentGatewayConfigs         PaymentGatewayConfig[]
+  paymentGatewayStatusSnapshots PaymentGatewayStatusSnapshot[]
 
   @@index([siteId], map: "idx_connector_site")
   @@index([tenantId], map: "idx_connector_tenant")
@@ -453,33 +461,33 @@ model ConnectorHealthCheck {
 // TenantDatabaseProvisioningService). A store database is provisioned when its
 // integration is created; sync writes fail closed until the row is `active`.
 model TenantDatabase {
-  id                   String    @id @db.VarChar(36)
-  tenantId             String    @map("tenant_id") @db.VarChar(36)
+  id                    String    @id @db.VarChar(36)
+  tenantId              String    @map("tenant_id") @db.VarChar(36)
   // DATABASE-PER-INTEGRATION: each ConnectorInstance (a connected store) owns
   // its own physical database. One row per connector instance; the row for a
   // legacy per-tenant database has connectorInstanceId NULL and is ignored by
   // the store-DB resolver. projectId is denormalized for project-level read routing.
-  connectorInstanceId  String?   @unique @map("connector_instance_id") @db.VarChar(36)
-  projectId            String?   @map("project_id") @db.VarChar(255)
-  dbHost               String    @map("db_host") @db.VarChar(255)
-  dbPort               Int       @default(5432) @map("db_port")
-  dbName               String    @map("db_name") @db.VarChar(255)
-  dbUser               String    @map("db_user") @db.VarChar(255)
+  connectorInstanceId   String?   @unique @map("connector_instance_id") @db.VarChar(36)
+  projectId             String?   @map("project_id") @db.VarChar(255)
+  dbHost                String    @map("db_host") @db.VarChar(255)
+  dbPort                Int       @default(5432) @map("db_port")
+  dbName                String    @map("db_name") @db.VarChar(255)
+  dbUser                String    @map("db_user") @db.VarChar(255)
   // Path-style label for the credential (e.g. vault/tenant_{slug}/database/credentials).
-  vaultKey             String?   @map("vault_key") @db.VarChar(255)
+  vaultKey              String?   @map("vault_key") @db.VarChar(255)
   // enc:v1 AES-256-GCM envelope of the DB password / connection secret. NEVER plaintext.
-  encryptedSecret      String?   @map("encrypted_secret") @db.Text
-  status               String    @default("pending") @db.VarChar(50) // pending | provisioning | active | failed
-  provisionedAt        DateTime? @map("provisioned_at")
-  lastMigrationVersion String?   @map("last_migration_version") @db.VarChar(255)
-  lastError            Json?     @map("last_error")
+  encryptedSecret       String?   @map("encrypted_secret") @db.Text
+  status                String    @default("pending") @db.VarChar(50) // pending | provisioning | active | failed
+  provisionedAt         DateTime? @map("provisioned_at")
+  lastMigrationVersion  String?   @map("last_migration_version") @db.VarChar(255)
+  lastError             Json?     @map("last_error")
   // Set when a row enters `provisioning`; lets a reaper detect a dead/stuck provision.
   provisioningStartedAt DateTime? @map("provisioning_started_at")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @default(now()) @map("updated_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @default(now()) @map("updated_at")
 
-  tenant             Tenant                             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  connectorInstance  ConnectorInstance?                 @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
+  tenant             Tenant                            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  connectorInstance  ConnectorInstance?                @relation(fields: [connectorInstanceId], references: [id], onDelete: SetNull)
   provisioningEvents TenantDatabaseProvisioningEvent[]
 
   @@index([status], map: "idx_tenant_database_status")

@@ -792,23 +792,25 @@ export class DashboardService {
     ) {
         const { siteId } = filters;
         const tenantId = (filters as any).tenantId;
+        const connectorInstanceId = (filters as any).connectorInstanceId ?? null;
 
         if (!siteId || !tenantId) {
             throw new Error('siteId and tenantId are required to save a payment gateway configuration.');
         }
 
-        return PaymentGatewayService.upsertGatewayConfig(siteId, tenantId, input);
+        return PaymentGatewayService.upsertGatewayConfig(siteId, tenantId, input, connectorInstanceId);
     }
 
     static async getPaymentGatewayStatuses(filters: MetricFilterDto) {
         const { siteId } = filters;
         const tenantId = (filters as any).tenantId;
+        const connectorInstanceId = (filters as any).connectorInstanceId ?? null;
 
         if (!siteId || !tenantId) {
             return [];
         }
 
-        return PaymentGatewayService.syncConfiguredGateways(siteId, tenantId);
+        return PaymentGatewayService.syncConfiguredGateways(siteId, tenantId, connectorInstanceId);
     }
 
     static async getUserTrends(filters: MetricFilterDto) {

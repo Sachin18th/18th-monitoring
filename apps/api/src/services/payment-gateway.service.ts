@@ -37,6 +37,7 @@ type GatewayStatusRecord = {
 
 type GatewayConfigRow = {
     id: string;
+    connectorInstanceId: string | null;
     gatewayName: string;
     label: string;
     apiKey: string | null;
@@ -623,25 +624,54 @@ const fetchGatewayStatusByType = async (config: GatewayConfigRow) => {
     }
 };
 
-const getConfiguredGatewayRows = async (siteId: string, tenantId: string) => {
-    const rows = await prisma.$queryRaw<GatewayConfigRow[]>`
-        SELECT
-            id,
-            gateway_name AS "gatewayName",
-            label,
-            api_key AS "apiKey",
-            api_secret AS "apiSecret",
-            is_active AS "isActive",
-            metadata,
-            last_checked_at AS "lastCheckedAt",
-            last_payload AS "lastPayload",
-            last_status AS "lastStatus"
-        FROM payment_gateway_configs
-        WHERE project_id = ${siteId}
-          AND tenant_id = ${tenantId}
-          AND is_active = true
-        ORDER BY created_at ASC
-    `;
+const getConfiguredGatewayRows = async (
+    siteId: string,
+    tenantId: string,
+    connectorInstanceId?: string | null
+) => {
+    // When a specific store (connector) is selected we scope to it; when no
+    // connector is passed (e.g. the "All Stores" view) we return every
+    // configured gateway for the project.
+    const rows = connectorInstanceId
+        ? await prisma.$queryRaw<GatewayConfigRow[]>`
+            SELECT
+                id,
+                connector_instance_id AS "connectorInstanceId",
+                gateway_name AS "gatewayName",
+                label,
+                api_key AS "apiKey",
+                api_secret AS "apiSecret",
+                is_active AS "isActive",
+                metadata,
+                last_checked_at AS "lastCheckedAt",
+                last_payload AS "lastPayload",
+                last_status AS "lastStatus"
+            FROM payment_gateway_configs
+            WHERE project_id = ${siteId}
+              AND tenant_id = ${tenantId}
+              AND connector_instance_id = ${connectorInstanceId}
+              AND is_active = true
+            ORDER BY created_at ASC
+        `
+        : await prisma.$queryRaw<GatewayConfigRow[]>`
+            SELECT
+                id,
+                connector_instance_id AS "connectorInstanceId",
+                gateway_name AS "gatewayName",
+                label,
+                api_key AS "apiKey",
+                api_secret AS "apiSecret",
+                is_active AS "isActive",
+                metadata,
+                last_checked_at AS "lastCheckedAt",
+                last_payload AS "lastPayload",
+                last_status AS "lastStatus"
+            FROM payment_gateway_configs
+            WHERE project_id = ${siteId}
+              AND tenant_id = ${tenantId}
+              AND is_active = true
+            ORDER BY created_at ASC
+        `;
 
         return rows.map(decryptGatewayRow);
 };
@@ -674,6 +704,7 @@ const persistGatewaySnapshot = async (
             payment_gateway_config_id,
             project_id,
             tenant_id,
+            connector_instance_id,
             gateway_name,
             status,
             active_downtimes,
@@ -687,6 +718,7 @@ const persistGatewaySnapshot = async (
             ${config.id},
             ${siteId},
             ${tenantId},
+            ${config.connectorInstanceId ?? null},
             ${config.gatewayName},
             ${payload.status},
             ${JSON.stringify(Array.isArray(payload.active_downtimes) ? payload.active_downtimes : [])}::jsonb,
@@ -732,19 +764,19 @@ const mapPublicGatewayConfig = (row: any): GatewayConfigView => ({
 });
 
 export const PaymentGatewayService = {
-    async getConfiguredGateways(siteId: string, tenantId: string) {
+    async getConfiguredGateways(siteId: string, tenantId: string, connectorInstanceId?: string | null) {
         if (!siteId || !tenantId) {
             return [] as GatewayConfigRow[];
         }
 
-        const configs = await getConfiguredGatewayRows(siteId, tenantId);
+        const configs = await getConfiguredGatewayRows(siteId, tenantId, connectorInstanceId);
 
         // Return whatever explicit configs exist for the project (may be empty).
         return configs;
     },
 
-    async syncConfiguredGateways(siteId: string, tenantId: string): Promise<GatewayStatusRecord[]> {
-        const configs = await this.getConfiguredGateways(siteId, tenantId);
+    async syncConfiguredGateways(siteId: string, tenantId: string, connectorInstanceId?: string | null): Promise<GatewayStatusRecord[]> {
+        const configs = await this.getConfiguredGateways(siteId, tenantId, connectorInstanceId);
 
         if (!configs.length) {
             return [];
@@ -766,29 +798,49 @@ export const PaymentGatewayService = {
         return statuses;
     },
 
-    async getLatestGatewaySnapshots(siteId: string, tenantId: string): Promise<GatewayStatusRecord[]> {
+    async getLatestGatewaySnapshots(siteId: string, tenantId: string, connectorInstanceId?: string | null): Promise<GatewayStatusRecord[]> {
         if (!siteId || !tenantId) {
             return [];
         }
 
-        const rows = await prisma.$queryRaw<any[]>`
-            SELECT DISTINCT ON (s.payment_gateway_config_id)
-                s.id,
-                s.payment_gateway_config_id AS "configId",
-                s.gateway_name AS "gatewayName",
-                s.status,
-                s.active_downtimes AS "activeDowntimes",
-                s.checked_at AS "checkedAt",
-                s.source,
-                s.error_message AS "errorMessage",
-                c.label,
-                c.is_active AS "isActive"
-            FROM payment_gateway_status_snapshots s
-            INNER JOIN payment_gateway_configs c ON c.id = s.payment_gateway_config_id
-            WHERE s.project_id = ${siteId}
-              AND s.tenant_id = ${tenantId}
-            ORDER BY s.payment_gateway_config_id, s.checked_at DESC
-        `;
+        const rows = connectorInstanceId
+            ? await prisma.$queryRaw<any[]>`
+                SELECT DISTINCT ON (s.payment_gateway_config_id)
+                    s.id,
+                    s.payment_gateway_config_id AS "configId",
+                    s.gateway_name AS "gatewayName",
+                    s.status,
+                    s.active_downtimes AS "activeDowntimes",
+                    s.checked_at AS "checkedAt",
+                    s.source,
+                    s.error_message AS "errorMessage",
+                    c.label,
+                    c.is_active AS "isActive"
+                FROM payment_gateway_status_snapshots s
+                INNER JOIN payment_gateway_configs c ON c.id = s.payment_gateway_config_id
+                WHERE s.project_id = ${siteId}
+                  AND s.tenant_id = ${tenantId}
+                  AND s.connector_instance_id = ${connectorInstanceId}
+                ORDER BY s.payment_gateway_config_id, s.checked_at DESC
+            `
+            : await prisma.$queryRaw<any[]>`
+                SELECT DISTINCT ON (s.payment_gateway_config_id)
+                    s.id,
+                    s.payment_gateway_config_id AS "configId",
+                    s.gateway_name AS "gatewayName",
+                    s.status,
+                    s.active_downtimes AS "activeDowntimes",
+                    s.checked_at AS "checkedAt",
+                    s.source,
+                    s.error_message AS "errorMessage",
+                    c.label,
+                    c.is_active AS "isActive"
+                FROM payment_gateway_status_snapshots s
+                INNER JOIN payment_gateway_configs c ON c.id = s.payment_gateway_config_id
+                WHERE s.project_id = ${siteId}
+                  AND s.tenant_id = ${tenantId}
+                ORDER BY s.payment_gateway_config_id, s.checked_at DESC
+            `;
 
         return rows.map((row) => {
             const activeDowntimes = dedupeDowntimeItems(Array.isArray(row.activeDowntimes) ? row.activeDowntimes : []);
@@ -811,6 +863,7 @@ export const PaymentGatewayService = {
     async checkGatewayDowntime(gatewayName: string) {
         const config = {
             id: crypto.randomUUID(),
+            connectorInstanceId: null,
             gatewayName,
             label: gatewayName,
             apiKey: null,
@@ -827,8 +880,15 @@ export const PaymentGatewayService = {
     async upsertGatewayConfig(
         siteId: string,
         tenantId: string,
-        input: { gatewayName: string; label?: string; apiKey?: string; apiSecret?: string; metadata?: Record<string, unknown> }
+        input: { gatewayName: string; label?: string; apiKey?: string; apiSecret?: string; metadata?: Record<string, unknown> },
+        connectorInstanceId?: string | null
     ): Promise<GatewayConfigView | null> {
+        // A gateway config belongs to one connected store — the caller must have a
+        // specific store selected (not the "All Stores" view) to configure one.
+        if (!connectorInstanceId) {
+            throw new Error('Select a specific store before configuring a payment gateway.');
+        }
+
         const gatewayName = normalizeGatewayName(input.gatewayName || 'razorpay');
 
         if (gatewayName !== 'razorpay' && gatewayName !== 'payu' && gatewayName !== 'stripe') {
@@ -854,6 +914,7 @@ export const PaymentGatewayService = {
                 id,
                 project_id,
                 tenant_id,
+                connector_instance_id,
                 gateway_name,
                 label,
                 api_key,
@@ -867,6 +928,7 @@ export const PaymentGatewayService = {
                 ${crypto.randomUUID()},
                 ${siteId},
                 ${tenantId},
+                ${connectorInstanceId},
                 ${gatewayName},
                 ${label},
                 ${apiKey ? encryptCredential(apiKey) : null},
@@ -876,7 +938,7 @@ export const PaymentGatewayService = {
                 NOW(),
                 NOW()
             )
-            ON CONFLICT (project_id, tenant_id, gateway_name)
+            ON CONFLICT (project_id, tenant_id, connector_instance_id, gateway_name)
             DO UPDATE SET
                 label = EXCLUDED.label,
                 api_key = EXCLUDED.api_key,
@@ -897,6 +959,7 @@ export const PaymentGatewayService = {
             FROM payment_gateway_configs
             WHERE project_id = ${siteId}
               AND tenant_id = ${tenantId}
+              AND connector_instance_id = ${connectorInstanceId}
               AND gateway_name = ${gatewayName}
             LIMIT 1
         `;
