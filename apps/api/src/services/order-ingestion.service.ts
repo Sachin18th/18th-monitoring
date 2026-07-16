@@ -84,7 +84,6 @@ export class OrderIngestionService {
           data: {
             ...canonical,
             siteId: siteId,
-            tenantId,
             channel: "POS",
             lifecycleState: "PLACED",
 
@@ -206,7 +205,6 @@ export class OrderIngestionService {
           data: {
             id: canonical.id,
             siteId,
-            tenantId,
             connectorInstanceId: connectorId,
             orderId: String(canonical.orderId),
             externalReferenceId: canonical.externalReferenceId

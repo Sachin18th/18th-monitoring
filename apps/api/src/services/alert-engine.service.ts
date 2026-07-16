@@ -177,7 +177,6 @@ export class AlertEngine {
         data: {
           id: alertId,
           siteId,
-          tenantId,
           // Stamp the originating store so the store-scoped Alert Center
           // filter surfaces this alert (null = project-wide, shown for all).
           connectorInstanceId,

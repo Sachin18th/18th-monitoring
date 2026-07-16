@@ -136,7 +136,6 @@ export interface CanonicalOrder {
     id: string; // Internal UUID
     orderId: string; // Source/Display order number
     externalReferenceId?: string; // Other system ID (OMS/ERP)
-    tenantId: string;
     siteId: string;
     sourceSystem: string;
     channel: OrderChannel;
@@ -384,7 +383,6 @@ export type PerformanceMetricName =
 export interface PerformanceSignal {
     id: string;
     siteId: string;
-    tenantId?: string;
     environment: string;
     category: MetricCategory;
     name: PerformanceMetricName;
@@ -445,8 +443,7 @@ export type CustomerLifecycleState =
 export interface CustomerProfile {
     id: string; // Internal UUID
     siteId: string;
-    tenantId?: string;
-    
+
     // Identity (Requirement 1)
     externalIds: Record<string, string>; // { shopify: '...', crm: '...' }
     emailHash?: string;

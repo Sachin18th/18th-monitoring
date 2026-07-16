@@ -323,7 +323,6 @@ export class AdobeCommerceCustomerSyncService {
         const existing = await db.customerProfile.findFirst({
             where: {
                 siteId: instance.siteId,
-                tenantId: instance.tenantId,
                 externalIds: {
                     path: ['adobe_commerce'],
                     equals: customerId
@@ -338,7 +337,6 @@ export class AdobeCommerceCustomerSyncService {
         const data: Prisma.CustomerProfileUncheckedCreateInput = {
             id: crypto.randomUUID(),
             siteId: instance.siteId,
-            tenantId: instance.tenantId,
             connectorInstanceId: instance.id,
             externalIds: {
                 adobe_commerce: customerId

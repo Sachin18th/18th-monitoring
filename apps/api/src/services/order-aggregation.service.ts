@@ -5,11 +5,10 @@ type SourceSystem = 'shopify' | 'adobe_commerce' | 'bigcommerce';
 
 export class OrderAggregationService {
   static async getOrderStats(input: {
-    tenantId: string;
     siteId: string;
     sourceSystems?: SourceSystem[];
   }): Promise<{ totalOrders: number; ordersThisHour: number }> {
-    const { tenantId, siteId, sourceSystems } = input;
+    const { siteId, sourceSystems } = input;
 
     const systems = Array.isArray(sourceSystems) && sourceSystems.length > 0 ? sourceSystems : ['shopify', 'adobe_commerce', 'bigcommerce'];
 
@@ -18,7 +17,6 @@ export class OrderAggregationService {
     // Total orders across selected source systems
     const totalOrders = await db.canonicalOrder.count({
       where: {
-        tenantId,
         siteId,
         sourceSystem: { in: systems },
       },
@@ -30,7 +28,6 @@ export class OrderAggregationService {
 
     const ordersThisHour = await db.canonicalOrder.count({
       where: {
-        tenantId,
         siteId,
         sourceSystem: { in: systems },
         placedAt: {

@@ -236,7 +236,6 @@ export class BigCommerceCustomerSyncService {
     const existing = await db.customerProfile.findFirst({
       where: {
         siteId: instance.siteId,
-        tenantId: instance.tenantId,
         externalIds: {
           path: ['bigcommerce'],
           equals: customerId
@@ -253,7 +252,6 @@ export class BigCommerceCustomerSyncService {
     const data: Prisma.CustomerProfileUncheckedCreateInput = {
       id: crypto.randomUUID(),
       siteId: instance.siteId,
-      tenantId: instance.tenantId,
       connectorInstanceId: instance.id,
       externalIds: {
         bigcommerce: customerId

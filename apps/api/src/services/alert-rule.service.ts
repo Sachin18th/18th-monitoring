@@ -23,7 +23,6 @@ export class AlertRuleService {
     return {
       id: row.id,
       siteId: row.siteId,
-      tenantId: row.tenantId,
       connectorInstanceId: row.connectorInstanceId ?? null,
       name: row.name,
       description: row.description ?? '',
@@ -86,7 +85,6 @@ export class AlertRuleService {
       data: {
         id,
         siteId,
-        tenantId,
         connectorInstanceId: data.connectorInstanceId ?? null,
         name: data.name,
         description: data.description ?? null,

@@ -41,7 +41,6 @@ export class OrderIntelligenceService {
             id: internalId,
             orderId: sourceOrderId.toString(),
             siteId,
-            tenantId,
             sourceSystem,
             channel,
             lifecycleState,

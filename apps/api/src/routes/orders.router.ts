@@ -21,7 +21,7 @@ export const ordersRoutes = async (fastify: FastifyInstance) => {
       : undefined;
 
     try {
-      const stats = await OrderAggregationService.getOrderStats({ tenantId, siteId: projectId, sourceSystems });
+      const stats = await OrderAggregationService.getOrderStats({ siteId: projectId, sourceSystems });
       const payload = {
         totalOrders: stats.totalOrders,
         ordersThisHour: stats.ordersThisHour,

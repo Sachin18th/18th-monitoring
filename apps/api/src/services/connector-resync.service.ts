@@ -879,7 +879,6 @@ export class ConnectorResyncService {
     const existing = await db.customerProfile.findFirst({
       where: {
         siteId: connector.siteId,
-        tenantId: connector.tenantId,
         externalIds: {
           path: [sourceSystem],
           equals: externalId
@@ -911,7 +910,6 @@ export class ConnectorResyncService {
     const payload: Prisma.CustomerProfileUncheckedCreateInput = {
       id: existing?.id || crypto.randomUUID(),
       siteId: connector.siteId,
-      tenantId: connector.tenantId,
       connectorInstanceId: connector.id,
       externalIds: {
         [sourceSystem]: externalId
@@ -992,9 +990,8 @@ export class ConnectorResyncService {
 
     const existing = await db.canonicalProduct.findUnique({
       where: {
-        siteId_tenantId_sourceSystem_productId: {
+        siteId_sourceSystem_productId: {
           siteId: connector.siteId,
-          tenantId: connector.tenantId,
           sourceSystem,
           productId: externalId
         }
@@ -1020,7 +1017,6 @@ export class ConnectorResyncService {
         data: {
           id: crypto.randomUUID(),
           siteId: connector.siteId,
-          tenantId: connector.tenantId,
           connectorInstanceId: connector.id,
           productId: externalId,
           sourceSystem,
@@ -1064,9 +1060,8 @@ export class ConnectorResyncService {
       try {
         await db.canonicalProductCategory.upsert({
           where: {
-            siteId_tenantId_sourceSystem_productId_categoryName: {
+            siteId_sourceSystem_productId_categoryName: {
               siteId: connector.siteId,
-              tenantId: connector.tenantId,
               sourceSystem,
               productId,
               categoryName
@@ -1075,7 +1070,6 @@ export class ConnectorResyncService {
           create: {
             id: crypto.randomUUID(),
             siteId: connector.siteId,
-            tenantId: connector.tenantId,
             connectorInstanceId: connector.id,
             productId,
             sourceSystem,

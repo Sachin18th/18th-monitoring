@@ -7,11 +7,13 @@
 // live in the control-plane `KPI` DB, described by ../schema.prisma).
 //
 // KEY DIFFERENCE vs the control-plane schema: there are NO foreign keys to
-// control-plane tables. `tenant_id`, `site_id` (project) and
-// `connector_instance_id` are carried as plain indexed columns (soft
-// references) because Postgres cannot enforce a foreign key across two physical
-// databases. Foreign keys that stay WITHIN the data plane (order→snapshot,
-// customer→session→event) are preserved.
+// control-plane tables. `site_id` (project) and `connector_instance_id` are
+// carried as plain indexed columns (soft references) because Postgres cannot
+// enforce a foreign key across two physical databases. There is deliberately NO
+// `tenant_id` column: each tenant has its own physical database, so the value
+// would be constant across every row and carries no information. Foreign keys
+// that stay WITHIN the data plane (order→snapshot, customer→session→event) are
+// preserved.
 //
 // @map names, column types and indexes are kept identical to the control-plane
 // schema so existing `prisma.<model>` query shapes port to the tenant client
@@ -31,7 +33,6 @@ generator client {
 model CanonicalOrder {
   id                  String    @id @db.VarChar(36)
   siteId              String    @map("site_id") @db.VarChar(255)
-  tenantId            String    @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
   orderId             String    @map("order_id") @db.VarChar(255)
   externalReferenceId String?   @map("external_ref_id") @db.VarChar(255)
@@ -59,7 +60,6 @@ model CanonicalOrder {
   events    OrderEvent[]
 
   @@index([siteId], map: "idx_order_site")
-  @@index([tenantId], map: "idx_order_tenant")
   @@index([connectorInstanceId], map: "idx_order_connector")
   @@index([orderId], map: "idx_order_source_id")
   @@index([lifecycleState], map: "idx_order_lifecycle")
@@ -70,7 +70,6 @@ model CanonicalOrder {
 model CanonicalProduct {
   id                  String    @id @db.VarChar(36)
   siteId              String    @map("site_id") @db.VarChar(255)
-  tenantId            String    @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
   productId           String    @map("product_id") @db.VarChar(255)
   sourceSystem        String    @map("source_system") @db.VarChar(255)
@@ -83,9 +82,8 @@ model CanonicalProduct {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @default(now()) @map("updated_at")
 
-  @@unique([siteId, tenantId, sourceSystem, productId], map: "uq_product_source_ref")
+  @@unique([siteId, sourceSystem, productId], map: "uq_product_source_ref")
   @@index([siteId], map: "idx_product_site")
-  @@index([tenantId], map: "idx_product_tenant")
   @@index([connectorInstanceId], map: "idx_product_connector")
   @@map("canonical_products")
 }
@@ -93,7 +91,6 @@ model CanonicalProduct {
 model CanonicalProductCategory {
   id                  String    @id @db.VarChar(36)
   siteId              String    @map("site_id") @db.VarChar(255)
-  tenantId            String    @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
   productId           String    @map("product_id") @db.VarChar(255)
   sourceSystem        String    @map("source_system") @db.VarChar(255)
@@ -106,9 +103,8 @@ model CanonicalProductCategory {
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @default(now()) @map("updated_at")
 
-  @@unique([siteId, tenantId, sourceSystem, productId, categoryName], map: "uq_product_category_source_ref")
+  @@unique([siteId, sourceSystem, productId, categoryName], map: "uq_product_category_source_ref")
   @@index([siteId], map: "idx_product_category_site")
-  @@index([tenantId], map: "idx_product_category_tenant")
   @@index([connectorInstanceId], map: "idx_product_category_connector")
   @@index([productId], map: "idx_product_category_product")
   @@index([categoryName], map: "idx_product_category_name")
@@ -118,7 +114,6 @@ model CanonicalProductCategory {
 model CanonicalCheckout {
   id                   String    @id @db.VarChar(36)
   siteId               String    @map("site_id") @db.VarChar(255)
-  tenantId             String    @map("tenant_id") @db.VarChar(36)
   connectorInstanceId  String?   @map("connector_instance_id") @db.VarChar(36)
   checkoutId           String    @map("checkout_id") @db.VarChar(255)
   sourceSystem         String    @map("source_system") @db.VarChar(255)
@@ -142,9 +137,8 @@ model CanonicalCheckout {
   createdAt            DateTime  @default(now()) @map("created_at")
   updatedAt            DateTime  @default(now()) @map("updated_at")
 
-  @@unique([siteId, tenantId, sourceSystem, checkoutId], map: "uq_checkout_source_ref")
+  @@unique([siteId, sourceSystem, checkoutId], map: "uq_checkout_source_ref")
   @@index([siteId], map: "idx_checkout_site")
-  @@index([tenantId], map: "idx_checkout_tenant")
   @@index([connectorInstanceId], map: "idx_checkout_connector")
   @@index([status], map: "idx_checkout_status")
   @@index([startedAt], map: "idx_checkout_started_ts")
@@ -191,7 +185,6 @@ model OrderEvent {
 model CustomerProfile {
   id                  String   @id @db.VarChar(36)
   siteId              String   @map("site_id") @db.VarChar(255)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
   externalIds         Json     @default("{}") @map("external_ids")
   emailHash           String?  @map("email_hash") @db.VarChar(255)
@@ -262,7 +255,6 @@ model CustomerEvent {
 model StorefrontSession {
   id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
   connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
   sessionId           String   @map("session_id")
   visitorId           String   @map("visitor_id")
   startedAt           DateTime @default(now()) @map("started_at") @db.Timestamptz()
@@ -295,7 +287,6 @@ model StorefrontSession {
   platform            String? @db.VarChar(50)
 
   @@unique([connectorInstanceId, sessionId], map: "uq_storefront_session_connector_session")
-  @@index([tenantId], map: "idx_storefront_session_tenant")
   @@index([connectorInstanceId], map: "idx_storefront_session_connector")
   @@index([connectorInstanceId, visitorId], map: "idx_storefront_session_visitor")
   @@index([connectorInstanceId, lastActiveAt], map: "idx_storefront_session_last_active")
@@ -310,7 +301,6 @@ model StorefrontSession {
 model StorefrontEvent {
   id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
   connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
   sessionId           String   @map("session_id")
   visitorId           String   @map("visitor_id")
   eventType           String   @map("event_type")
@@ -321,7 +311,6 @@ model StorefrontEvent {
   receivedAt          DateTime @default(now()) @map("received_at") @db.Timestamptz()
   properties          Json     @default("{}")
 
-  @@index([tenantId], map: "idx_storefront_event_tenant")
   @@index([connectorInstanceId], map: "idx_storefront_event_connector")
   @@index([connectorInstanceId, occurredAt], map: "idx_storefront_event_connector_occurred")
   @@index([connectorInstanceId, sessionId], map: "idx_storefront_event_session")
@@ -362,7 +351,6 @@ model StorefrontError {
 model PerformanceMetric {
   id                  Int      @id @default(autoincrement())
   siteId              String   @map("site_id") @db.VarChar(255)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
   category            String   @db.VarChar(50)
   metricName          String   @map("metric_name") @db.VarChar(100)
@@ -379,7 +367,6 @@ model PerformanceMetric {
 
   @@unique([siteId, metricName, source], map: "uq_perf_site_metric_source")
   @@index([siteId, metricName, timestamp], map: "idx_perf_site_name_ts")
-  @@index([tenantId, timestamp], map: "idx_perf_tenant_ts")
   @@index([connectorInstanceId, timestamp], map: "idx_perf_connector_ts")
   @@map("performance_metrics")
 }
@@ -409,7 +396,6 @@ model PerformanceRollup {
 model KpiValue {
   id                  Int      @id @default(autoincrement())
   siteId              String   @map("site_id") @db.VarChar(255)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
   kpiName             String   @map("kpi_name") @db.VarChar(100)
   kpiValue            Decimal  @map("kpi_value") @db.Decimal(20, 4)
@@ -419,7 +405,6 @@ model KpiValue {
   updatedAt           DateTime @default(now()) @map("updated_at")
 
   @@index([siteId, kpiName, timestamp], map: "idx_kpi_site_name_ts")
-  @@index([tenantId, timestamp], map: "idx_kpi_tenant_ts")
   @@index([connectorInstanceId, timestamp], map: "idx_kpi_connector_ts")
   @@map("kpi_values")
 }
@@ -428,7 +413,6 @@ model DiscoveredPageUrl {
   id                  String   @id @default(uuid()) @db.VarChar(36)
   connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
   siteId              String   @map("site_id") @db.VarChar(255)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
   pageType            String   @map("page_type") @db.VarChar(20)
   resolvedUrl         String   @map("resolved_url") @db.VarChar(1024)
   urlResolutionMethod String   @map("url_resolution_method") @db.VarChar(20)
@@ -444,7 +428,6 @@ model DiscoveredPageUrl {
 model Alert {
   id                  String    @id @db.VarChar(36)
   siteId              String    @map("site_id") @db.VarChar(255)
-  tenantId            String    @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?   @map("connector_instance_id") @db.VarChar(36)
   severity            String    @db.VarChar(20)
   status              String    @default("TRIGGERED") @db.VarChar(50)
@@ -459,7 +442,6 @@ model Alert {
   resolvedAt          DateTime? @map("resolved_at")
 
   @@index([siteId], map: "idx_alert_site")
-  @@index([tenantId], map: "idx_alert_tenant")
   @@index([connectorInstanceId], map: "idx_alert_connector")
   @@index([status], map: "idx_alert_status")
   @@map("alerts")
@@ -468,7 +450,6 @@ model Alert {
 model AlertRule {
   id                  String   @id @db.VarChar(36)
   siteId              String   @map("site_id") @db.VarChar(255)
-  tenantId            String   @map("tenant_id") @db.VarChar(36)
   connectorInstanceId String?  @map("connector_instance_id") @db.VarChar(36)
   name                String   @db.VarChar(255)
   description         String?  @db.Text

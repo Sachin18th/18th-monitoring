@@ -22,7 +22,6 @@ export class PerformanceIntelligenceService {
         await db.performanceMetric.create({
             data: {
                 siteId: signal.siteId,
-                tenantId: (signal as any).tenantId || 'system',
                 category: 'WEB_VITALS',
                 metricName: signal.name,
                 source: 'rum_sdk',

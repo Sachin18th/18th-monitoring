@@ -189,7 +189,6 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                     LIMIT 1
                 ) v_cid_lookup ON true
                 WHERE s.connector_instance_id = ${connectorId}
-                  AND s.tenant_id = ${req.tenantId}
                   ${channelFilter}
                 ORDER BY s.started_at DESC
                 LIMIT ${limit}
@@ -212,11 +211,9 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                         `SELECT external_ids->>$1 AS ext_id, email_encrypted, metadata
                            FROM customer_profiles
                           WHERE connector_instance_id = $2
-                            AND tenant_id = $3
-                            AND external_ids->>$1 = ANY($4::text[])`,
+                            AND external_ids->>$1 = ANY($3::text[])`,
                         extIdKey,
                         connectorId,
-                        req.tenantId,
                         ids
                     );
                     for (const p of profiles) {
@@ -311,7 +308,6 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                 FROM storefront_events
                 WHERE session_id = ${String(sessionId)}
                   AND connector_instance_id = ${connectorId}
-                  AND tenant_id = ${req.tenantId}
                 ORDER BY occurred_at ASC
             `;
 

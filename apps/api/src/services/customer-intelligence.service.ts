@@ -55,7 +55,6 @@ export class CustomerIntelligenceService {
             data: {
                 id: newId,
                 siteId: options.siteId,
-                tenantId,
                 emailHash,
                 // Reversible, encrypted-at-rest copy for dashboard display.
                 emailEncrypted: encryptEmail(options.email) || undefined,

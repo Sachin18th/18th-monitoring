@@ -65,7 +65,6 @@ export class ObservabilityService {
             data: {
                 id,
                 siteId: alertData.siteId,
-                tenantId: (alertData as any).tenantId || 'tenant_001',
                 severity: alertData.severity,
                 module: alertData.module,
                 alertType: alertData.alertType,

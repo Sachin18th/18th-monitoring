@@ -164,7 +164,6 @@ export class PageUrlDiscoveryService {
                 data: urls.map((u) => ({
                     connectorInstanceId: connector.id,
                     siteId: connector.siteId,
-                    tenantId: connector.tenantId,
                     pageType: u.pageType,
                     resolvedUrl: u.url,
                     urlResolutionMethod: u.method,

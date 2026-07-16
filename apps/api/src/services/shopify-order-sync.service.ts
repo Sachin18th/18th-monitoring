@@ -352,7 +352,6 @@ export class ShopifyOrderSyncService {
         const existing = await db.canonicalOrder.findFirst({
             where: {
                 siteId: instance.siteId,
-                tenantId: instance.tenantId,
                 sourceSystem: 'shopify',
                 OR: [
                     { externalReferenceId: String(rawOrder?.id || '') },
@@ -366,7 +365,6 @@ export class ShopifyOrderSyncService {
 
         const data = {
             siteId: instance.siteId,
-            tenantId: instance.tenantId,
             connectorInstanceId: instance.id,
             orderId: String(canonical.orderId),
             externalReferenceId: canonical.externalReferenceId ? String(canonical.externalReferenceId) : null,

@@ -279,7 +279,6 @@ export class ShopifyCustomerSyncService {
         const existing = await db.customerProfile.findFirst({
             where: {
                 siteId: instance.siteId,
-                tenantId: instance.tenantId,
                 externalIds: {
                     path: ['shopify'],
                     equals: customerId
@@ -294,7 +293,6 @@ export class ShopifyCustomerSyncService {
         const data: Prisma.CustomerProfileUncheckedCreateInput = {
             id: crypto.randomUUID(),
             siteId: instance.siteId,
-            tenantId: instance.tenantId,
             connectorInstanceId: instance.id,
             externalIds: {
                 ...(existing ? {} : {}),

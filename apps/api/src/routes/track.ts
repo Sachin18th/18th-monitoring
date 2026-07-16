@@ -208,7 +208,6 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     }
     try {
       const data = await StorefrontTrackingService.listSessions({
-        tenantId: String((req as any).tenantId ?? req.user.tenantId),
         connectorInstanceId: String(connectorInstanceId),
         from: parseDate(q.from),
         to: parseDate(q.to),
@@ -234,7 +233,6 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     }
     try {
       const data = await StorefrontTrackingService.liveUsers({
-        tenantId: String((req as any).tenantId ?? req.user.tenantId),
         connectorInstanceId: String(connectorInstanceId),
         windowMinutes: q.window_minutes || q.windowMinutes ? Number(q.window_minutes ?? q.windowMinutes) : null,
       });
@@ -260,7 +258,6 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     }
     try {
       const data = await StorefrontTrackingService.listEvents({
-        tenantId: String((req as any).tenantId ?? req.user.tenantId),
         connectorInstanceId: String(connectorInstanceId),
         sessionId: q.session_id || q.sessionId || null,
         eventType: q.event_type || q.eventType || null,
@@ -286,7 +283,6 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     }
     try {
       const data = await StorefrontTrackingService.funnel({
-        tenantId: String((req as any).tenantId ?? req.user.tenantId),
         connectorInstanceId: String(connectorInstanceId),
         from: parseDate(q.from),
         to: parseDate(q.to),
@@ -309,7 +305,6 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     }
     try {
       const data = await StorefrontTrackingService.sessionKpis({
-        tenantId: String((req as any).tenantId ?? req.user.tenantId),
         connectorInstanceId: String(connectorInstanceId),
         from: parseDate(q.from),
         to: parseDate(q.to),

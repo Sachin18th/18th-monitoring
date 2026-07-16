@@ -311,9 +311,8 @@ export class ShopifyProductSyncService {
 
         const existing = await db.canonicalProduct.findUnique({
             where: {
-                siteId_tenantId_sourceSystem_productId: {
+                siteId_sourceSystem_productId: {
                     siteId: instance.siteId,
-                    tenantId: instance.tenantId,
                     sourceSystem: 'shopify',
                     productId: externalId
                 }
@@ -342,7 +341,6 @@ export class ShopifyProductSyncService {
             data: {
                 id: crypto.randomUUID(),
                 siteId: instance.siteId,
-                tenantId: instance.tenantId,
                 connectorInstanceId: instance.id,
                 productId: externalId,
                 sourceSystem: 'shopify',
@@ -393,9 +391,8 @@ export class ShopifyProductSyncService {
         for (const category of categories) {
             await db.canonicalProductCategory.upsert({
                 where: {
-                    siteId_tenantId_sourceSystem_productId_categoryName: {
+                    siteId_sourceSystem_productId_categoryName: {
                         siteId: instance.siteId,
-                        tenantId: instance.tenantId,
                         sourceSystem: 'shopify',
                         productId,
                         categoryName: category.name
@@ -404,7 +401,6 @@ export class ShopifyProductSyncService {
                 create: {
                     id: crypto.randomUUID(),
                     siteId: instance.siteId,
-                    tenantId: instance.tenantId,
                     connectorInstanceId: instance.id,
                     productId,
                     sourceSystem: 'shopify',

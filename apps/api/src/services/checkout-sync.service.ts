@@ -419,7 +419,6 @@ export class CheckoutSyncService {
 
         const data = {
             siteId: instance.siteId,
-            tenantId: instance.tenantId,
             connectorInstanceId: instance.id,
             checkoutId: checkout.checkoutId,
             sourceSystem,
@@ -470,7 +469,6 @@ export class CheckoutSyncService {
             const byExternalId = await db.customerProfile.findFirst({
                 where: {
                     siteId: instance.siteId,
-                    tenantId: instance.tenantId,
                     externalIds: { path: [sourceSystem], equals: externalId }
                 },
                 select: { id: true }
@@ -480,7 +478,7 @@ export class CheckoutSyncService {
 
         if (emailHash) {
             const byEmail = await db.customerProfile.findFirst({
-                where: { siteId: instance.siteId, tenantId: instance.tenantId, emailHash },
+                where: { siteId: instance.siteId, emailHash },
                 select: { id: true }
             });
             if (byEmail) return byEmail.id;
@@ -496,7 +494,6 @@ export class CheckoutSyncService {
             create: {
                 id: profileId,
                 siteId: instance.siteId,
-                tenantId: instance.tenantId,
                 connectorInstanceId: instance.id,
                 externalIds: (externalId ? { [sourceSystem]: externalId } : {}) as Prisma.InputJsonValue,
                 emailHash: emailHash || undefined,

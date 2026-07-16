@@ -273,7 +273,6 @@ export class AdobeCommerceJourneySyncService {
             const byExternalId = await db.customerProfile.findFirst({
                 where: {
                     siteId: instance.siteId,
-                    tenantId: instance.tenantId,
                     externalIds: { path: ['adobe_commerce'], equals: adobeCustomerId }
                 },
                 select: { id: true }
@@ -283,7 +282,7 @@ export class AdobeCommerceJourneySyncService {
 
         if (emailHash) {
             const byEmail = await db.customerProfile.findFirst({
-                where: { siteId: instance.siteId, tenantId: instance.tenantId, emailHash },
+                where: { siteId: instance.siteId, emailHash },
                 select: { id: true }
             });
             if (byEmail) return byEmail.id;
@@ -301,7 +300,6 @@ export class AdobeCommerceJourneySyncService {
             create: {
                 id: profileId,
                 siteId: instance.siteId,
-                tenantId: instance.tenantId,
                 connectorInstanceId: instance.id,
                 externalIds: (adobeCustomerId ? { adobe_commerce: adobeCustomerId } : {}) as Prisma.InputJsonValue,
                 emailHash: emailHash || undefined,

@@ -6,7 +6,6 @@ export const OrderSourceSchema = z.enum(['online', 'offline']);
 export const CanonicalOrderSchema = z.object({
     orderId: z.string(),
     externalOrderId: z.string().optional(),
-    tenantId: z.string(),
     siteId: z.string(),
     orderSource: OrderSourceSchema.default('online'),
     sourceSystem: z.string(),

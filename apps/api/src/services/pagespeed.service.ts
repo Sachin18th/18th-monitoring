@@ -644,7 +644,6 @@ export class PageSpeedService {
                 },
             },
             create: {
-                tenantId: input.tenantId,
                 siteId: input.siteId,
                 connectorInstanceId: input.connectorInstanceId || null,
                 category: 'WEB_VITALS',
@@ -656,7 +655,6 @@ export class PageSpeedService {
                 timestamp: input.timestamp,
             },
             update: {
-                tenantId: input.tenantId,
                 connectorInstanceId: input.connectorInstanceId || null,
                 category: 'WEB_VITALS',
                 metricValue: String(input.metricValue),
@@ -1134,12 +1132,12 @@ export class PageSpeedService {
         await (db.performanceMetric as any).upsert({
             where: { siteId_metricName_source: { siteId: input.siteId, metricName: input.metricName, source } },
             create: {
-                tenantId: input.tenantId, siteId: input.siteId, connectorInstanceId: input.connectorInstanceId || null,
+                siteId: input.siteId, connectorInstanceId: input.connectorInstanceId || null,
                 category: 'WEB_VITALS', metricName: input.metricName, source,
                 metricValue: String(input.metricValue), unit, device: input.strategy, route: input.url, timestamp: input.timestamp,
             },
             update: {
-                tenantId: input.tenantId, connectorInstanceId: input.connectorInstanceId || null, category: 'WEB_VITALS',
+                connectorInstanceId: input.connectorInstanceId || null, category: 'WEB_VITALS',
                 metricValue: String(input.metricValue), unit, device: input.strategy, route: input.url, timestamp: input.timestamp,
             },
         });

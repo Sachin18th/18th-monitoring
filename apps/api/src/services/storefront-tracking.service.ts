@@ -12,11 +12,12 @@ import {
  * Public storefront session/event ingest + analyst-facing queries.
  *
  * Ingest is intentionally defensive: a connector is validated by lookup (which
- * also yields the tenant_id used for scoping), the per-connector sliding-window
+ * resolves its physical data-plane store DB), the per-connector sliding-window
  * rate limit is applied, sessions are upserted and events bulk-inserted. The
  * ingest path never throws to the caller — the route reports accepted/rejected.
  *
- * Every read query filters by BOTH tenant_id and connector_instance_id.
+ * Every read query filters by connector_instance_id (each connector's rows live
+ * in its own physical store DB, so no tenant scoping column is needed).
  */
 
 export const STOREFRONT_EVENT_TYPES = [
@@ -348,7 +349,6 @@ export class StorefrontTrackingService {
       }
 
       const connectorInstanceId = connector.id;
-      const tenantId = connector.tenant_id;
       // Platform comes from connector_instances.provider_id (trusted). If it can't
       // be resolved, fall back to the tracker's properties.platform hint.
       let platform: Platform = platformFromProviderId(connector.provider_id);
@@ -446,7 +446,6 @@ export class StorefrontTrackingService {
         await this.upsertSession({
           db,
           connectorInstanceId,
-          tenantId,
           sessionId,
           userAgent: input.userAgent ?? null,
           deviceType,
@@ -483,7 +482,7 @@ export class StorefrontTrackingService {
       //    page is skipped — only the session aggregate reflects it.
       const insertable = normalized.filter((ev) => ev.shouldInsert);
       if (insertable.length > 0) {
-        await this.insertEvents(db, connectorInstanceId, tenantId, insertable);
+        await this.insertEvents(db, connectorInstanceId, insertable);
       }
 
       // `accepted` counts every admitted event (sessions are always updated);
@@ -607,7 +606,6 @@ export class StorefrontTrackingService {
     /** Data-plane client for this connector's store DB. */
     db: any;
     connectorInstanceId: string;
-    tenantId: string;
     sessionId: string;
     userAgent: string | null;
     deviceType: string | null;
@@ -643,17 +641,17 @@ export class StorefrontTrackingService {
     //   - funnel_stages_reached is the deduped union of all stages seen.
     await s.db.$executeRawUnsafe(
       `INSERT INTO storefront_sessions
-         (connector_instance_id, tenant_id, session_id, visitor_id, last_active_at,
+         (connector_instance_id, session_id, visitor_id, last_active_at,
           user_agent, referrer, landing_page, device_type,
          metadata, page_view_count, page_urls_visited, funnel_stage, funnel_stages_reached,
           product_viewed, product_ids_viewed, add_to_cart, checkout_started, purchase_completed,
          last_page_url, last_page_title, platform,
           channel, source, medium, campaign, browser, os)
-       VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7, $8, $9,
-            $10::jsonb, $11::int, $12::jsonb, $13, $14::jsonb,
-            $15::bool, $16::jsonb, $17::bool, $18::bool, $19::bool,
-            $20, $21, $22,
-            $23, $24, $25, $26, $27, $28)
+       VALUES ($1, $2, $3, $4::timestamptz, $5, $6, $7, $8,
+            $9::jsonb, $10::int, $11::jsonb, $12, $13::jsonb,
+            $14::bool, $15::jsonb, $16::bool, $17::bool, $18::bool,
+            $19, $20, $21,
+            $22, $23, $24, $25, $26, $27)
        ON CONFLICT (connector_instance_id, session_id) DO UPDATE SET
          last_active_at = GREATEST(storefront_sessions.last_active_at, EXCLUDED.last_active_at),
          user_agent     = COALESCE(storefront_sessions.user_agent, EXCLUDED.user_agent),
@@ -721,7 +719,6 @@ export class StorefrontTrackingService {
          last_page_title = COALESCE(EXCLUDED.last_page_title, storefront_sessions.last_page_title)
         `,
       s.connectorInstanceId,
-      s.tenantId,
       s.sessionId,
       a.visitorId,
       a.lastActiveAt.toISOString(),
@@ -794,24 +791,22 @@ export class StorefrontTrackingService {
   private static async insertEvents(
     db: any,
     connectorInstanceId: string,
-    tenantId: string,
     events: NormalizedEvent[],
   ): Promise<void> {
-    // Single multi-row INSERT (10 columns). id + received_at use column defaults.
+    // Single multi-row INSERT (9 columns). id + received_at use column defaults.
     // canonical_stage carries the normalized funnel stage; event_type is the raw
     // signal, kept for debugging/reference.
-    const cols = 10;
+    const cols = 9;
     const placeholders: string[] = [];
     const params: any[] = [];
 
     events.forEach((ev, i) => {
       const b = i * cols;
       placeholders.push(
-        `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}, $${b + 9}::timestamptz, $${b + 10}::jsonb)`,
+        `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}, $${b + 7}, $${b + 8}::timestamptz, $${b + 9}::jsonb)`,
       );
       params.push(
         connectorInstanceId,
-        tenantId,
         ev.sessionId,
         ev.visitorId,
         ev.eventType,
@@ -825,7 +820,7 @@ export class StorefrontTrackingService {
 
     const sql =
       `INSERT INTO storefront_events
-         (connector_instance_id, tenant_id, session_id, visitor_id, event_type, canonical_stage, page_url, page_title, occurred_at, properties)
+         (connector_instance_id, session_id, visitor_id, event_type, canonical_stage, page_url, page_title, occurred_at, properties)
        VALUES ` + placeholders.join(', ');
 
     try {
@@ -838,14 +833,13 @@ export class StorefrontTrackingService {
       console.error('[TRACK] bulk event insert failed; retrying row-by-row', err);
       const rowSql =
         `INSERT INTO storefront_events
-           (connector_instance_id, tenant_id, session_id, visitor_id, event_type, canonical_stage, page_url, page_title, occurred_at, properties)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::jsonb)`;
+           (connector_instance_id, session_id, visitor_id, event_type, canonical_stage, page_url, page_title, occurred_at, properties)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9::jsonb)`;
       for (const ev of events) {
         try {
           await db.$executeRawUnsafe(
             rowSql,
             connectorInstanceId,
-            tenantId,
             ev.sessionId,
             ev.visitorId,
             ev.eventType,
@@ -897,10 +891,9 @@ export class StorefrontTrackingService {
     return groups;
   }
 
-  // ── Analyst queries (always scoped by tenant_id + connector_instance_id) ────
+  // ── Analyst queries (always scoped by connector_instance_id) ────
 
   static async listSessions(input: {
-    tenantId: string;
     connectorInstanceId: string;
     from?: Date | null;
     to?: Date | null;
@@ -917,8 +910,7 @@ export class StorefrontTrackingService {
       SELECT id, session_id, visitor_id, started_at, last_active_at, user_agent,
              referrer, landing_page, device_type, metadata
       FROM storefront_sessions
-      WHERE tenant_id = ${input.tenantId}
-        AND connector_instance_id = ${input.connectorInstanceId}
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND started_at >= ${from} AND started_at <= ${to}
       ORDER BY last_active_at DESC
       LIMIT ${limit} OFFSET ${offset}
@@ -926,8 +918,7 @@ export class StorefrontTrackingService {
     const totalRows = await db.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*)::bigint AS count
       FROM storefront_sessions
-      WHERE tenant_id = ${input.tenantId}
-        AND connector_instance_id = ${input.connectorInstanceId}
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND started_at >= ${from} AND started_at <= ${to}
     `;
 
@@ -957,7 +948,6 @@ export class StorefrontTrackingService {
    * the historical session totals returned by listSessions / sessionKpis.
    */
   static async liveUsers(input: {
-    tenantId: string;
     connectorInstanceId: string;
     windowMinutes?: number | null;
   }) {
@@ -977,8 +967,7 @@ export class StorefrontTrackingService {
           COUNT(DISTINCT visitor_id)::bigint AS live_visitors,
           COUNT(*)::bigint                   AS live_sessions
         FROM storefront_sessions
-        WHERE tenant_id = ${input.tenantId}
-          AND connector_instance_id = ${input.connectorInstanceId}
+        WHERE connector_instance_id = ${input.connectorInstanceId}
           AND last_active_at >= ${since}
       `;
 
@@ -995,7 +984,6 @@ export class StorefrontTrackingService {
   }
 
   static async listEvents(input: {
-    tenantId: string;
     connectorInstanceId: string;
     sessionId?: string | null;
     eventType?: string | null;
@@ -1016,8 +1004,7 @@ export class StorefrontTrackingService {
       SELECT id, session_id, visitor_id, event_type, page_url, page_title,
              occurred_at, received_at, properties
       FROM storefront_events
-      WHERE tenant_id = ${input.tenantId}
-        AND connector_instance_id = ${input.connectorInstanceId}
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND occurred_at >= ${from} AND occurred_at <= ${to}
         AND (${sessionId}::text IS NULL OR session_id = ${sessionId})
         AND (${eventType}::text IS NULL OR event_type = ${eventType})
@@ -1027,8 +1014,7 @@ export class StorefrontTrackingService {
     const totalRows = await db.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*)::bigint AS count
       FROM storefront_events
-      WHERE tenant_id = ${input.tenantId}
-        AND connector_instance_id = ${input.connectorInstanceId}
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND occurred_at >= ${from} AND occurred_at <= ${to}
         AND (${sessionId}::text IS NULL OR session_id = ${sessionId})
         AND (${eventType}::text IS NULL OR event_type = ${eventType})
@@ -1061,7 +1047,6 @@ export class StorefrontTrackingService {
    * off-domain checkouts (Shopify/BigCommerce) still show checkout + purchase.
    */
   static async funnel(input: {
-    tenantId: string;
     connectorInstanceId: string;
     from?: Date | null;
     to?: Date | null;
@@ -1086,8 +1071,7 @@ export class StorefrontTrackingService {
         COUNT(*) FILTER (WHERE checkout_started OR purchase_completed)::bigint AS checkout_count,
         COUNT(*) FILTER (WHERE purchase_completed)::bigint     AS purchase_count
       FROM storefront_sessions
-      WHERE tenant_id = ${input.tenantId}
-        AND connector_instance_id = ${input.connectorInstanceId}
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND started_at >= ${from} AND started_at <= ${to}
     `;
 
@@ -1158,14 +1142,13 @@ export class StorefrontTrackingService {
    * tenant_id + connector_instance_id over the window.
    */
   static async sessionKpis(input: {
-    tenantId: string;
     connectorInstanceId: string;
     from?: Date | null;
     to?: Date | null;
   }) {
     const to = input.to ?? new Date();
     const from = input.from ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const { tenantId, connectorInstanceId } = input;
+    const { connectorInstanceId } = input;
     const db = await getDataPlaneClient(connectorInstanceId);
 
     const pct = (num: number, den: number) => (den > 0 ? Number(((num / den) * 100).toFixed(2)) : 0);
@@ -1195,8 +1178,7 @@ export class StorefrontTrackingService {
           COUNT(*) FILTER (WHERE add_to_cart AND NOT purchase_completed)::bigint  AS cart_abandoned,
           COUNT(*) FILTER (WHERE checkout_started AND NOT purchase_completed)::bigint AS checkout_abandoned
         FROM storefront_sessions
-        WHERE tenant_id = ${tenantId}
-          AND connector_instance_id = ${connectorInstanceId}
+        WHERE connector_instance_id = ${connectorInstanceId}
           AND started_at >= ${from} AND started_at <= ${to}
       `,
       db.$queryRaw<Array<{ repeat_visitors: bigint; visitors: bigint }>>`
@@ -1206,8 +1188,7 @@ export class StorefrontTrackingService {
         FROM (
           SELECT visitor_id, COUNT(*) AS c
           FROM storefront_sessions
-          WHERE tenant_id = ${tenantId}
-            AND connector_instance_id = ${connectorInstanceId}
+          WHERE connector_instance_id = ${connectorInstanceId}
             AND started_at >= ${from} AND started_at <= ${to}
           GROUP BY visitor_id
         ) v
@@ -1226,8 +1207,7 @@ export class StorefrontTrackingService {
               AND p.started_at < s.started_at
           ) AS is_first
           FROM storefront_sessions s
-          WHERE s.tenant_id = ${tenantId}
-            AND s.connector_instance_id = ${connectorInstanceId}
+          WHERE s.connector_instance_id = ${connectorInstanceId}
             AND s.started_at >= ${from} AND s.started_at <= ${to}
         ) t
       `,
@@ -1237,8 +1217,7 @@ export class StorefrontTrackingService {
           COUNT(*)::bigint                                  AS sessions,
           COUNT(*) FILTER (WHERE purchase_completed)::bigint AS purchases
         FROM storefront_sessions
-        WHERE tenant_id = ${tenantId}
-          AND connector_instance_id = ${connectorInstanceId}
+        WHERE connector_instance_id = ${connectorInstanceId}
           AND started_at >= ${from} AND started_at <= ${to}
         GROUP BY platform
       `,
@@ -1247,8 +1226,7 @@ export class StorefrontTrackingService {
           (page_urls_visited->>0) AS entry_page,
           COUNT(*)::bigint        AS sessions
         FROM storefront_sessions
-        WHERE tenant_id = ${tenantId}
-          AND connector_instance_id = ${connectorInstanceId}
+        WHERE connector_instance_id = ${connectorInstanceId}
           AND started_at >= ${from} AND started_at <= ${to}
           AND jsonb_array_length(page_urls_visited) > 0
         GROUP BY (page_urls_visited->>0)

@@ -20,7 +20,6 @@ export enum LifecycleState {
 export interface CanonicalOrder {
     id: string;
     siteId: string;
-    tenantId: string;
     orderId: string;
     externalReferenceId?: string;
     sourceSystem: string;
@@ -42,7 +41,7 @@ export class OrderNormalizationService {
     /**
      * Entry point for normalization.
      */
-    public async normalize(providerId: string, rawPayload: any, siteId: string, tenantId: string, options?: { defaultCurrency?: string }): Promise<CanonicalOrder> {
+    public async normalize(providerId: string, rawPayload: any, siteId: string, _tenantId: string, options?: { defaultCurrency?: string }): Promise<CanonicalOrder> {
         let canonical: Partial<CanonicalOrder>;
 
         switch (providerId.toLowerCase()) {
@@ -65,7 +64,6 @@ export class OrderNormalizationService {
 
         canonical.id = crypto.randomUUID();
         canonical.siteId = siteId;
-        canonical.tenantId = tenantId;
         canonical.sourceSystem = providerId;
 
         // Run Quality Gates
