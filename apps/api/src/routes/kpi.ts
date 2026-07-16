@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '@kpi-platform/db';
+import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
 import { KpiRegistry } from '../services/kpi-engine/registry';
 import { tenantAuthHandler } from '../middlewares/auth.middleware';
 import { tenantIsolationGuard } from '../middlewares/tenant-isolation.middleware';
@@ -29,7 +30,8 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
             .map(c => (c.category || '').toLowerCase());
 
         // Check if any browser/RUM telemetry exists (determines EXPERIENCE KPI availability)
-        const hasRumData = await prisma.performanceMetric.count({ where: { siteId }, take: 1 }).then(n => n > 0);
+        const db = await getSiteDataPlaneClient(siteId);
+        const hasRumData = await db.performanceMetric.count({ where: { siteId }, take: 1 }).then((n: number) => n > 0);
         if (hasRumData && !activeCategories.includes('browser_sdk')) {
             activeCategories.push('browser_sdk');
         }
@@ -69,15 +71,16 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
         const dateFilter = startDate ? { gte: startDate, lte: now } : undefined;
 
         // 1. Revenue + Order Count from canonicalOrder
+        const db = await getSiteDataPlaneClient(siteId);
         const [orders, perfMetrics, lifecycleEvents] = await Promise.all([
-            prisma.canonicalOrder.findMany({
+            db.canonicalOrder.findMany({
                 where: {
                     siteId,
                     ...(dateFilter ? { placedAt: dateFilter } : {})
                 },
                 select: { totalAmount: true, createdAt: true, placedAt: true }
             }),
-            prisma.performanceMetric.findMany({
+            db.performanceMetric.findMany({
                 where: {
                     siteId,
                     metricName: { in: ['lcp', 'pageLoadTime', 'page_load_time'] },
@@ -98,10 +101,10 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
             })
         ]);
 
-        const totalRevenue = orders.reduce((s, o) => s + Number(o.totalAmount || 0), 0);
+        const totalRevenue = orders.reduce((s: number, o: any) => s + Number(o.totalAmount || 0), 0);
         const orderCount = orders.length;
         const lastOrderDate = orders.length > 0
-            ? orders.reduce((latest, o) => {
+            ? orders.reduce((latest: Date, o: any) => {
                 const t = o.placedAt ?? o.createdAt;
                 return t > latest ? t : latest;
             }, new Date(0))
@@ -109,13 +112,13 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
 
         // 2. Page Load Time — average of LCP / pageLoadTime metrics
         const avgPageLoad = perfMetrics.length > 0
-            ? perfMetrics.reduce((s, m) => s + Number(m.metricValue || 0), 0) / perfMetrics.length
+            ? perfMetrics.reduce((s: number, m: any) => s + Number(m.metricValue || 0), 0) / perfMetrics.length
             : 0;
         const lastPerfDate = perfMetrics.length > 0 ? perfMetrics[0].timestamp : null;
 
         // 3. Pipeline Success Rate from connectorLifecycleEvents
         const totalEvents = lifecycleEvents.length;
-        const errorEvents = lifecycleEvents.filter(e => e.severity === 'ERROR').length;
+        const errorEvents = lifecycleEvents.filter((e: any) => e.severity === 'ERROR').length;
         const successRate = totalEvents > 0
             ? Math.round(((totalEvents - errorEvents) / totalEvents) * 10000) / 100
             : (totalEvents === 0 ? 100 : 0);
@@ -192,9 +195,10 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
         else startDate = new Date(now.getTime() - 30 * 86400000); // default 30d
 
         let series: { timestamp: string; value: number; dimensions: object }[] = [];
+        const db = await getSiteDataPlaneClient(siteId);
 
         if (kpiKey === 'revenue' || kpiKey === 'order_count') {
-            const orders = await prisma.canonicalOrder.findMany({
+            const orders = await db.canonicalOrder.findMany({
                 where: { siteId, placedAt: { gte: startDate, lte: now } },
                 select: { totalAmount: true, placedAt: true, createdAt: true },
                 orderBy: { placedAt: 'asc' }
@@ -213,7 +217,7 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
                 dimensions: {}
             }));
         } else if (kpiKey === 'page_load_time') {
-            const metrics = await prisma.performanceMetric.findMany({
+            const metrics = await db.performanceMetric.findMany({
                 where: { siteId, metricName: { in: ['lcp', 'pageLoadTime'] }, timestamp: { gte: startDate, lte: now } },
                 select: { metricValue: true, timestamp: true },
                 orderBy: { timestamp: 'asc' }
@@ -269,16 +273,17 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
         }
 
         let lastUpdated: Date | null = null;
+        const db = await getSiteDataPlaneClient(siteId);
 
         if (kpiKey === 'revenue' || kpiKey === 'order_count') {
-            const latest = await prisma.canonicalOrder.findFirst({
+            const latest = await db.canonicalOrder.findFirst({
                 where: { siteId },
                 orderBy: { placedAt: 'desc' },
                 select: { placedAt: true, createdAt: true }
             });
             lastUpdated = latest ? (latest.placedAt ?? latest.createdAt) : null;
         } else if (kpiKey === 'page_load_time') {
-            const latest = await prisma.performanceMetric.findFirst({
+            const latest = await db.performanceMetric.findFirst({
                 where: { siteId, metricName: { in: ['lcp', 'pageLoadTime'] } },
                 orderBy: { timestamp: 'desc' },
                 select: { timestamp: true }

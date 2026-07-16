@@ -5,6 +5,18 @@ const nextConfig = {
     typescript: {
         ignoreBuildErrors: true,
     },
+     webpack(config, { dev }) {
+        if (dev) {
+            config.watchOptions = {
+                ...(config.watchOptions || {}),
+                poll: 1000,
+                ignored: ['**/node_modules/**', '**/.next/**'],
+            };
+        }
+
+        return config;
+    },
+    
     // A live PageSpeed refresh proxies to the backend, which calls Google PSI — a
     // single scan can take 90s (desktop) to ~240s (mobile, with retry). Next's rewrite
     // proxy defaults to a 30s timeout: past that it destroys the upstream socket, which

@@ -6,7 +6,7 @@
   "types": "dist/server.d.ts",
 
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --watch --watch-path=src --watch-path=../../packages --watch-path=../../services --import tsx src/server.ts",
     "build": "tsc",
     "build:tracker": "esbuild src/public/tracker.src.js --bundle --minify --format=iife --target=es2017 --legal-comments=none --outfile=src/public/tracker.js",
     "start": "node dist/server.js",

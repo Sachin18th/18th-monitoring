@@ -181,6 +181,67 @@ export function cachedConnectorInstanceIds(): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EMPTY data-plane client — used for site-keyed READ paths when the data plane
+// is enabled but the site has NO active store DB yet (a project with no
+// integration). The data-plane models (canonicalOrder, performanceMetric,
+// customerProfile, storefront*, …) live ONLY in the tenant schema, so the
+// control client can't answer these queries — `controlPrisma.canonicalOrder` is
+// `undefined`, which is exactly the "Cannot read properties of undefined
+// (reading 'findMany')" crash. A no-integration project genuinely has no data,
+// so we hand back a stub whose model reads resolve to empty results. Writes
+// throw: a store-data write with no store DB is a real misconfiguration, not
+// something to swallow.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const READ_RESULT_BY_METHOD: Record<string, () => unknown> = {
+  findMany: () => [],
+  findFirst: () => null,
+  findFirstOrThrow: () => null,
+  findUnique: () => null,
+  findUniqueOrThrow: () => null,
+  count: () => 0,
+  aggregate: () => ({}),
+  groupBy: () => [],
+};
+
+const emptyModelProxy: any = new Proxy(
+  {},
+  {
+    get(_t, method: string) {
+      const reader = READ_RESULT_BY_METHOD[method];
+      if (reader) return async () => reader();
+      // create/update/upsert/delete/… — fail loud rather than silently drop.
+      return async () => {
+        throw new Error(
+          `[tenant-prisma] Store-data write (${method}) attempted for a site with no active store database. ` +
+            `Provision an integration before writing store data.`
+        );
+      };
+    },
+  }
+);
+
+const emptyDataPlaneClient: any = new Proxy(
+  {},
+  {
+    get(_t, prop: string) {
+      if (prop === '$queryRaw' || prop === '$queryRawUnsafe' || prop === '$executeRaw' || prop === '$executeRawUnsafe') {
+        return async () => [];
+      }
+      if (prop === '$transaction') {
+        return async (arg: any) =>
+          Array.isArray(arg) ? [] : typeof arg === 'function' ? arg(emptyDataPlaneClient) : undefined;
+      }
+      if (prop === '$connect' || prop === '$disconnect' || prop === '$on' || prop === '$use' || prop === '$extends') {
+        return async () => undefined;
+      }
+      // Any other property is treated as a model delegate.
+      return emptyModelProxy;
+    },
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PHASE 5 — data-plane routing (database-per-integration, behind a flag)
 //
 // `getDataPlaneClient(connectorInstanceId)` is the single switch for WRITE
@@ -191,9 +252,11 @@ export function cachedConnectorInstanceIds(): string[] {
 //   • on → the integration's physical store-DB client. Writes FAIL CLOSED: a
 //     store whose DB is not `active` throws StoreDatabaseNotActive rather than
 //     silently landing rows in the master DB (callers repair by provisioning).
-//     Site reads fall back to the control client only when the site has NO
-//     store DB rows at all (fresh site) — a same-site read can never leak
-//     another store's data.
+//     Site reads fall back to an EMPTY data-plane client only when the site has
+//     NO store DB rows at all (fresh / no-integration site) — reads resolve to
+//     empty results, and a same-site read can never leak another store's data.
+//     (The control client can't be used here: data-plane models live only in
+//     the tenant schema.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function isTenantDataPlaneEnabled(): boolean {
@@ -242,7 +305,11 @@ export async function getSiteDataPlaneClients(siteId: string): Promise<any[]> {
     select: { connectorInstanceId: true },
   });
   if (rows.length === 0) {
-    return [controlPrisma];
+    // Flag ON but the site has no store DB (no integration yet). The control
+    // client can't serve data-plane models (they live only in the tenant
+    // schema), so hand back an empty client → reads resolve to empty results
+    // instead of crashing on `controlPrisma.canonicalOrder` being undefined.
+    return [emptyDataPlaneClient];
   }
   return Promise.all(rows.map((r) => getStorePrismaClient(r.connectorInstanceId as string)));
 }
