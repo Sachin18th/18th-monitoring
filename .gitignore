@@ -10,6 +10,7 @@ dist/
 # under plain node, which resolves .js first. Scoped to packages/ on purpose:
 # apps/api/src/public/*.js are real, committed browser bundles.
 packages/*/src/**/*.js
+services/*/src/**/*.js
 
 apps.zip
 *.zip
