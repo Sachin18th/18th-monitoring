@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { ConnectorRegistry } from '../../../../packages/connector-framework/src/registry';
-import { prisma, encryptSecret } from '@kpi-platform/db';
+import { prisma, encryptSecret, decryptSecret } from '@kpi-platform/db';
 import { ResponseUtil } from '../utils/response';
 import crypto from 'crypto';
 import { ShopifyOrderSyncService } from '../services/shopify-order-sync.service';
@@ -630,10 +630,26 @@ export class IntegrationController {
         // be corrected alongside the token (or omitted to keep current config).
         const mergedConfig = { ...((instance.syncConfig as any) || {}), ...(config || {}) };
 
-        // Validate the new token against the live provider BEFORE persisting —
-        // same gate the create flow uses. Reject if it doesn't authenticate.
+        // Merge incoming credentials over the stored ones so fields the caller
+        // omits (e.g. clientId/clientSecret when only rotating the token, or the
+        // token when only adding client creds) are preserved. Secrets are never
+        // returned to the client, so a blank field must not wipe a stored value.
+        const existing = await prisma.connectorCredential.findFirst({
+            where: { connectorInstanceId },
+            orderBy: { createdAt: 'desc' }
+        });
+        let existingCreds: Record<string, any> = {};
+        if (existing?.encryptedSecret) {
+            try { const d = decryptSecret(existing.encryptedSecret); if (d && typeof d === 'object') existingCreds = d; } catch { /* start fresh */ }
+        }
+        const mergedCreds: Record<string, any> = { ...existingCreds };
+        for (const [k, v] of Object.entries((credentials || {}) as Record<string, any>)) {
+            if (v !== undefined && v !== null && String(v).trim() !== '') mergedCreds[k] = v;
+        }
+
+        // Validate the merged credential against the live provider BEFORE persisting.
         try {
-            const result: any = await connector.validateCredentials(mergedConfig, credentials);
+            const result: any = await connector.validateCredentials(mergedConfig, mergedCreds);
             if (result && result.success === false) {
                 return reply.code(400).send(ResponseUtil.error(
                     result.message || 'Credential validation failed',
@@ -646,12 +662,7 @@ export class IntegrationController {
             return reply.code(400).send(ResponseUtil.error(err?.message || 'Credential validation failed', 'CREDENTIAL_VALIDATION_FAILED', null, req.id as string));
         }
 
-        // Rotate the active credential (or create one if somehow missing).
-        const existing = await prisma.connectorCredential.findFirst({
-            where: { connectorInstanceId },
-            orderBy: { createdAt: 'desc' }
-        });
-        const encryptedSecret = encryptSecret(credentials);
+        const encryptedSecret = encryptSecret(mergedCreds);
         if (existing) {
             await prisma.connectorCredential.update({
                 where: { id: existing.id },

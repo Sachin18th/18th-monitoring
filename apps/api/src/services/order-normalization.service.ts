@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { hashEmail, hashPhone, encryptEmail } from '@kpi-platform/db';
 
 /**
  * OrderNormalizationService (The CDM Engine)
@@ -177,8 +178,14 @@ export class OrderNormalizationService {
     /**
      * Maps a column-mapped spreadsheet row (CSV / Excel offline upload) into the CDM.
      * The frontend sends rows already keyed to the standardized fields:
-     * order_id, order_date, customer_name, customer_email, sku, quantity,
-     * unit_price, total, status, shipping_address.
+     * order_id, order_date, customer_name, customer_email, customer_phone,
+     * loyalty_id, store_location, sku, quantity, unit_price, total, status,
+     * shipping_address.
+     *
+     * PII: the plaintext email/phone NEVER reach the database. What is persisted is
+     * the one-way hash (the identity join key that matches these offline orders to
+     * the online shopper) plus a reversible encrypted email for dashboard display —
+     * the same contract the Shopify/BigCommerce/Adobe order syncs follow.
      */
     private mapCsv(payload: any, defaultCurrency?: string): Partial<CanonicalOrder> {
         const toNum = (value: any) => {
@@ -195,7 +202,9 @@ export class OrderNormalizationService {
         const placedAt = rawDate ? rawDate.toISOString() : new Date().toISOString();
 
         const lifecycleState = this.mapCsvStatus(String(payload?.status || ''));
-        const customerEmail = payload?.customer_email || null;
+        const customerEmail = payload?.customer_email ? String(payload.customer_email).trim() : null;
+        const customerPhone = payload?.customer_phone ? String(payload.customer_phone).trim() : null;
+        const loyaltyId = payload?.loyalty_id ? String(payload.loyalty_id).trim() : null;
 
         // Currency precedence: a value on the row (if a column was mapped) wins,
         // otherwise the operator-selected import currency is applied. USD is only a
@@ -219,8 +228,13 @@ export class OrderNormalizationService {
             placedAt,
             metadata: {
                 orderSource: 'offline',
-                customerEmail,
+                // Identity join keys — hashed, never the raw values.
+                customerEmailHash: hashEmail(customerEmail),
+                customerEmailEncrypted: customerEmail ? encryptEmail(customerEmail) : null,
+                customerPhoneHash: hashPhone(customerPhone),
+                loyaltyId,
                 customerName: payload?.customer_name || null,
+                storeLocation: payload?.store_location || null,
                 sku: payload?.sku || null,
                 quantity: quantity || null,
                 unitPrice: unitPrice || null,
@@ -275,7 +289,13 @@ export class OrderNormalizationService {
             if (year < 100) year += 2000;
             if (month > 12 && day <= 12) { const t = day; day = month; month = t; }
             if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-                const d = new Date(year, month - 1, day, Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
+                // Build in UTC, not local time. `new Date(y, m, d)` is local midnight,
+                // which in any timezone ahead of UTC serializes back to the PREVIOUS
+                // day — so "08/07/2026" from an IST till landed on 7 July. Date-only
+                // ISO values in the same sheet are parsed as UTC by the native parser
+                // below, so UTC is also what keeps the two formats consistent (same
+                // convention as toMagentoIso above).
+                const d = new Date(Date.UTC(year, month - 1, day, Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0)));
                 if (!isNaN(d.getTime())) return d;
             }
         }

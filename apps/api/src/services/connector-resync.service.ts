@@ -8,6 +8,8 @@ import { BigCommerceOrderSyncService } from './bigcommerce-order-sync.service';
 import { ShopifyCustomerSyncService } from './shopify-customer-sync.service';
 import { AdobeCommerceCustomerSyncService } from './adobe-commerce-customer-sync.service';
 import { ShopifyProductSyncService } from './shopify-product-sync.service';
+import { CustomerMetricsService } from './customer-metrics.service';
+import { BehavioralFusionService } from './behavioral-fusion.service';
 
 type ResyncTarget = 'orders' | 'customers' | 'products';
 
@@ -314,6 +316,22 @@ export class ConnectorResyncService {
           }
         });
       });
+
+      // CDP: refresh order-derived analytics (RFM/CLTV/churn/segment) now that
+      // order/customer data has changed. Event-driven — the correct cadence, since
+      // these metrics only change when order history does (not on a UI timer).
+      // Best-effort: a failure here must never fail the sync job.
+      if (successfulCounts.orders !== undefined || successfulCounts.customers !== undefined) {
+        try {
+          const db = await getDataPlaneClient(connector.id);
+          const scope = { siteId: connector.siteId, connectorInstanceId: connector.id };
+          const metrics = await CustomerMetricsService.recomputeForConnector(db, scope);
+          const fusion = await BehavioralFusionService.recomputeForConnector(db, scope);
+          console.log('[ConnectorResyncService] Metrics + fusion auto-recomputed', { jobId, ...metrics, fusedSnapshots: fusion.profilesSnapshotted });
+        } catch (err: any) {
+          console.error('[ConnectorResyncService] Metrics auto-recompute failed (non-fatal)', { jobId, error: err?.message });
+        }
+      }
     } catch (error: any) {
       const completedAt = new Date();
       const message = error?.message || 'Unexpected re-sync failure.';

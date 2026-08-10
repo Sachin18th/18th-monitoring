@@ -10,6 +10,7 @@ import { KafkaStreamConsumer } from '../../../services/processor/src/consumer/ka
 import { TOPICS } from './config/topics';
 import { dashboardRoutes } from './routes/dashboard';
 import { sessionJourneyRoutes } from './routes/storefront/session-journeys';
+import { unifiedCustomerRoutes } from './routes/storefront/unified-customer';
 import { storeHealthRoutes } from './routes/store-health';
 import { login, getMe, getProjects } from './controllers/auth.controller';
 import { requestOtp, verifyOtp } from './controllers/otp.controller';
@@ -27,6 +28,7 @@ import { OutboundBridge } from './services/outbound-bridge';
 import { initializeConnectors } from './initializers/connectors';
 import { reapStaleSyncRuns } from './services/sync-run-reaper';
 import { ScheduledMonitor } from './services/scheduled-monitor.service';
+import { ShopifyTokenService } from './services/shopify-token.service';
 import { EventRegistry } from '../../../services/processor/src/registry/event-registry';
 import { integrationRoutes } from './routes/integrations';
 import { ingestionRoutes } from './routes/ingestion';
@@ -209,6 +211,11 @@ export const bootstrapApi = async () => {
     // Storefront Session Journey Timeline routes (read-only, raw SQL).
     // Auth + per-connector tenant/project authorization handled inside the plugin.
     await server.register(sessionJourneyRoutes, {
+        prefix: '/api/storefront'
+    });
+
+    // CDP unified customer (golden record: live journey + identity graph + history).
+    await server.register(unifiedCustomerRoutes, {
         prefix: '/api/storefront'
     });
 
@@ -414,6 +421,8 @@ export const bootstrapApi = async () => {
             // Start connector polling and synthetic monitors after the server is bound
             connectorRegistryService.startAllPollers('*');
             SyntheticSchedulerService.start();
+            // Keep Shopify Admin API tokens fresh (client-credentials grant ~24h expiry).
+            ShopifyTokenService.start();
         });
     }
 

@@ -1501,12 +1501,17 @@
       startCheckoutObserver();
     }
 
-    // Abandonment + final flush on unload.
+    // Final flush on unload.
+    //
+    // We intentionally do NOT emit a checkout_abandon here. This handler fires on
+    // every checkout-step navigation AND when the shopper proceeds to the
+    // (often off-domain) payment / thank-you page, so an unload-based abandon
+    // produces false positives — even on successful purchases that complete on a
+    // later page/session. True abandonment is derived server-side: a session that
+    // reached checkout with NO purchase-success afterwards (reconciled across the
+    // visitor's sessions + synced orders); payment-gateway errors count as failures.
     function onUnload() {
       try {
-        if (inCheckout && !completed) {
-          enqueue(envelope('checkout_abandon', { step: lastCheckoutStep }));
-        }
         flush(true);
         rumFlush(true);
       } catch (e) {}

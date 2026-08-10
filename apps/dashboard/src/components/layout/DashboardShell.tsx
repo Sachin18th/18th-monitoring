@@ -24,6 +24,10 @@ import {
   Server,
   Flame,
   Map,
+  UserSearch,
+  Megaphone,
+  UsersRound,
+  TrendingUp,
   AlertCircle,
   ChevronLeft,
   ChevronDown,
@@ -291,6 +295,11 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
           { label: 'Frontend RUM', href: `${prefix}/rum`, icon: Monitor, pageKey: 'rum' },
           { label: 'Backend API', href: `${prefix}/observability/backend`, icon: Server, pageKey: 'observability/backend' },
           { label: 'Journey Intel', href: `${prefix}/observability/journeys`, icon: Map, pageKey: 'observability/journeys' },
+          // Customer 360 is merged into the unified Customers page (/customers).
+          { label: 'Campaigns', href: `${prefix}/observability/campaigns`, icon: Megaphone, pageKey: 'observability/campaigns' },
+          { label: 'Customer Groups', href: `${prefix}/observability/customer-groups`, icon: UsersRound, pageKey: 'observability/customer-groups' },
+          { label: 'Revenue', href: `${prefix}/observability/revenue`, icon: TrendingUp, pageKey: 'observability/revenue' },
+          { label: 'Product Analytics', href: `${prefix}/observability/product-analytics`, icon: Package, pageKey: 'observability/product-analytics' },
           // { label: 'Synthetic', href: `${prefix}/observability/synthetic`, icon: Activity, pageKey: 'observability/synthetic' },
           { label: 'Customers', href: `${prefix}/customers`, icon: Users, pageKey: 'customers' },
           { label: 'Orders', href: `${prefix}/orders`, icon: Package, pageKey: 'orders' }

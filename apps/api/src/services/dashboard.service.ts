@@ -51,6 +51,9 @@ export class DashboardService {
         const metadata = order?.metadata || {};
         const rawOrder = metadata?.rawOrder || metadata?.adobeOrder || metadata?.bigcommerceOrder || {};
         const candidates = [
+            // Post-scrub rows (every connector, plus offline CSV imports) keep only the
+            // reversible envelope — decrypt it for display before the legacy fallbacks.
+            decryptEmail(metadata?.customerEmailEncrypted),
             metadata?.customerEmail,
             metadata?.buyerEmail,
             metadata?.email,

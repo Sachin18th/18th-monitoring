@@ -622,6 +622,10 @@ export const ConnectorPlatformProvider: React.FC<{
         },
         credentials: {
           adminApiAccessToken: values.adminApiAccessToken?.trim() || "",
+          // App client_id / client_secret — used to auto-refresh the ~24h token
+          // (client-credentials grant). Optional; only needed for expiring tokens.
+          ...(values.clientId?.trim() && { clientId: values.clientId.trim() }),
+          ...(values.clientSecret?.trim() && { clientSecret: values.clientSecret.trim() }),
           ...(projectId && { projectId }),
         },
       };

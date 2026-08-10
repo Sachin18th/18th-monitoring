@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  Users,
 } from 'lucide-react';
 import { useConnectorPlatform } from '../../context/ConnectorPlatformContext';
 import { useAuth } from '../../context/AuthContext';
@@ -29,6 +30,12 @@ const STANDARD_FIELDS: StandardField[] = [
   { key: 'order_date', label: 'Order Date', aliases: ['orderdate', 'date', 'createdat', 'created', 'placedat', 'purchasedate', 'timestamp'] },
   { key: 'customer_name', label: 'Customer Name', aliases: ['customername', 'customer', 'name', 'buyer', 'client', 'fullname'] },
   { key: 'customer_email', label: 'Customer Email', aliases: ['customeremail', 'email', 'buyeremail', 'mail', 'emailaddress'] },
+  // Identity join keys for offline/POS rows. Phone is usually the ONLY contact a
+  // till captures, and is what matches an in-store purchase to the same person's
+  // online orders. Both are hashed server-side — the raw values are never stored.
+  { key: 'customer_phone', label: 'Customer Phone', aliases: ['customerphone', 'phone', 'mobile', 'mobileno', 'mobilenumber', 'contact', 'contactnumber', 'phoneno', 'telephone', 'msisdn'] },
+  { key: 'loyalty_id', label: 'Loyalty / Member ID', aliases: ['loyaltyid', 'loyalty', 'memberid', 'membershipid', 'customerid', 'loyaltynumber', 'cardnumber'] },
+  { key: 'store_location', label: 'Store / Location', aliases: ['storelocation', 'store', 'location', 'branch', 'outlet', 'shop', 'terminal', 'till'] },
   { key: 'sku', label: 'SKU / Product', aliases: ['sku', 'product', 'productsku', 'item', 'productid', 'itemsku', 'productname'] },
   { key: 'quantity', label: 'Quantity', aliases: ['quantity', 'qty', 'count', 'units', 'qnty'] },
   { key: 'unit_price', label: 'Unit Price', aliases: ['unitprice', 'price', 'rate', 'itemprice'] },
@@ -36,6 +43,16 @@ const STANDARD_FIELDS: StandardField[] = [
   { key: 'status', label: 'Status', aliases: ['status', 'orderstatus', 'state', 'fulfillmentstatus'] },
   { key: 'shipping_address', label: 'Shipping Address', aliases: ['shippingaddress', 'address', 'shipto', 'shipping', 'deliveryaddress'] },
 ];
+
+/** Mirrors OfflineIdentityReport returned by POST /dashboard/connectors/csv/ingest. */
+interface IdentityReport {
+  matchingEnabled: boolean;
+  customersMatched: number;
+  customersCreated: number;
+  rowsLinked: number;
+  rowsUnidentified: number;
+  phoneConflicts: number;
+}
 
 const MAX_BYTES = 50 * 1024 * 1024; // 50MB
 
@@ -128,6 +145,9 @@ export const CsvUploadModal: React.FC = () => {
   const [connectorName, setConnectorName] = useState('');
   const [parseError, setParseError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<{ success: number; failed: number; total: number } | null>(null);
+  // How the imported rows attached to the customer golden record (see
+  // OfflineIdentityReport on the API side). Null for older API responses.
+  const [identityResult, setIdentityResult] = useState<IdentityReport | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -142,6 +162,7 @@ export const CsvUploadModal: React.FC = () => {
     setConnectorName('');
     setParseError(null);
     setImportResult(null);
+    setIdentityResult(null);
     setIsDragging(false);
   };
 
@@ -226,6 +247,9 @@ export const CsvUploadModal: React.FC = () => {
   }, [rows, mapping]);
 
   const missingRequired = STANDARD_FIELDS.filter((f) => f.required && !mapping[f.key]);
+  // At least one identity column is what makes offline→online customer matching
+  // possible. Not required (an anonymous till export is still worth importing).
+  const hasIdentityColumn = Boolean(mapping.customer_email || mapping.customer_phone || mapping.loyalty_id);
 
   const destinationLabel = useMemo(() => {
     if (!targetStoreId) return connectorName.trim() || 'New Offline Store';
@@ -250,6 +274,7 @@ export const CsvUploadModal: React.FC = () => {
         failed: Number(result?.failed ?? 0),
         total: Number(result?.total ?? mappedRows.length),
       });
+      setIdentityResult(result?.identity ?? null);
       setStep('done');
       success(`Imported ${result?.success ?? 0} offline orders.`, 'CSV upload complete');
       await refreshConnectors();
@@ -419,6 +444,29 @@ export const CsvUploadModal: React.FC = () => {
                     </div>
                   ))}
                 </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '8px',
+                    marginTop: '14px',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    background: hasIdentityColumn ? 'rgba(99,102,241,0.06)' : 'rgba(251,191,36,0.08)',
+                    border: `1px solid ${hasIdentityColumn ? 'rgba(99,102,241,0.2)' : 'rgba(251,191,36,0.25)'}`,
+                  }}
+                >
+                  {hasIdentityColumn ? (
+                    <Users style={{ width: '14px', height: '14px', color: '#818cf8', flexShrink: 0, marginTop: '2px' }} />
+                  ) : (
+                    <AlertCircle style={{ width: '14px', height: '14px', color: '#fbbf24', flexShrink: 0, marginTop: '2px' }} />
+                  )}
+                  <span style={{ fontSize: '12px', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                    {hasIdentityColumn
+                      ? 'Email, phone and loyalty ID are used to match these orders to customers who also shop online. They are hashed on import — the raw values are never stored.'
+                      : 'No email, phone or loyalty ID mapped. These orders will import, but cannot be matched to your existing customers — map at least one to link in-store purchases to the people who also shop online.'}
+                  </span>
+                </div>
               </div>
 
               <div style={{ display: 'flex', gap: '12px' }}>
@@ -507,6 +555,53 @@ export const CsvUploadModal: React.FC = () => {
                   ? `They were added to ${destinationLabel} — select that store to see online and offline orders together.`
                   : 'The new offline store now appears in the Reliability Matrix.'}
               </div>
+
+              {identityResult && (
+                <div style={{ ...sectionStyle, textAlign: 'left', marginBottom: '24px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                    <Users style={{ width: '15px', height: '15px', color: '#818cf8' }} />
+                    <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Customer matching
+                    </span>
+                  </div>
+
+                  {identityResult.matchingEnabled ? (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
+                        {[
+                          { label: 'Matched to existing', value: identityResult.customersMatched, color: '#4ade80' },
+                          { label: 'New customers', value: identityResult.customersCreated, color: '#818cf8' },
+                          { label: 'No contact details', value: identityResult.rowsUnidentified, color: 'var(--text-muted)' },
+                        ].map((stat) => (
+                          <div key={stat.label}>
+                            <div style={{ fontSize: '20px', fontWeight: 800, color: stat.color }}>{stat.value.toLocaleString()}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{stat.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px', lineHeight: 1.5 }}>
+                        {identityResult.rowsLinked.toLocaleString()} of {importResult.success.toLocaleString()} imported orders were
+                        attached to a customer by email, phone or loyalty ID.
+                      </div>
+                      {identityResult.phoneConflicts > 0 && (
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '12px', padding: '10px 12px', borderRadius: '8px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)' }}>
+                          <AlertCircle style={{ width: '14px', height: '14px', color: '#fbbf24', flexShrink: 0, marginTop: '2px' }} />
+                          <span style={{ fontSize: '12px', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                            {identityResult.phoneConflicts.toLocaleString()} {identityResult.phoneConflicts === 1 ? 'row' : 'rows'} had a
+                            phone number already belonging to a customer with a different email — a shared number, most likely. Those were
+                            left unmerged rather than guessed at.
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                      These orders went into their own offline store, so they were not matched against your online customers. To link
+                      in-store purchases to the people who also shop online, re-import into an existing store.
+                    </div>
+                  )}
+                </div>
+              )}
               <button type="button" onClick={handleClose} style={{ padding: '11px 28px', background: '#22c55e', color: '#fff', border: 'none', borderRadius: '10px', fontWeight: 700, cursor: 'pointer' }}>Done</button>
             </div>
           )}

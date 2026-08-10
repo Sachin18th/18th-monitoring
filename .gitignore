@@ -5,5 +5,11 @@ node_modules/
 !.env.example
 dist/
 
+# Stale compiled output emitted next to the TypeScript sources it was built from.
+# Inert under tsx (which resolves the .ts twin first) but shadows the real source
+# under plain node, which resolves .js first. Scoped to packages/ on purpose:
+# apps/api/src/public/*.js are real, committed browser bundles.
+packages/*/src/**/*.js
+
 apps.zip
 *.zip

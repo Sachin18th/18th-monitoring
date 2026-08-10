@@ -33,6 +33,26 @@ const statusStyleMap: Record<MetricStatus, { background: string; color: string; 
   poor: { background: 'var(--error-bg)', color: 'var(--error-text)', border: 'rgba(239,68,68,0.2)' },
 };
 
+// ── heatmap-matrix cell/table helpers ──────────────────────────────────────────
+function heatCell(status: MetricStatus | null): React.CSSProperties {
+  const base: React.CSSProperties = { display: 'inline-block', minWidth: '58px', padding: '5px 9px', borderRadius: '8px', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontVariantNumeric: 'tabular-nums', fontWeight: 650, fontSize: '12.5px' };
+  if (!status) return { ...base, background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-input)' };
+  const s = statusStyleMap[status];
+  return { ...base, background: s.background, color: s.color, border: `1px solid ${s.border}` };
+}
+function matrixTh(align: 'left' | 'center'): React.CSSProperties {
+  return { textAlign: align, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-label)', fontWeight: 700, padding: '0 6px 11px' };
+}
+function matrixTd(align: 'left' | 'center'): React.CSSProperties {
+  return { textAlign: align, padding: '7px 6px', borderTop: '1px solid var(--border-card)', verticalAlign: 'middle' };
+}
+function legendKey(color: string): React.CSSProperties {
+  return { display: 'inline-block', width: '9px', height: '9px', borderRadius: '3px', background: color, verticalAlign: 'middle', marginRight: '4px' };
+}
+function SkeletonCell() {
+  return <span style={{ display: 'inline-block', width: '48px', height: '22px', borderRadius: '6px', background: 'var(--border-card)', animation: 'pulse 1.2s ease-in-out infinite' }} />;
+}
+
 const getMetricStatus = (metricName: MetricKey, value: number): MetricStatus => {
   const [goodThreshold, warningThreshold] = metricMeta[metricName].thresholds;
   if (value <= goodThreshold) return 'good';
@@ -198,6 +218,8 @@ export default function RumMetricsPanel() {
   const [sectionDevice, setSectionDevice] = useState<Record<PageType, 'mobile' | 'desktop'>>({
     homepage: 'mobile', plp: 'mobile', pdp: 'mobile', checkout: 'mobile',
   });
+  // Single device toggle for the by-page-type heatmap matrix.
+  const [matrixDevice, setMatrixDevice] = useState<'mobile' | 'desktop'>('mobile');
   // Which discovered URL each PDP/PLP section is currently viewing. null = the default
   // (top-ranked) candidate. PDP/PLP can have several discovered pages; the user picks
   // which one to view/measure from a per-section dropdown.
@@ -522,25 +544,106 @@ export default function RumMetricsPanel() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-      {/* Header: title only. Each page-type section below has its OWN Mobile/Desktop
-          toggle and Refresh button (one live PSI run per click, to stay under the timeout). */}
-      <section style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-          <div>
-            <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>PageSpeed Metrics</p>
+    <section style={{ borderRadius: '16px', border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Header: title + Lab tag + a single Mobile/Desktop toggle for the matrix. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+        <div>
+          <p style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: 'var(--text-label)', fontWeight: 700 }}>PageSpeed Metrics</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <h2 style={{ margin: '6px 0 0', fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>Core Web Vitals by page type</h2>
+            <span title="Lab data from Google PageSpeed Insights — a synthetic test run, not real-visitor field measurements." style={{ marginTop: '6px', fontSize: '9.5px', fontWeight: 800, letterSpacing: '0.09em', textTransform: 'uppercase', padding: '3px 8px', borderRadius: '6px', background: 'var(--bg-input)', color: 'var(--text-muted)', border: '1px solid var(--border-input)' }}>Lab · PageSpeed</span>
           </div>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '12px', fontSize: '10.5px', color: 'var(--text-label)' }}>
+            <span><i style={legendKey('#22c55e')} />Good</span>
+            <span><i style={legendKey('#f59e0b')} />Needs work</span>
+            <span><i style={legendKey('#ef4444')} />Poor</span>
+          </div>
+          <div style={{ display: 'inline-flex', background: 'var(--bg-input)', border: '1px solid var(--border-input)', borderRadius: '10px', padding: '3px', gap: '2px' }}>
+            {(['mobile', 'desktop'] as const).map((d) => (
+              <button key={d} type="button" onClick={() => setMatrixDevice(d)} aria-pressed={matrixDevice === d}
+                style={{ font: 'inherit', fontSize: '12px', fontWeight: 600, border: 0, padding: '5px 12px', borderRadius: '7px', cursor: 'pointer', background: matrixDevice === d ? '#6366f1' : 'transparent', color: matrixDevice === d ? '#fff' : 'var(--text-muted)' }}>
+                {d === 'mobile' ? 'Mobile' : 'Desktop'}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
-        {/* PageSpeed fetch/refresh errors are intentionally not surfaced in the UI. */}
-      </section>
+      {/* Heatmap matrix: page types × vitals, colored by Google thresholds. */}
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: '12.5px', minWidth: '600px' }}>
+          <thead>
+            <tr>
+              <th style={matrixTh('left')}>Page type</th>
+              <th style={matrixTh('center')}>Score</th>
+              {PAGE_VITALS.map((mk) => (
+                <th key={mk} style={matrixTh('center')}>{metricMeta[mk].label}<span style={{ color: 'var(--text-label)', fontWeight: 500 }}>{metricMeta[mk].unit ? ` (${metricMeta[mk].unit})` : ''}</span></th>
+              ))}
+              <th style={{ width: '40px' }} />
+            </tr>
+          </thead>
+          <tbody>
+            {PAGE_SECTIONS.map(({ key, label }) => {
+              const result = pageData[matrixDevice] ? pageData[matrixDevice]![key] : null;
+              const refreshing = refreshingType === key;
+              const rowLabel = key === 'homepage' ? 'Home' : key === 'plp' ? 'Collection' : key === 'pdp' ? 'Product' : result?.isCartPage ? 'Cart' : 'Checkout';
+              const shortPath = (u?: string | null) => { if (!u) return null; try { const p = new URL(u).pathname; return p.length > 1 ? p : u; } catch { return u; } };
+              // PDP/PLP can have several discovered pages — let the user pick which one
+              // to view/measure. Selecting one runs PageSpeed for that URL.
+              const candidates = result?.candidates && result.candidates.length > 0 ? result.candidates : [];
+              const showPicker = (key === 'pdp' || key === 'plp') && candidates.length > 1;
+              const selectedUrl = sectionUrl[key] ?? result?.selectedUrl ?? candidates[0]?.url ?? result?.url ?? '';
+              return (
+                <tr key={key}>
+                  <td style={matrixTd('left')}>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{rowLabel}</div>
+                    {showPicker ? (
+                      <select
+                        value={selectedUrl}
+                        onChange={(e) => handleSelectUrl(key, e.target.value)}
+                        disabled={refreshingType !== null}
+                        title="Choose which page to measure"
+                        style={{ marginTop: '4px', maxWidth: '260px', fontSize: '11px', fontFamily: 'ui-monospace, monospace', padding: '3px 6px', borderRadius: '6px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', color: 'var(--text-primary)', colorScheme: 'light dark', cursor: refreshingType !== null ? 'default' : 'pointer' }}
+                      >
+                        {candidates.map((c) => (
+                          <option key={c.url} value={c.url} style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }}>{shortPath(c.url)}</option>
+                        ))}
+                      </select>
+                    ) : result?.url ? (
+                      <div style={{ fontSize: '10.5px', color: 'var(--text-label)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '260px' }}>{shortPath(result.url)}</div>
+                    ) : null}
+                  </td>
+                  <td style={matrixTd('center')}>
+                    {refreshing ? <SkeletonCell /> : result?.score != null ? <span style={heatCell(result.scoreStatus)}>{Math.round(Number(result.score))}</span> : <span style={heatCell(null)}>—</span>}
+                  </td>
+                  {PAGE_VITALS.map((mk) => {
+                    const m = result?.metrics ? result.metrics[mk] : null;
+                    return (
+                      <td key={mk} style={matrixTd('center')}>
+                        {refreshing ? <SkeletonCell /> : m && Number.isFinite(Number(m.value)) ? <span style={heatCell(m.status)}>{metricMeta[mk].formatter(Number(m.value))}</span> : <span style={heatCell(null)}>—</span>}
+                      </td>
+                    );
+                  })}
+                  <td style={matrixTd('center')}>
+                    <button type="button" onClick={() => handleRefreshSection(key)} disabled={refreshingType !== null} title={`Re-run PageSpeed for ${rowLabel}`}
+                      style={{ display: 'inline-flex', padding: '6px', borderRadius: '8px', border: '1px solid var(--border-input)', background: 'var(--bg-input)', color: 'var(--text-primary)', cursor: refreshingType !== null ? 'default' : 'pointer', opacity: refreshingType !== null && !refreshing ? 0.5 : 1 }}>
+                      <RefreshCw size={13} style={{ animation: refreshing ? 'spin 1s linear infinite' : 'none' }} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
-      {/* Visual comparison across page types (reads the same cached payload as the
-          cards below, so the charts and cards always agree). */}
-      <PageSpeedCharts pageData={pageData} loading={pagesLoading && !pageData.mobile && !pageData.desktop} />
-
-      {PAGE_SECTIONS.map((section) => renderSection(section))}
-    </div>
+      {!pageData[matrixDevice] && (
+        <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--text-label)' }}>
+          {pagesLoading ? 'Loading PageSpeed data…' : 'No PageSpeed data yet — use a row’s refresh to run a test.'}
+        </p>
+      )}
+    </section>
   );
 }

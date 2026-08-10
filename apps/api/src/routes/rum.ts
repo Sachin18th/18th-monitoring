@@ -72,6 +72,49 @@ export const rumRoutes = async (fastify: FastifyInstance) => {
     }
   });
 
+  // ── Grouped error worklist (dashboard) ────────────────────────────────────
+  fastify.get('/errors/grouped', async (req, reply) => {
+    const q = (req.query as any) || {};
+    if (!q.projectId) {
+      return reply.code(400).send(ResponseUtil.error('Missing projectId', 'MISSING_PROJECT_ID', null, req.id as string));
+    }
+    try {
+      const data = await StorefrontErrorService.grouped({
+        projectId: String(q.projectId),
+        connectorId: q.connectorId ? String(q.connectorId) : null,
+        type: q.type ? String(q.type) : null,
+        from: q.from ? String(q.from) : null,
+        to: q.to ? String(q.to) : null,
+        limit: q.limit ? Number(q.limit) : null,
+        offset: q.offset ? Number(q.offset) : null,
+      });
+      return reply.code(200).send(ResponseUtil.success(data, {}, req.id as string));
+    } catch (err) {
+      console.error('[RUM] grouped query failed', err);
+      return reply.code(500).send(ResponseUtil.error('Failed to group storefront errors', 'RUM_QUERY_FAILED', null, req.id as string));
+    }
+  });
+
+  // ── Page overview: traffic, error rate, devices, top pages (dashboard) ─────
+  fastify.get('/overview', async (req, reply) => {
+    const q = (req.query as any) || {};
+    if (!q.projectId) {
+      return reply.code(400).send(ResponseUtil.error('Missing projectId', 'MISSING_PROJECT_ID', null, req.id as string));
+    }
+    try {
+      const data = await StorefrontErrorService.overview({
+        projectId: String(q.projectId),
+        connectorId: q.connectorId ? String(q.connectorId) : null,
+        from: q.from ? String(q.from) : null,
+        to: q.to ? String(q.to) : null,
+      });
+      return reply.code(200).send(ResponseUtil.success(data, {}, req.id as string));
+    } catch (err) {
+      console.error('[RUM] overview failed', err);
+      return reply.code(500).send(ResponseUtil.error('Failed to load RUM overview', 'RUM_QUERY_FAILED', null, req.id as string));
+    }
+  });
+
   // ── Storefront capture script (CDN-servable) ──────────────────────────────
   let cachedScript: string | null = null;
   fastify.get('/rum.js', async (_req, reply) => {

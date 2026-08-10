@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma, decryptSecret } from '@kpi-platform/db';
+import { prisma, decryptSecret, hashEmail, encryptEmail, scrubEmails } from '@kpi-platform/db';
+import { linkOrderToCustomer } from './order-customer-link.service';
 import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { orderNormalizationService } from './order-normalization.service';
 import {
@@ -340,6 +341,10 @@ export class ShopifyOrderSyncService {
             instance.tenantId
         );
         const customerEmail = this.extractCustomerEmail(rawOrder);
+        // PII: never persist the plaintext email. Keep the one-way hash (identity
+        // join key) + a reversible encrypted copy (dashboard display only).
+        const customerEmailHash = hashEmail(customerEmail);
+        const customerEmailEncrypted = encryptEmail(customerEmail);
 
         // PHASE 5 PILOT: canonical order data is a DATA-PLANE write. Route it to
         // the integration's physical store DB when the data plane is enabled
@@ -348,6 +353,20 @@ export class ShopifyOrderSyncService {
         // connectorInstance / lifecycle events) stay on the control client in
         // syncConnectorInstance.
         const db = await getDataPlaneClient(instance.id);
+
+        // Attach the order to the golden record so online history sits alongside
+        // any in-store/offline orders imported for the same shopper.
+        const customerProfileId = await linkOrderToCustomer(
+            db,
+            { siteId: instance.siteId, connectorInstanceId: instance.id },
+            {
+                email: customerEmail,
+                phone: rawOrder?.customer?.phone || rawOrder?.phone || rawOrder?.billing_address?.phone || null,
+                externalId: rawOrder?.customer?.id ?? null,
+                platform: 'shopify',
+                source: 'shopify-order-sync',
+            },
+        );
 
         const existing = await db.canonicalOrder.findFirst({
             where: {
@@ -383,7 +402,10 @@ export class ShopifyOrderSyncService {
             shippedAt: rawOrder?.closed_at ? new Date(rawOrder.closed_at) : null,
             deliveredAt: null,
             mappingVersion: 'shopify/v1',
-            metadata: {
+            customerProfileId,
+            // scrubEmails() deep-replaces any raw email nested in customer / rawOrder /
+            // lineItems with its hash, so no plaintext email is ever persisted here.
+            metadata: scrubEmails({
                 ...(canonical.metadata || {}),
                 connectorInstanceId: instance.id,
                 connectorLabel: instance.label,
@@ -395,13 +417,14 @@ export class ShopifyOrderSyncService {
                     const shopDomain = this.normalizeShopDomain(config.shopDomain || '');
                     return shopDomain ? `https://${shopDomain}` : null;
                 })(),
-                customerEmail,
+                customerEmailHash,
+                customerEmailEncrypted,
                 shopifyOrderId: rawOrder?.id,
                 orderNumber: rawOrder?.order_number,
                 customer: rawOrder?.customer || null,
                 lineItems: rawOrder?.line_items || [],
                 rawOrder
-            } as Prisma.InputJsonValue,
+            }) as Prisma.InputJsonValue,
             updatedAt: new Date()
         };
 

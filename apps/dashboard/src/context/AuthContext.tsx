@@ -391,6 +391,16 @@ const isLongRunningMutationRequest = (url: string, method?: string) => {
     const normalizedMethod = (method || 'GET').toUpperCase();
     if (normalizedMethod === 'GET') return false;
 
+    // Campaign generation calls the LLM to write a personalized email, which
+    // routinely takes 20–60s — far past the 10s default. Without this it aborts
+    // client-side even though the server finishes and commits the draft.
+    if (
+      /\/campaigns\/(?:run|send-batch)(?:\/|\?|$)/.test(url) ||
+      /\/customer-groups\/[^/]+\/run(?:\/|\?|$)/.test(url) ||
+      /\/unified-customer\/recompute(?:\/|\?|$)/.test(url)
+    )
+      return true;
+
     return /\/(?:re)?sync(?:\/|\?|$)/.test(url) || /\/integrations(?:\/|$)/.test(url);
 };
 

@@ -1,6 +1,7 @@
 import { prisma } from "@kpi-platform/db";
 import { getDataPlaneClient, getSiteDataPlaneClient } from "../lib/tenant-prisma";
 import { orderNormalizationService } from "./order-normalization.service";
+import { IdentityResolver } from "./identity-resolver.service";
 import crypto from "crypto";
 
 /**
@@ -11,6 +12,28 @@ const normalizeCurrencyCode = (value: any): string | null => {
   const code = String(value ?? "").trim().toUpperCase();
   return /^[A-Z]{3}$/.test(code) ? code : null;
 };
+
+/**
+ * Per-import summary of how offline rows attached to the customer golden record.
+ * The match figures are counted at CUSTOMER level, not row level: one shopper often
+ * appears on many rows, so row counts would overstate how many people were reached.
+ */
+export interface OfflineIdentityReport {
+  /** False when the import created its own CSV connector: profiles live per connector,
+   *  so there is nothing to match against. Matching needs an existing store selected. */
+  matchingEnabled: boolean;
+  /** Distinct existing customers these offline orders were attached to. */
+  customersMatched: number;
+  /** Distinct new (offline-only) customers created by this import. */
+  customersCreated: number;
+  /** Rows that ended up linked to a customer profile. */
+  rowsLinked: number;
+  /** Rows with no email / phone / loyalty id to match on. */
+  rowsUnidentified: number;
+  /** Rows whose phone matched someone who already has a different email — left
+   *  deliberately unmerged for human review rather than guessed at. */
+  phoneConflicts: number;
+}
 
 export class OrderIngestionService {
   /**
@@ -126,12 +149,21 @@ export class OrderIngestionService {
     // carry a currency, so we apply the chosen one to every row rather than
     // silently assuming USD. Falls back to USD only if nothing valid is supplied.
     const resolvedCurrency = normalizeCurrencyCode(importCurrency) || "USD";
+    const identity: OfflineIdentityReport = {
+      matchingEnabled: Boolean(targetConnectorId),
+      customersMatched: 0,
+      customersCreated: 0,
+      rowsLinked: 0,
+      rowsUnidentified: 0,
+      phoneConflicts: 0,
+    };
     const results = {
       connectorId: "",
       success: 0,
       failed: 0,
       total: Array.isArray(rows) ? rows.length : 0,
       errors: [] as string[],
+      identity,
     };
 
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -190,6 +222,15 @@ export class OrderIngestionService {
     // land in the connector's physical store DB (fails closed if not active).
     const db = await getDataPlaneClient(connectorId);
 
+    // One customer usually appears on several rows (repeat visits within the export),
+    // so cache the resolution for the run instead of re-resolving per row. Also lets
+    // the report count customers rather than rows.
+    // NOTE: each row becomes its OWN canonical order — this importer has no
+    // line-item grouping, so a till export must be one row per order, not per item.
+    const resolvedByIdentity = new Map<string, string>();
+    const matchedProfileIds = new Set<string>();
+    const createdProfileIds = new Set<string>();
+
     // 2. Normalize + persist each row.
     for (let i = 0; i < rows.length; i++) {
       try {
@@ -199,6 +240,16 @@ export class OrderIngestionService {
           siteId,
           tenantId,
           { defaultCurrency: resolvedCurrency },
+        );
+
+        // 2a. Attach the row to the customer golden record. This is what makes an
+        //     in-store purchase show up against the same person who shops online:
+        //     the email/phone hashes computed by the normalizer are the join keys.
+        const customerProfileId = await this.resolveOfflineCustomer(
+          db,
+          { siteId, connectorInstanceId: connectorId },
+          canonical.metadata || {},
+          { identity, resolvedByIdentity, matchedProfileIds, createdProfileIds },
         );
 
         await db.canonicalOrder.create({
@@ -224,6 +275,7 @@ export class OrderIngestionService {
             refundedAmount: canonical.refundedAmount ?? 0,
             placedAt: new Date(canonical.placedAt),
             mappingVersion: "csv/v1",
+            customerProfileId,
             metadata: canonical.metadata || {},
           },
         });
@@ -293,12 +345,90 @@ export class OrderIngestionService {
           source: "csv_upload",
           success: results.success,
           failed: results.failed,
+          identity,
         },
         triggeredBy: "USER",
       },
     });
 
     return results;
+  }
+
+  /**
+   * Resolve one offline/POS row to a CustomerProfile, or null when the row carries
+   * no identifier at all (a cash walk-in with no details captured).
+   *
+   * Match keys, strongest first: loyalty id → email hash → phone hash. All three go
+   * to the shared IdentityResolver, so an in-store purchase lands on exactly the same
+   * golden record as that shopper's online orders and browsing behavior — which only
+   * works because the offline rows were merged into the online store's connector.
+   *
+   * Resolution never fails a row: the order itself is the payload and is worth more
+   * than the attribution, so errors are logged and the order is stored unlinked.
+   */
+  private static async resolveOfflineCustomer(
+    db: any,
+    scope: { siteId: string; connectorInstanceId: string },
+    metadata: Record<string, any>,
+    run: {
+      identity: OfflineIdentityReport;
+      resolvedByIdentity: Map<string, string>;
+      matchedProfileIds: Set<string>;
+      createdProfileIds: Set<string>;
+    },
+  ): Promise<string | null> {
+    const emailHash = metadata.customerEmailHash || null;
+    const phoneHash = metadata.customerPhoneHash || null;
+    const loyaltyId = metadata.loyaltyId || null;
+
+    if (!emailHash && !phoneHash && !loyaltyId) {
+      run.identity.rowsUnidentified++;
+      return null;
+    }
+
+    const cacheKey = `${loyaltyId || ""}|${emailHash || ""}|${phoneHash || ""}`;
+    const cached = run.resolvedByIdentity.get(cacheKey);
+    if (cached) {
+      run.identity.rowsLinked++;
+      return cached;
+    }
+
+    try {
+      const result = await IdentityResolver.resolve(db, scope, {
+        emailHash,
+        emailEncrypted: metadata.customerEmailEncrypted || null,
+        phoneHash,
+        externalId: loyaltyId,
+        platform: "pos",
+        source: "csv_upload",
+      });
+
+      if (result.phoneConflict) run.identity.phoneConflicts++;
+      if (result.created) {
+        if (!run.createdProfileIds.has(result.profileId)) {
+          run.createdProfileIds.add(result.profileId);
+          run.identity.customersCreated++;
+        }
+      } else if (
+        // A profile this same import created counts as created, not matched, even
+        // when a later row resolves to it through a different identifier mix.
+        !run.matchedProfileIds.has(result.profileId) &&
+        !run.createdProfileIds.has(result.profileId)
+      ) {
+        run.matchedProfileIds.add(result.profileId);
+        run.identity.customersMatched++;
+      }
+
+      run.resolvedByIdentity.set(cacheKey, result.profileId);
+      run.identity.rowsLinked++;
+      return result.profileId;
+    } catch (err: any) {
+      console.error("[OrderIngestionService] offline identity resolution failed", {
+        connectorInstanceId: scope.connectorInstanceId,
+        error: err?.message,
+      });
+      return null;
+    }
   }
 
   /**

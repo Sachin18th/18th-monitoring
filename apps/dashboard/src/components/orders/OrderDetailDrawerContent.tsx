@@ -1,18 +1,6 @@
 import React from 'react';
 import { InformationState } from '@kpi-platform/ui';
-import { hasPermission, normalizeRole } from '@kpi-platform/shared-types';
-import {
-  Activity,
-  ArrowRightLeft,
-  Building2,
-  Clock3,
-  FileText,
-  Link2,
-  Mail,
-  RefreshCw,
-  Search,
-  User,
-} from 'lucide-react';
+import { Activity, Building2, Clock3, FileText, Link2, Mail, User } from 'lucide-react';
 
 export interface OrderDetailDrawerContentProps {
   order: any;
@@ -22,408 +10,219 @@ export interface OrderDetailDrawerContentProps {
   role?: string | null;
 }
 
-export const OrderDetailDrawerContent: React.FC<OrderDetailDrawerContentProps> = ({
-  order,
-  timeline = [],
-  reconciliation = [],
-  onAction,
-  role
-}) => {
+// Theme-aware styling via the app's CSS variables (works in light + dark), instead
+// of the previous hardcoded light-only palette that looked broken on the dark shell.
+const card: React.CSSProperties = { borderRadius: 12, border: '1px solid var(--border-card)', background: 'var(--bg-card)', padding: 16 };
+const label: React.CSSProperties = { fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-label)', fontWeight: 600 };
+const sectionTitle: React.CSSProperties = { ...label, display: 'block', marginBottom: 8 };
+const valueText: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' };
+const mono: React.CSSProperties = { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' };
+const pill = (bg: string, color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', minHeight: 22, borderRadius: 999, padding: '2px 8px', fontSize: 11, fontWeight: 600, background: bg, color });
+
+/** True for a 40/64-char hex string — i.e. a PII hash, not a real email. */
+const isHashLike = (s: string) => /^[a-f0-9]{40,64}$/i.test(s.trim());
+
+export const OrderDetailDrawerContent: React.FC<OrderDetailDrawerContentProps> = ({ order, timeline = [] }) => {
   if (!order) return <InformationState type="loading" />;
-  const normalizedRole = normalizeRole(role);
-  const canWrite = hasPermission(normalizedRole, 'canWrite');
-  const canRetriggerSync = hasPermission(normalizedRole, 'canRetriggerSync');
 
   const amount = Number(order.amount ?? order.totalAmount ?? 0);
   const currency = String(order.currency || 'USD').trim().toUpperCase();
   const channel = String(order.channel || order.orderSource || order.sourceSystem || 'unknown').toLowerCase();
   const isOfflineChannel =
-    channel === 'offline' ||
-    channel === 'pos' ||
-    String(order.sourceSystem || '').toLowerCase() === 'csv' ||
-    order.metadata?.orderSource === 'offline';
-  const channelLabel = isOfflineChannel
-    ? 'OFFLINE'
-    : channel === 'unknown'
-      ? 'UNKNOWN'
-      : channel.toUpperCase();
-  const status = String(order.status || order.lifecycleState || order.normalizedStatus || 'unknown').toLowerCase();
-  const syncStatus = String(order.syncStatus || 'synced').toLowerCase();
-  const siteLabel = String(order.siteName || order.projectName || order.siteId || order.projectId || 'Current Site');
+    channel === 'offline' || channel === 'pos' ||
+    String(order.sourceSystem || '').toLowerCase() === 'csv' || order.metadata?.orderSource === 'offline';
+  const channelLabel = isOfflineChannel ? 'OFFLINE' : channel === 'unknown' ? 'UNKNOWN' : channel.toUpperCase();
 
   const formatCurrency = (value: number) => {
-    const formatNumericAmount = (input: number) =>
-      new Intl.NumberFormat('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      }).format(input);
-
-    const currencySymbolMap: Record<string, string> = {
-      USD: '$',
-      AUD: 'A$',
-      INR: '₹'
-    };
-
+    const symbols: Record<string, string> = { USD: '$', AUD: 'A$', INR: '₹', EUR: '€', GBP: '£' };
+    const n = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     try {
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency,
-        currencyDisplay: 'narrowSymbol',
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      }).format(value);
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
     } catch {
-      const symbol = currencySymbolMap[currency];
-      if (symbol) {
-        return `${symbol}${formatNumericAmount(value)}`;
-      }
-
-      return `${currency} ${formatNumericAmount(value)}`;
+      return symbols[currency] ? `${symbols[currency]}${n}` : `${currency} ${n}`;
     }
   };
 
-  const formatAmount = () => formatCurrency(amount);
+  const metadata: Record<string, any> = order?.metadata && typeof order.metadata === 'object' ? order.metadata : {};
 
-  // Line items and customer reference are read directly from the canonical order
-  // metadata that the drawer already receives. The shape differs per source system
-  // (confirmed against real canonical_orders rows), so we branch rather than assume
-  // one fixed JSON path. We never recompute the order total from these values —
-  // VALUE above continues to come from order.amount / order.totalAmount.
-  const metadata: Record<string, any> =
-    order?.metadata && typeof order.metadata === 'object' ? order.metadata : {};
-
-  type DrawerLineItem = {
-    name: string;
-    sku: string;
-    quantity: number | null;
-    unitPrice: number | null;
-    lineTotal: number | null;
-  };
-
-  const toFiniteNumber = (value: unknown): number | null => {
-    if (value === null || value === undefined || value === '') return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
+  type DrawerLineItem = { name: string; sku: string; quantity: number | null; unitPrice: number | null; lineTotal: number | null };
+  const toNum = (v: unknown): number | null => { if (v === null || v === undefined || v === '') return null; const p = Number(v); return Number.isFinite(p) ? p : null; };
 
   const resolveLineItems = (): DrawerLineItem[] | null => {
-    // shopify        -> metadata.lineItems[]        (title/name, sku, quantity, price as string)
-    // adobe_commerce -> metadata.adobeOrder.items[] (name, sku, qty_ordered, price, row_total)
-    // bigcommerce    -> metadata.bigcommerceOrder.products is a {url, resource} reference,
-    //                   items are NOT embedded, so they are unavailable here.
-    let rawItems: any[] | null = null;
-    if (Array.isArray(metadata.lineItems)) {
-      rawItems = metadata.lineItems;
-    } else if (Array.isArray(metadata.adobeOrder?.items)) {
-      rawItems = metadata.adobeOrder.items;
-    }
-
-    if (!Array.isArray(rawItems) || rawItems.length === 0) return null;
-
-    return rawItems.map((item: any) => {
+    let raw: any[] | null = null;
+    if (Array.isArray(metadata.lineItems)) raw = metadata.lineItems;
+    else if (Array.isArray(metadata.adobeOrder?.items)) raw = metadata.adobeOrder.items;
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return raw.map((item: any) => {
       const name = String(item?.name || item?.title || item?.sku || 'Unnamed item');
-      const sku = item?.sku !== null && item?.sku !== undefined ? String(item.sku) : '';
-      const quantity = toFiniteNumber(item?.quantity ?? item?.qty_ordered ?? item?.qty);
-      const unitPrice = toFiniteNumber(item?.price ?? item?.unitPrice);
-      let lineTotal = toFiniteNumber(item?.row_total ?? item?.lineTotal);
-      if (lineTotal === null && unitPrice !== null && quantity !== null) {
-        lineTotal = unitPrice * quantity;
-      }
+      const sku = item?.sku != null ? String(item.sku) : '';
+      const quantity = toNum(item?.quantity ?? item?.qty_ordered ?? item?.qty);
+      const unitPrice = toNum(item?.price ?? item?.unitPrice);
+      let lineTotal = toNum(item?.row_total ?? item?.lineTotal);
+      if (lineTotal === null && unitPrice !== null && quantity !== null) lineTotal = unitPrice * quantity;
       return { name, sku, quantity, unitPrice, lineTotal };
     });
   };
 
-  const resolveCustomer = (): { name: string | null; email: string | null } | null => {
-    const shopifyCustomer = metadata.customer || {};
-    const adobeOrder = metadata.adobeOrder || {};
-    const bigcommerceBilling = metadata.bigcommerceOrder?.billing_address || {};
+  const resolveCustomer = (): { name: string | null; email: string | null; emailIsHashed: boolean } | null => {
+    const sc = metadata.customer || {};
+    const ao = metadata.adobeOrder || {};
+    const bc = metadata.bigcommerceOrder?.billing_address || {};
+    const firstName = sc.first_name || ao.customer_firstname || bc.first_name;
+    const lastName = sc.last_name || ao.customer_lastname || bc.last_name;
+    const composed = [firstName, lastName].filter((p) => typeof p === 'string' && p.trim()).join(' ').trim();
+    const fallback = (typeof metadata.customerName === 'string' && metadata.customerName.trim()) || (typeof sc.name === 'string' && sc.name.trim()) || '';
+    const name = composed || fallback || null;
 
-    const firstName = shopifyCustomer.first_name || adobeOrder.customer_firstname || bigcommerceBilling.first_name;
-    const lastName = shopifyCustomer.last_name || adobeOrder.customer_lastname || bigcommerceBilling.last_name;
-    const composedName = [firstName, lastName]
-      .filter((part) => typeof part === 'string' && part.trim().length > 0)
-      .join(' ')
-      .trim();
-    const fallbackName =
-      (typeof metadata.customerName === 'string' && metadata.customerName.trim()) ||
-      (typeof shopifyCustomer.name === 'string' && shopifyCustomer.name.trim()) ||
-      '';
-    const name = composedName || fallbackName || null;
-
-    const emailCandidates = [
-      metadata.customerEmail,
-      metadata.buyerEmail,
-      metadata.email,
-      shopifyCustomer.email,
-      adobeOrder.customer_email,
-      bigcommerceBilling.email,
-    ];
     let email: string | null = null;
-    for (const candidate of emailCandidates) {
-      if (typeof candidate === 'string' && candidate.trim().length > 0) {
-        email = candidate.trim();
-        break;
+    let emailIsHashed = false;
+    for (const c of [metadata.customerEmail, metadata.buyerEmail, metadata.email, sc.email, ao.customer_email, bc.email]) {
+      if (typeof c === 'string' && c.trim()) {
+        const v = c.trim();
+        // PII scrub replaces the raw email with its hash — never surface the hash.
+        if (isHashLike(v) || !v.includes('@')) { emailIsHashed = true; continue; }
+        email = v; break;
       }
     }
-
-    if (!name && !email) return null;
-    return { name, email };
+    if (!name && !email && !emailIsHashed) return null;
+    return { name, email, emailIsHashed };
   };
 
   const lineItems = resolveLineItems();
   const customer = resolveCustomer();
 
-  const sectionTitleClassName = 'mb-2 block text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]';
-
-  const formatDateTime = (value: unknown) => {
-    if (!value) return '—';
-    const parsed = new Date(String(value));
-    if (Number.isNaN(parsed.getTime())) {
-      return String(value);
-    }
-
-    return parsed.toLocaleString([], {
-      dateStyle: 'medium',
-      timeStyle: 'medium',
-    });
+  const formatDateTime = (v: unknown) => {
+    if (!v) return '—';
+    const d = new Date(String(v));
+    return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
   };
 
-  const cardClassName = 'rounded-[12px] border border-[#e5e7eb] bg-white p-4';
-  const infoCardClassName = 'rounded-[12px] border border-[#e5e7eb] bg-white p-4';
-  const actionLabelClassName = 'mb-2 block text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]';
-
-  const normalizeTimelineKind = (event: any): 'success' | 'processed' | 'captured' => {
-    const raw = String(event?.type || event?.status || event?.stage || event?.group || '').toLowerCase();
-    if (raw.includes('success') || raw.includes('complete') || raw.includes('verified') || raw.includes('done')) {
-      return 'success';
-    }
-    if (raw.includes('process') || raw.includes('queued') || raw.includes('pending') || raw.includes('captured')) {
-      return 'processed';
-    }
+  const normalizeKind = (e: any): 'success' | 'processed' | 'captured' => {
+    const raw = String(e?.type || e?.status || e?.stage || e?.group || '').toLowerCase();
+    if (/success|complete|verified|done/.test(raw)) return 'success';
+    if (/process|queued|pending|captured/.test(raw)) return 'processed';
     return 'captured';
   };
-
-  const timelineItems = timeline.map((event, index) => ({
-    ...event,
-    kind: normalizeTimelineKind(event),
-    label: String(event?.title || event?.name || event?.label || `Event ${index + 1}`),
-    source: String(event?.system || event?.source || event?.channel || event?.origin || 'CORE'),
-    timestamp: formatDateTime(event?.time || event?.timestamp || event?.createdAt || event?.at),
+  const timelineItems = timeline.map((e, i) => ({
+    kind: normalizeKind(e),
+    label: String(e?.title || e?.name || e?.label || `Event ${i + 1}`),
+    source: String(e?.system || e?.source || e?.channel || e?.origin || 'CORE'),
+    timestamp: formatDateTime(e?.time || e?.timestamp || e?.createdAt || e?.at),
   }));
 
-  const reconciliationRows = [
-    { label: 'STOREFRONT STATE', entry: reconciliation.find((row: any) => String(row?.name || '').toLowerCase().includes('storefront')) },
-    { label: 'OMS STATE', entry: reconciliation.find((row: any) => String(row?.name || '').toLowerCase().includes('oms')) },
-    { label: 'FINANCIAL LEDGER', entry: reconciliation.find((row: any) => String(row?.name || '').toLowerCase().includes('financial')) },
-  ];
-
   return (
-    <div className="flex flex-col gap-5">
-      <section className={cardClassName}>
-        <div className="flex items-start gap-[14px]">
-          <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-full bg-[#dbeafe] text-[#2563eb]">
-            <Link2 size={22} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Source id */}
+      <section style={card}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          <div style={{ flex: 'none', width: 48, height: 48, borderRadius: 999, display: 'grid', placeItems: 'center', background: 'color-mix(in srgb, var(--accent, #22d3ee) 16%, transparent)', color: 'var(--accent, #22d3ee)' }}>
+            <Link2 size={20} />
           </div>
-          <div className="min-w-0 flex-1 space-y-[4px]">
-            <div className="break-all font-mono text-[14px] font-medium leading-snug text-[#111827]" title={String(order.id || '-')}>{String(order.id || '-')}</div>
-            <div className="mt-1 text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">Source ID</div>
-            <div className="font-mono text-[12px] text-[#6b7280]" title={String(order.externalOrderId || order.externalReferenceId || order.orderId || '-')}>{String(order.externalOrderId || order.externalReferenceId || order.orderId || '-')}</div>
-            <span className="inline-flex min-h-[22px] items-center rounded-full bg-[#dcfce7] px-[8px] py-[2px] text-[11px] font-normal text-[#16a34a]">
-              Integrity · Verified
-            </span>
+          <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ ...mono, fontSize: 13.5, fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-all' }} title={String(order.id || '-')}>{String(order.id || '-')}</div>
+            <div style={label}>Source ID</div>
+            <div style={{ ...mono, fontSize: 12, color: 'var(--text-muted)' }} title={String(order.externalOrderId || order.externalReferenceId || order.orderId || '-')}>{String(order.externalOrderId || order.externalReferenceId || order.orderId || '-')}</div>
+            <span style={{ ...pill('var(--success-bg)', 'var(--success-text)'), marginTop: 2, width: 'max-content' }}>Integrity · Verified</span>
           </div>
         </div>
       </section>
 
+      {/* Channel / Value */}
       <section>
-        <div className={sectionTitleClassName}>PMO</div>
-        <div className={infoCardClassName}>
-          <div className="grid grid-cols-2 gap-4">
+        <div style={sectionTitle}>Order summary</div>
+        <div style={card}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
             <div>
-              <div className="mb-[6px] flex items-center gap-1 text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">
-                {isOfflineChannel ? <FileText size={14} /> : <Activity size={14} />}
-                CHANNEL
-              </div>
-              <div className="text-[14px] font-medium text-[#111827]">{channelLabel}</div>
+              <div style={{ ...label, display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>{isOfflineChannel ? <FileText size={13} /> : <Activity size={13} />} Channel</div>
+              <div style={valueText}>{channelLabel}</div>
             </div>
-            <div className="text-right">
-              <div className="mb-[6px] flex items-center justify-end gap-1 text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">
-                <Building2 size={14} />
-                VALUE
-              </div>
-              <div className="text-[14px] font-medium text-[#111827]">{formatAmount()}</div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ ...label, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginBottom: 6 }}><Building2 size={13} /> Value</div>
+              <div style={{ ...valueText, fontSize: 16 }}>{formatCurrency(amount)}</div>
             </div>
           </div>
         </div>
       </section>
 
+      {/* Line items */}
       <section>
-        <div className={sectionTitleClassName}>ORDER LINE ITEMS</div>
-        <div className={infoCardClassName}>
+        <div style={sectionTitle}>Order line items</div>
+        <div style={card}>
           {lineItems && lineItems.length > 0 ? (
-            <div className="space-y-0">
-              {lineItems.map((item, index) => (
-                <div
-                  key={`${item.sku || 'item'}-${index}`}
-                  className="flex items-start justify-between gap-3 border-b border-[#eef0f2] py-[11px] first:pt-0 last:border-b-0 last:pb-0"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-[#111827]" title={item.name}>
-                      {item.name}
-                    </div>
-                    <div className="mt-[2px] font-mono text-[11px] text-[#9ca3af]">
-                      {item.sku ? `SKU ${item.sku}` : 'SKU —'}
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="text-[13px] font-medium text-[#111827]">
-                      {item.lineTotal !== null ? formatCurrency(item.lineTotal) : '—'}
-                    </div>
-                    <div className="mt-[2px] text-[11px] text-[#6b7280]">
-                      {item.quantity !== null ? item.quantity : '—'} ×{' '}
-                      {item.unitPrice !== null ? formatCurrency(item.unitPrice) : '—'}
-                    </div>
-                  </div>
+            lineItems.map((item, i) => (
+              <div key={`${item.sku || 'item'}-${i}`} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '11px 0', borderBottom: i === lineItems.length - 1 ? 'none' : '1px solid var(--border-card)', paddingTop: i === 0 ? 0 : 11 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>{item.name}</div>
+                  <div style={{ ...mono, fontSize: 11, color: 'var(--text-label)', marginTop: 2 }}>{item.sku ? `SKU ${item.sku}` : 'SKU —'}</div>
                 </div>
-              ))}
-            </div>
+                <div style={{ flex: 'none', textAlign: 'right' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{item.lineTotal !== null ? formatCurrency(item.lineTotal) : '—'}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{item.quantity ?? '—'} × {item.unitPrice !== null ? formatCurrency(item.unitPrice) : '—'}</div>
+                </div>
+              </div>
+            ))
           ) : (
-            <div className="py-1 text-[13px] italic text-[#6b7280]">Line items unavailable</div>
+            <div style={{ fontSize: 13, fontStyle: 'italic', color: 'var(--text-muted)' }}>Line items unavailable</div>
           )}
         </div>
       </section>
 
+      {/* Customer reference */}
       <section>
-        <div className={sectionTitleClassName}>CUSTOMER REFERENCE</div>
-        <div className={infoCardClassName}>
+        <div style={sectionTitle}>Customer reference</div>
+        <div style={card}>
           {customer ? (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="min-w-0">
-                <div className="mb-[6px] flex items-center gap-1 text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">
-                  <User size={14} />
-                  NAME
-                </div>
-                <div className="truncate text-[14px] font-medium text-[#111827]" title={customer.name || 'Not available'}>
-                  {customer.name || 'Not available'}
-                </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ ...label, display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}><User size={13} /> Name</div>
+                <div style={{ ...valueText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={customer.name || 'Not available'}>{customer.name || 'Not available'}</div>
               </div>
-              <div className="min-w-0 text-right">
-                <div className="mb-[6px] flex items-center justify-end gap-1 text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">
-                  <Mail size={14} />
-                  EMAIL
-                </div>
-                <div className="break-all text-[14px] font-medium text-[#111827]" title={customer.email || 'Not available'}>
-                  {customer.email || 'Not available'}
-                </div>
+              <div style={{ minWidth: 0, textAlign: 'right' }}>
+                <div style={{ ...label, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, marginBottom: 6 }}><Mail size={13} /> Email</div>
+                {customer.email ? (
+                  <div style={{ ...valueText, wordBreak: 'break-all' }} title={customer.email}>{customer.email}</div>
+                ) : (
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }} title="Email is stored PII-hashed for this order">{customer.emailIsHashed ? 'Hashed (PII-protected)' : 'Not available'}</div>
+                )}
               </div>
             </div>
           ) : (
-            <div className="py-1 text-[13px] italic text-[#6b7280]">
-              Customer data not linked for this order
-            </div>
+            <div style={{ fontSize: 13, fontStyle: 'italic', color: 'var(--text-muted)' }}>Customer data not linked for this order</div>
           )}
         </div>
       </section>
 
-      {/* {canWrite || canRetriggerSync ? (
-        <section>
-          <div className={actionLabelClassName}>ORDER CONTROL LAYER</div>
-          <div className="grid grid-cols-2 gap-2">
-            {canWrite ? (
-              <button
-                type="button"
-                onClick={() => onAction('reprocess')}
-                className="flex h-[36px] items-center justify-center gap-[6px] rounded-[8px] bg-[#2563eb] px-3 text-[13px] font-medium text-white shadow-none transition-colors hover:bg-[#1d4ed8]"
-              >
-                <RefreshCw size={14} />
-                Reprocess Order
-              </button>
-            ) : null}
-            {canRetriggerSync ? (
-              <button
-                type="button"
-                onClick={() => onAction('re-sync')}
-                className="flex h-[36px] items-center justify-center gap-[6px] rounded-[8px] border border-[#e5e7eb] bg-white px-3 text-[13px] font-normal text-[#374151] shadow-none transition-colors hover:bg-[#f9fafb]"
-              >
-                <ArrowRightLeft size={14} />
-                Force Re-Sync
-              </button>
-            ) : null}
-          </div>
-        </section>
-      ) : null} */}
-
-      <section className={cardClassName}>
-        <div className="flex items-center gap-2">
-          <Clock3 size={16} className="shrink-0 text-[#9ca3af]" />
-          <div className="text-[13px] font-medium text-[#111827]">Event Lifecycle Timeline</div>
-          <span className="ml-auto inline-flex min-h-[22px] items-center rounded-full bg-[#f3f4f6] px-[6px] py-[1px] text-[10px] font-normal uppercase text-[#6b7280]">CORE</span>
+      {/* Event lifecycle timeline */}
+      <section style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Clock3 size={16} style={{ flex: 'none', color: 'var(--text-label)' }} />
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Event lifecycle timeline</div>
+          <span style={{ ...pill('var(--bg-input)', 'var(--text-muted)'), marginLeft: 'auto', textTransform: 'uppercase', fontSize: 10 }}>Core</span>
         </div>
-        <div className="mb-3 mt-1 border-b border-[#e5e7eb] px-0 pb-[8px] text-[12px] text-[#6b7280]">Unified State Sync CORE</div>
-
-        <div className="space-y-0">
-          {timelineItems.length === 0 ? (
-            <div className="py-2 text-[13px] italic text-[#6b7280]">No lifecycle events available for this order yet.</div>
-          ) : (
-            timelineItems.map((event, index) => {
-              const previousKind = timelineItems[index - 1]?.kind;
-              const nextKind = timelineItems[index + 1]?.kind;
-              const kindLabel = event.kind.charAt(0).toUpperCase() + event.kind.slice(1);
-              const dotColor = event.kind === 'success' ? 'bg-[#16a34a]' : event.kind === 'processed' ? 'bg-[#d97706]' : 'bg-[#2563eb]';
-
+        <div style={{ marginTop: 4, marginBottom: 4, paddingBottom: 8, borderBottom: '1px solid var(--border-card)', fontSize: 12, color: 'var(--text-muted)' }}>Unified state sync</div>
+        {timelineItems.length === 0 ? (
+          <div style={{ fontSize: 13, fontStyle: 'italic', color: 'var(--text-muted)', paddingTop: 8 }}>No lifecycle events for this order yet.</div>
+        ) : (
+          <div>
+            {timelineItems.map((e, i) => {
+              const dot = e.kind === 'success' ? 'var(--success-text)' : e.kind === 'processed' ? 'var(--warning-text)' : 'var(--accent, #22d3ee)';
+              const kindLabel = e.kind.charAt(0).toUpperCase() + e.kind.slice(1);
+              const showHeader = i === 0 || e.kind !== timelineItems[i - 1]?.kind;
               return (
-                <React.Fragment key={`${event.label}-${index}`}>
-                  {index === 0 || event.kind !== previousKind ? (
-                    <div className="border-b border-[#f3f4f6] bg-[#f9fafb] px-4 py-[6px] text-[10px] uppercase tracking-[0.07em] text-[#9ca3af]">
-                      {kindLabel}
-                    </div>
-                  ) : null}
-
-                  <div className="flex min-h-[32px] items-center gap-[10px] border-b border-[#f3f4f6] px-4 py-[10px]">
-                    <div className="relative flex w-4 shrink-0 justify-center">
-                      <span className={`z-10 h-2 w-2 rounded-full ${dotColor}`} />
-                      {index !== timelineItems.length - 1 && event.kind === nextKind ? (
-                        <span className="absolute left-1/2 top-[10px] bottom-[-12px] border-l border-dashed border-[#e5e7eb]" />
-                      ) : null}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <span className="truncate text-[13px] font-medium text-[#111827]" title={event.label}>
-                          {event.label}
-                        </span>
-                        <span className="ml-1 inline-flex min-h-[22px] shrink-0 items-center rounded-full bg-[#f3f4f6] px-[6px] py-[1px] text-[10px] font-normal text-[#6b7280]">
-                          {event.source}
-                        </span>
-                        <span className="ml-auto whitespace-nowrap font-mono text-[12px] text-[#6b7280]">{event.timestamp}</span>
-                      </div>
-                    </div>
+                <React.Fragment key={`${e.label}-${i}`}>
+                  {showHeader && <div style={{ ...label, fontSize: 10, padding: '8px 0 4px' }}>{kindLabel}</div>}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: showHeader ? 'none' : '1px solid var(--border-card)' }}>
+                    <span style={{ flex: 'none', width: 8, height: 8, borderRadius: 999, background: dot }} />
+                    <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.label}>{e.label}</span>
+                    <span style={{ ...pill('var(--bg-input)', 'var(--text-muted)'), fontSize: 10 }}>{e.source}</span>
+                    <span style={{ ...mono, marginLeft: 'auto', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text-muted)' }}>{e.timestamp}</span>
                   </div>
                 </React.Fragment>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </section>
-
-      {/* <section className={cardClassName}>
-        <div className="flex items-center gap-2">
-          <Search size={16} className="shrink-0 text-[#9ca3af]" />
-          <div className="text-[13px] font-medium text-[#111827]">Cross-System Reconciliation</div>
-          <span className="ml-auto inline-flex min-h-[22px] items-center rounded-full bg-[#f3f4f6] px-[6px] py-[1px] text-[10px] font-normal uppercase text-[#6b7280]">UNIFIED STATE</span>
-        </div>
-
-        <div className="mt-3 divide-y divide-[#f3f4f6] border-t border-[#e5e7eb]">
-          {reconciliationRows.map((row) => (
-            <div key={row.label} className="flex h-[36px] items-center justify-between gap-3 px-4">
-              <div className="text-[11px] uppercase tracking-[0.06em] text-[#9ca3af]">{row.label}</div>
-              <span className="inline-flex min-h-[22px] items-center rounded-full bg-[#dcfce7] px-[8px] py-[2px] text-[11px] font-normal uppercase text-[#16a34a]">
-                MATCH
-              </span>
-            </div>
-          ))}
-        </div>
-      </section> */}
     </div>
   );
 };

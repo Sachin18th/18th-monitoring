@@ -52,6 +52,10 @@ model CanonicalOrder {
   deliveredAt         DateTime? @map("delivered_at")
   mappingVersion      String    @map("mapping_version") @db.VarChar(20)
   ingestionEventId    String?   @map("ingestion_event_id") @db.VarChar(36)
+  // Resolved golden-record owner of this order (IdentityResolver). Nullable: guest
+  // checkouts and unmatched offline rows legitimately have none. No FK — profiles
+  // are deleted on merge, and orders must survive that.
+  customerProfileId   String?   @map("customer_profile_id") @db.VarChar(36)
   metadata            Json      @default("{}")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @default(now()) @map("updated_at")
@@ -64,6 +68,7 @@ model CanonicalOrder {
   @@index([orderId], map: "idx_order_source_id")
   @@index([lifecycleState], map: "idx_order_lifecycle")
   @@index([placedAt], map: "idx_order_placed_ts")
+  @@index([connectorInstanceId, customerProfileId], map: "idx_order_customer_profile")
   @@map("canonical_orders")
 }
 
@@ -197,12 +202,23 @@ model CustomerProfile {
   totalLtv            Decimal? @map("total_ltv")
   metadata            Json     @default("{}")
 
-  sessions CustomerSession[]
-  events   CustomerEvent[]
+  sessions          CustomerSession[]
+  events            CustomerEvent[]
+  identityLinks     IdentityLink[]
+  metrics           CustomerMetrics[]
+  behaviorSnapshots CustomerBehaviorSnapshot[]
+  campaignMessages  CampaignMessage[]
 
+  // Identity uniqueness for the CDP golden record: within a connector an email
+  // hash resolves to exactly ONE profile. emailHash is nullable and Postgres
+  // treats NULLs as distinct, so guest profiles (no email yet) never collide.
+  @@unique([connectorInstanceId, emailHash], map: "uq_cust_profile_connector_email")
   @@index([siteId], map: "idx_cust_profile_site")
   @@index([connectorInstanceId], map: "idx_cust_profile_connector")
   @@index([emailHash], map: "idx_cust_profile_email")
+  // Phone is the primary join key for offline/POS orders (identifier_type
+  // 'phone_hash'), so the golden-record fallback lookup needs its own index.
+  @@index([connectorInstanceId, phoneHash], map: "idx_cust_profile_phone")
   @@map("customer_profiles")
 }
 
@@ -286,7 +302,13 @@ model StorefrontSession {
   lastPageTitle       String? @map("last_page_title")
   platform            String? @db.VarChar(50)
 
+  // CDP bridge: resolved golden-record id. Nullable — a session starts anonymous
+  // and is stitched (and prior sessions back-filled) once identity is known.
+  // Soft reference (no FK), consistent with this table's connector-keyed design.
+  customerProfileId   String? @map("customer_profile_id") @db.VarChar(36)
+
   @@unique([connectorInstanceId, sessionId], map: "uq_storefront_session_connector_session")
+  @@index([connectorInstanceId, customerProfileId], map: "idx_storefront_session_customer")
   @@index([connectorInstanceId], map: "idx_storefront_session_connector")
   @@index([connectorInstanceId, visitorId], map: "idx_storefront_session_visitor")
   @@index([connectorInstanceId, lastActiveAt], map: "idx_storefront_session_last_active")
@@ -311,7 +333,11 @@ model StorefrontEvent {
   receivedAt          DateTime @default(now()) @map("received_at") @db.Timestamptz()
   properties          Json     @default("{}")
 
+  // CDP bridge: resolved golden-record id (nullable; back-filled on stitch).
+  customerProfileId   String?  @map("customer_profile_id") @db.VarChar(36)
+
   @@index([connectorInstanceId], map: "idx_storefront_event_connector")
+  @@index([connectorInstanceId, customerProfileId], map: "idx_storefront_event_customer")
   @@index([connectorInstanceId, occurredAt], map: "idx_storefront_event_connector_occurred")
   @@index([connectorInstanceId, sessionId], map: "idx_storefront_event_session")
   @@index([connectorInstanceId, eventType, occurredAt], map: "idx_storefront_event_type_occurred")
@@ -463,4 +489,224 @@ model AlertRule {
   @@index([siteId], map: "idx_alert_rule_site")
   @@index([connectorInstanceId], map: "idx_alert_rule_connector")
   @@map("alert_rules")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CDP IDENTITY RESOLUTION (Phase 1 — see docs/CDP-IMPLEMENTATION-PLAN.md §4)
+//
+// identity_links is the identity graph: an append-updated edge log mapping every
+// observed identifier (visitor_id, session_id, email_hash, external_id) to the
+// single CustomerProfile (golden record) it belongs to. The unique constraint on
+// (connector_instance_id, identifier_type, identifier_value) is the core CDP
+// invariant: one identifier maps to exactly one profile at a time — this is what
+// prevents duplicate golden records under concurrent ingest.
+// ─────────────────────────────────────────────────────────────────────────────
+model IdentityLink {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  customerProfileId   String   @map("customer_profile_id") @db.VarChar(36)
+  // visitor_id | session_id | email_hash | external_id
+  identifierType      String   @map("identifier_type") @db.VarChar(20)
+  identifierValue     String   @map("identifier_value") @db.VarChar(255)
+  // 1.0 = deterministic (email/external id); <1.0 = probabilistic (visitor stitch).
+  confidence          Decimal  @default(1.0) @db.Decimal(4, 3)
+  firstSeenAt         DateTime @default(now()) @map("first_seen_at") @db.Timestamptz()
+  lastSeenAt          DateTime @default(now()) @map("last_seen_at") @db.Timestamptz()
+
+  customer CustomerProfile @relation(fields: [customerProfileId], references: [id])
+
+  @@unique([connectorInstanceId, identifierType, identifierValue], map: "uq_identity_link_identifier")
+  @@index([customerProfileId], map: "idx_identity_link_customer")
+  @@map("identity_links")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CDP CUSTOMER ANALYTICS (Phase 2 — see docs/CDP-IMPLEMENTATION-PLAN.md §5.1)
+//
+// One current row per customer profile holding the computed transactional
+// intelligence (RFM / CLTV / churn / segment) derived from canonical_orders by
+// CustomerAnalyticsService. This is the "history" half of the golden record that
+// the CDP fuses with live behavior. Recompute upserts on the unique key.
+// ─────────────────────────────────────────────────────────────────────────────
+model CustomerMetrics {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  customerProfileId   String   @map("customer_profile_id") @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+
+  orderCount       Int       @default(0) @map("order_count")
+  totalRevenue     Decimal   @default(0) @map("total_revenue")
+  avgOrderValue    Decimal   @default(0) @map("avg_order_value")
+  firstOrderAt     DateTime? @map("first_order_at") @db.Timestamptz()
+  lastOrderAt      DateTime? @map("last_order_at") @db.Timestamptz()
+  recencyDays      Int?      @map("recency_days")
+  frequencyMonthly Decimal?  @map("frequency_monthly")
+
+  // RFM (1-5 scores from population quantiles) + combined.
+  rfmRecency  Int? @map("rfm_recency")
+  rfmFreq     Int? @map("rfm_frequency")
+  rfmMonetary Int? @map("rfm_monetary")
+  rfmScore    Int? @map("rfm_score")
+
+  cltv     Decimal? // projected lifetime value
+  cltvTier String?  @map("cltv_tier") @db.VarChar(20)
+
+  churnRisk  Decimal? @map("churn_risk") @db.Decimal(4, 3) // 0-1
+  churnLevel String?  @map("churn_level") @db.VarChar(20)  // low|medium|high|critical
+
+  segment String? @db.VarChar(30) // VIP|HIGH_VALUE|AT_RISK|LOST|REGULAR
+
+  computedAt DateTime @default(now()) @map("computed_at") @db.Timestamptz()
+
+  customer CustomerProfile @relation(fields: [customerProfileId], references: [id])
+
+  @@unique([connectorInstanceId, customerProfileId], map: "uq_customer_metrics_profile")
+  @@index([connectorInstanceId, segment], map: "idx_customer_metrics_segment")
+  @@index([connectorInstanceId, churnLevel], map: "idx_customer_metrics_churn")
+  @@map("customer_metrics")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CDP BEHAVIORAL FUSION (Phase 3 — see docs/CDP-IMPLEMENTATION-PLAN.md §5.2/§6.1)
+//
+// One current row per profile holding LIVE behavioral signals (from storefront
+// sessions/events) fused with historical metrics into "fused segments" that need
+// both — e.g. HIGH_VALUE_ABANDONER (VIP + live cart abandon). Refreshed by
+// BehavioralFusionService. fusedSegments is a JSON string[] (queried with
+// array_contains) so the customer list + Phase 4 triggers can target it.
+// ─────────────────────────────────────────────────────────────────────────────
+model CustomerBehaviorSnapshot {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  customerProfileId   String   @map("customer_profile_id") @db.VarChar(36)
+  siteId              String   @map("site_id") @db.VarChar(255)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+
+  lastSessionAt    DateTime? @map("last_session_at") @db.Timestamptz()
+  sessionsLast30d  Int       @default(0) @map("sessions_last_30d")
+  liveFurthestStage String?  @map("live_furthest_stage") @db.VarChar(50)
+  cartAbandonedAt  DateTime? @map("cart_abandoned_at") @db.Timestamptz()
+
+  recentCategories Json @default("[]") @map("recent_categories")
+  fusedSegments    Json @default("[]") @map("fused_segments")
+  signals          Json @default("{}")
+
+  computedAt DateTime @default(now()) @map("computed_at") @db.Timestamptz()
+
+  customer CustomerProfile @relation(fields: [customerProfileId], references: [id])
+
+  @@unique([connectorInstanceId, customerProfileId], map: "uq_behavior_snapshot_profile")
+  @@index([connectorInstanceId], map: "idx_behavior_snapshot_connector")
+  @@map("customer_behavior_snapshots")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CDP TRIGGERED CAMPAIGNS (Phase 4 — see docs/CDP-IMPLEMENTATION-PLAN.md §6.2)
+//
+// A personalized message generated for a customer because a fused segment (Phase 3)
+// matched — combining their history + recommendations + live signal. Persisted as a
+// draft (status GENERATED) for approval, then SENT via EmailService. The
+// (connector, customer, trigger) recency acts as the cooldown key.
+// ─────────────────────────────────────────────────────────────────────────────
+model CampaignMessage {
+  id                  String @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  customerProfileId   String @map("customer_profile_id") @db.VarChar(36)
+  siteId              String @map("site_id") @db.VarChar(255)
+  connectorInstanceId String @map("connector_instance_id") @db.VarChar(36)
+
+  trigger  String  @db.VarChar(80)  // fused segment name, or "group:<uuid>" for group campaigns
+  goal     String  @db.VarChar(40)  // cart_recovery | win_back | welcome_offer | vip_appreciation
+  channel  String  @default("email") @db.VarChar(20)
+  subject  String  @db.Text
+  body     String  @db.Text
+  recommendedProducts Json @default("[]") @map("recommended_products")
+  generator String @db.VarChar(20)  // claude | template
+
+  status  String  @default("GENERATED") @db.VarChar(20) // GENERATED | SENT | FAILED | SKIPPED
+  reason  String? @db.Text
+  sentAt  DateTime? @map("sent_at") @db.Timestamptz()
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  customer CustomerProfile @relation(fields: [customerProfileId], references: [id])
+
+  @@index([connectorInstanceId, customerProfileId], map: "idx_campaign_msg_customer")
+  @@index([connectorInstanceId, status], map: "idx_campaign_msg_status")
+  @@index([connectorInstanceId, customerProfileId, trigger], map: "idx_campaign_msg_cooldown")
+  @@map("campaign_messages")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CDP CUSTOMER GROUPS (Phase 5 — user-defined dynamic segments)
+//
+// A user-created, RULE-BASED customer group ("Big Spenders", "Win-back targets").
+// `rules` holds a match mode + condition list evaluated by CustomerGroupService
+// over customer_metrics + behavior snapshots; membership is DYNAMIC (recomputed on
+// read), so there is no membership table. Groups are campaign-targetable.
+// ─────────────────────────────────────────────────────────────────────────────
+model CustomerGroup {
+  id                  String @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  connectorInstanceId String @map("connector_instance_id") @db.VarChar(36)
+  siteId              String @map("site_id") @db.VarChar(255)
+
+  name        String  @db.VarChar(120)
+  description String? @db.Text
+  color       String? @db.VarChar(20)
+  // { match: 'all' | 'any', conditions: [{ field, op, value }] } — see CustomerGroupService.
+  rules       Json    @default("{}")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+
+  @@unique([connectorInstanceId, name], map: "uq_customer_group_name")
+  @@index([connectorInstanceId], map: "idx_customer_group_connector")
+  @@map("customer_groups")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CDP CAMPAIGN RUN JOBS (Phase 5 — async group campaign generation)
+//
+// Tracks a background run that generates drafts for a set of customers (e.g. all
+// members of a group). The API returns a job id immediately and generates in the
+// background, updating progress here; the UI polls this row until COMPLETED.
+// ─────────────────────────────────────────────────────────────────────────────
+model CampaignRunJob {
+  id                  String @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  connectorInstanceId String @map("connector_instance_id") @db.VarChar(36)
+  siteId              String @map("site_id") @db.VarChar(255)
+
+  kind    String  @db.VarChar(20) // 'group'
+  groupId String? @map("group_id") @db.VarChar(36)
+  goal    String  @db.VarChar(40)
+  label   String? @db.VarChar(160) // display label (e.g. group name)
+
+  status    String  @default("RUNNING") @db.VarChar(20) // RUNNING | COMPLETED | FAILED
+  total     Int     @default(0)
+  processed Int     @default(0)
+  generated Int     @default(0)
+  skipped   Int     @default(0)
+  error     String? @db.Text
+
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz()
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz()
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz()
+
+  @@index([connectorInstanceId, status], map: "idx_campaign_job_status")
+  @@index([connectorInstanceId, groupId], map: "idx_campaign_job_group")
+  @@map("campaign_run_jobs")
+}
+
+// Audit + reversibility for profile merges (when two profiles are found to be the
+// same person). Keeps the pre-merge snapshot so a mistaken merge can be undone.
+model ProfileMerge {
+  id                  String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  connectorInstanceId String   @map("connector_instance_id") @db.VarChar(36)
+  fromProfileId       String   @map("from_profile_id") @db.VarChar(36)
+  intoProfileId       String   @map("into_profile_id") @db.VarChar(36)
+  reason              String?  @db.VarChar(255)
+  payload             Json     @default("{}")
+  mergedAt            DateTime @default(now()) @map("merged_at") @db.Timestamptz()
+
+  @@index([intoProfileId], map: "idx_profile_merge_into")
+  @@index([fromProfileId], map: "idx_profile_merge_from")
+  @@map("profile_merges")
 }

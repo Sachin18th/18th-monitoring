@@ -106,6 +106,20 @@ export const connectorsConfig: ConnectorsConfig = {
         info: 'Create a custom app in Shopify Admin and generate an Admin API access token.'
       },
       {
+        id: 'clientId',
+        label: 'API Key / Client ID (optional)',
+        type: 'password',
+        icon: KeyRound,
+        info: "The custom app's API key (Client ID). Required only if your token expires (~24h) — lets us auto-refresh it."
+      },
+      {
+        id: 'clientSecret',
+        label: 'API Secret Key / Client Secret (optional)',
+        type: 'password',
+        icon: KeyRound,
+        info: "The custom app's API secret key (Client Secret). Stored encrypted; used with the API key to auto-refresh the token."
+      },
+      {
         id: 'apiVersion',
         label: 'API Version (optional)',
         type: 'text',

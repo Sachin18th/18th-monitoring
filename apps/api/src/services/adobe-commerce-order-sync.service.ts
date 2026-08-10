@@ -1,8 +1,9 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma, decryptSecret } from '@kpi-platform/db';
+import { prisma, decryptSecret, hashEmail, encryptEmail, scrubEmails } from '@kpi-platform/db';
 import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { orderNormalizationService } from './order-normalization.service';
+import { linkOrderToCustomer } from './order-customer-link.service';
 import { interpretAdobeApiError } from './adobe-commerce-error.util';
 import {
   getSinceCursor,
@@ -109,6 +110,23 @@ export class AdobeCommerceOrderSyncService {
         try {
           const canonical = await orderNormalizationService.normalize('adobe_commerce', raw, instance.siteId, instance.tenantId);
           const customerEmail = this.extractCustomerEmail(raw);
+          // PII: never persist the plaintext email — keep the hash + encrypted copy.
+          const customerEmailHash = hashEmail(customerEmail);
+          const customerEmailEncrypted = encryptEmail(customerEmail);
+
+          // Attach the order to the golden record so online history sits alongside
+          // any in-store/offline orders imported for the same shopper.
+          const customerProfileId = await linkOrderToCustomer(
+            db,
+            { siteId: instance.siteId, connectorInstanceId: instance.id },
+            {
+              email: customerEmail,
+              phone: raw?.billing_address?.telephone || raw?.customer_telephone || null,
+              externalId: raw?.customer_id ?? null,
+              platform: 'adobe_commerce',
+              source: 'adobe-commerce-order-sync',
+            },
+          );
 
           // Upsert similar to Shopify but mark sourceSystem = 'adobe_commerce'
           const existing = await db.canonicalOrder.findFirst({
@@ -143,7 +161,8 @@ export class AdobeCommerceOrderSyncService {
             shippedAt: (canonical as any).shippedAt ? new Date((canonical as any).shippedAt) : null,
             deliveredAt: null,
             mappingVersion: 'adobe_commerce/v1',
-            metadata: {
+            customerProfileId,
+            metadata: scrubEmails({
               ...(canonical.metadata || {}),
               connectorInstanceId: instance.id,
               connectorLabel: instance.label,
@@ -155,9 +174,10 @@ export class AdobeCommerceOrderSyncService {
                 const baseUrl = String(config.baseUrl || '').trim();
                 return baseUrl || null;
               })(),
-              customerEmail,
+              customerEmailHash,
+              customerEmailEncrypted,
               adobeOrder: raw
-            } as Prisma.InputJsonValue,
+            }) as Prisma.InputJsonValue,
             updatedAt: new Date()
           };
 

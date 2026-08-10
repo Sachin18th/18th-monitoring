@@ -1,8 +1,9 @@
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
-import { prisma, decryptSecret } from '@kpi-platform/db';
+import { prisma, decryptSecret, hashEmail, encryptEmail, scrubEmails } from '@kpi-platform/db';
 import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { orderNormalizationService } from './order-normalization.service';
+import { linkOrderToCustomer } from './order-customer-link.service';
 import {
   getSinceCursor,
   computeMaxCheckpoint,
@@ -276,6 +277,25 @@ export class BigCommerceOrderSyncService {
       select: { id: true }
     });
 
+    // PII: never persist the plaintext email — keep the hash + encrypted copy.
+    const customerEmail = rawOrder?.billing_address?.email || rawOrder?.email || null;
+    const customerEmailHash = hashEmail(customerEmail);
+    const customerEmailEncrypted = encryptEmail(customerEmail);
+
+    // Attach the order to the golden record so online history sits alongside any
+    // in-store/offline orders imported for the same shopper.
+    const customerProfileId = await linkOrderToCustomer(
+      db,
+      { siteId: instance.siteId, connectorInstanceId: instance.id },
+      {
+        email: customerEmail,
+        phone: rawOrder?.billing_address?.phone || rawOrder?.phone || null,
+        externalId: rawOrder?.customer_id ?? null,
+        platform: 'bigcommerce',
+        source: 'bigcommerce-order-sync',
+      },
+    );
+
     const data = {
       siteId: instance.siteId,
       connectorInstanceId: instance.id,
@@ -296,7 +316,8 @@ export class BigCommerceOrderSyncService {
       shippedAt: rawOrder?.date_shipped ? new Date(rawOrder.date_shipped) : null,
       deliveredAt: null,
       mappingVersion: 'bigcommerce/v1',
-      metadata: {
+      customerProfileId,
+      metadata: scrubEmails({
         ...(canonical.metadata || {}),
         connectorInstanceId: instance.id,
         connectorLabel: instance.label,
@@ -308,8 +329,10 @@ export class BigCommerceOrderSyncService {
           const storeHash = String(config.storeHash || config.store_hash || '').trim();
           return storeHash ? `https://store-${storeHash}.mybigcommerce.com` : null;
         })(),
+        customerEmailHash,
+        customerEmailEncrypted,
         bigcommerceOrder: rawOrder
-      } as Prisma.InputJsonValue,
+      }) as Prisma.InputJsonValue,
       updatedAt: new Date()
     };
 

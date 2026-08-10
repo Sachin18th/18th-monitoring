@@ -5,6 +5,7 @@ import { useAuth } from "../../../../context/AuthContext";
 import { PageRestricted } from "../../../../components/PageRestricted";
 import { PageHero } from "../../../../components/PageHero";
 import { useConnectorFilter } from "../../../../hooks/useConnectorFilter";
+import { useConnectorPlatform } from "../../../../context/ConnectorPlatformContext";
 import { useParams } from "next/navigation";
 import { DiagnosticDrawer } from "@kpi-platform/ui";
 import { canAccessRoute, normalizeRole } from "@kpi-platform/shared-types";
@@ -24,6 +25,7 @@ import {
   Truck,
   PieChart as PieChartIcon,
   BarChart3,
+  FileSpreadsheet,
 } from "lucide-react";
 import {
   ComposedChart,
@@ -43,6 +45,7 @@ import {
 
 import { OrderDetailDrawerContent } from "../../../../components/orders/OrderDetailDrawerContent";
 import { RevenueStrip, computeWindowRange, type TimeWindow } from "../../../../components/orders/RevenueStrip";
+import { CheckoutFunnel } from "../../../../components/orders/CheckoutFunnel";
 
 // Accent palette — mid-tone, saturated hues legible on BOTH light and dark themes.
 const ACCENT = {
@@ -310,6 +313,8 @@ export default function OrdersPage() {
   const projectId = params.projectId as string;
   const { token, apiFetch, user } = useAuth();
   const { connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
+  const { openCsvUpload, isCsvUploadOpen } = useConnectorPlatform();
+  const wasCsvUploadOpenRef = useRef(false);
   const tenantId = user?.tenantId;
   const normalizedRole = normalizeRole(user?.role);
   const canAccessOrders = canAccessRoute(normalizedRole, 'orders');
@@ -405,6 +410,16 @@ export default function OrdersPage() {
   useEffect(() => {
     setCurrentPage(1);
   }, [projectId]);
+
+  // The CSV/Excel import modal is mounted globally (ClientProviders), so there is
+  // no completion callback to hook. Watch it close and refetch instead, so freshly
+  // imported offline orders appear without a manual page reload.
+  useEffect(() => {
+    if (wasCsvUploadOpenRef.current && !isCsvUploadOpen) {
+      fetchData(true);
+    }
+    wasCsvUploadOpenRef.current = isCsvUploadOpen;
+  }, [isCsvUploadOpen, fetchData]);
 
   const handleInspect = (order: any) => {
     setSelectedOrder(normalizeOrderRecord(order));
@@ -718,6 +733,29 @@ export default function OrdersPage() {
             title="Order Operations Console"
             subtitle="Real-time oversight and intelligence for high-volume order flows."
             live
+            right={
+              <button
+                onClick={openCsvUpload}
+                title="Import offline / POS orders from a CSV or Excel file"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--border-input)",
+                  background: "var(--bg-input)",
+                  padding: "8px 16px",
+                  fontSize: "14px",
+                  fontWeight: 500,
+                  color: "var(--text-primary)",
+                  flexShrink: 0,
+                  cursor: "pointer",
+                }}
+              >
+                <FileSpreadsheet style={{ width: "16px", height: "16px", flexShrink: 0 }} />
+                Import Orders (CSV)
+              </button>
+            }
           />
 
           <div
@@ -980,6 +1018,13 @@ export default function OrdersPage() {
           onCustomFrom={setCustomFrom}
           onCustomTo={setCustomTo}
           lastUpdated={lastUpdated}
+        />
+
+        <CheckoutFunnel
+          projectId={String(projectId)}
+          connectorInstanceId={connectorInstanceId}
+          apiFetch={apiFetch}
+          connectorSelectionTick={connectorSelectionTick}
         />
 
         {/* Order Volume & Revenue trend — bars = order count, line = revenue. */}

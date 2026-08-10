@@ -6,6 +6,11 @@ export type ProjectPageKey =
   | 'rum'
   | 'observability/backend'
   | 'observability/journeys'
+  | 'observability/customer-360'
+  | 'observability/campaigns'
+  | 'observability/customer-groups'
+  | 'observability/revenue'
+  | 'observability/product-analytics'
   | 'observability/synthetic'
   | 'customers'
   | 'orders'
@@ -42,6 +47,11 @@ export const PROJECT_PAGE_ACCESS_OPTIONS: ProjectPageAccessOption[] = [
   { key: 'rum', label: 'Frontend RUM', group: 'Operational Surface', path: '/rum' },
   { key: 'observability/backend', label: 'Backend API', group: 'Operational Surface', path: '/observability/backend' },
   { key: 'observability/journeys', label: 'Journey Intel', group: 'Operational Surface', path: '/observability/journeys' },
+  { key: 'observability/customer-360', label: 'Customer 360', group: 'Operational Surface', path: '/observability/customer-360' },
+  { key: 'observability/campaigns', label: 'Campaigns', group: 'Operational Surface', path: '/observability/campaigns' },
+  { key: 'observability/customer-groups', label: 'Customer Groups', group: 'Operational Surface', path: '/observability/customer-groups' },
+  { key: 'observability/revenue', label: 'Revenue', group: 'Operational Surface', path: '/observability/revenue' },
+  { key: 'observability/product-analytics', label: 'Product Analytics', group: 'Operational Surface', path: '/observability/product-analytics' },
   { key: 'observability/synthetic', label: 'Synthetic', group: 'Operational Surface', path: '/observability/synthetic' },
   { key: 'customers', label: 'Customers', group: 'Operational Surface', path: '/customers' },
   { key: 'orders', label: 'Orders', group: 'Operational Surface', path: '/orders' },

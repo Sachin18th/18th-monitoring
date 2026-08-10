@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma, hashEmail, encryptEmail, decryptSecret } from '@kpi-platform/db';
 import { getDataPlaneClient } from '../lib/tenant-prisma';
+import { IdentityResolver } from './identity-resolver.service';
 
 type ConnectorRecord = {
     id: string;
@@ -384,53 +385,23 @@ export class ShopifyJourneySyncService {
         const email = String(order.customer?.email || '').trim().toLowerCase();
         const emailHash = hashEmail(email);
 
-        if (shopifyCustomerId) {
-            const byExternalId = await db.customerProfile.findFirst({
-                where: {
-                    siteId: instance.siteId,
-                    externalIds: { path: ['shopify'], equals: shopifyCustomerId }
-                },
-                select: { id: true }
-            });
-            if (byExternalId) return byExternalId.id;
-        }
-
-        if (emailHash) {
-            const byEmail = await db.customerProfile.findFirst({
-                where: { siteId: instance.siteId, emailHash },
-                select: { id: true }
-            });
-            if (byEmail) return byEmail.id;
-        }
-
-        // No synced profile — create a deterministic minimal one so the FK resolves
-        // and re-syncs reuse the same profile.
-        const seed = shopifyCustomerId
-            ? `cust:${instance.siteId}:${shopifyCustomerId}`
-            : `guest:${instance.siteId}:${order.id}`;
-        const profileId = stableUuid(seed);
-
-        await db.customerProfile.upsert({
-            where: { id: profileId },
-            create: {
-                id: profileId,
-                siteId: instance.siteId,
-                connectorInstanceId: instance.id,
-                externalIds: (shopifyCustomerId ? { shopify: shopifyCustomerId } : {}) as Prisma.InputJsonValue,
-                emailHash: emailHash || undefined,
-                // Reversible, encrypted-at-rest copy for dashboard display.
-                emailEncrypted: encryptEmail(email) || undefined,
-                lifecycleState: shopifyCustomerId ? 'RETURNING' : 'NEW_GUEST',
-                metadata: {
-                    source: 'shopify-journey-sync',
-                    shopifyCustomerId: shopifyCustomerId || null,
-                    connectorInstanceId: instance.id
-                } as Prisma.InputJsonValue
+        // Route through the shared IdentityResolver so the batch path populates the
+        // same identity graph (identity_links) and reuses/merges profiles exactly as
+        // the live path does. Deterministic signals only — no visitor/session id here.
+        const result = await IdentityResolver.resolve(
+            db,
+            { siteId: instance.siteId, connectorInstanceId: instance.id },
+            {
+                emailHash,
+                emailEncrypted: email ? encryptEmail(email) : null,
+                externalId: shopifyCustomerId || null,
+                platform: 'shopify',
+                lifecycleHint: shopifyCustomerId ? 'RETURNING' : 'NEW_GUEST',
+                source: 'shopify-journey-sync',
             },
-            update: {}
-        });
+        );
 
-        return profileId;
+        return result.profileId;
     }
 
     private static normalizeShopDomain(value: unknown): string {

@@ -1,5 +1,6 @@
 import { prisma, encryptEmail, hashEmail, scrubEmails } from '@kpi-platform/db';
 import { getDataPlaneClient } from '../lib/tenant-prisma';
+import { IdentityResolver } from './identity-resolver.service';
 import { reserveTrackingBudget } from '../utils/track-rate-limit';
 import {
   classifyEvent,
@@ -334,8 +335,8 @@ export class StorefrontTrackingService {
 
     try {
       // 1) Validate connector by lookup; derive tenant_id (scoping) + platform.
-      const found = await prisma.$queryRaw<Array<{ id: string; tenant_id: string; provider_id: string | null }>>`
-        SELECT id, tenant_id, provider_id FROM connector_instances WHERE id = ${String(input.connectorInstanceId)} LIMIT 1
+      const found = await prisma.$queryRaw<Array<{ id: string; tenant_id: string; site_id: string; provider_id: string | null }>>`
+        SELECT id, tenant_id, site_id, provider_id FROM connector_instances WHERE id = ${String(input.connectorInstanceId)} LIMIT 1
       `;
       const connector = found[0];
       if (!connector) {
@@ -349,6 +350,7 @@ export class StorefrontTrackingService {
       }
 
       const connectorInstanceId = connector.id;
+      const siteId = connector.site_id;
       // Platform comes from connector_instances.provider_id (trusted). If it can't
       // be resolved, fall back to the tracker's properties.platform hint.
       let platform: Platform = platformFromProviderId(connector.provider_id);
@@ -483,6 +485,29 @@ export class StorefrontTrackingService {
       const insertable = normalized.filter((ev) => ev.shouldInsert);
       if (insertable.length > 0) {
         await this.insertEvents(db, connectorInstanceId, insertable);
+      }
+
+      // 7) CDP identity resolution: for each visitor identified this batch, resolve
+      //    to the golden-record CustomerProfile and stamp customer_profile_id onto
+      //    this visitor's sessions AND events (now that events are inserted). This
+      //    is the live→identity bridge. Best-effort — must never fail ingest.
+      for (const [visitorId, ident] of identityByVisitor) {
+        try {
+          await IdentityResolver.resolve(
+            db,
+            { siteId, connectorInstanceId },
+            {
+              emailHash: ident.emailHash,
+              emailEncrypted: ident.emailEncrypted,
+              externalId: ident.customerId,
+              platform: platform === 'unknown' ? null : platform,
+              visitorId,
+              source: 'storefront-tracking',
+            },
+          );
+        } catch (err) {
+          console.error('[TRACK] identity resolution failed', { visitorId }, err);
+        }
       }
 
       // `accepted` counts every admitted event (sessions are always updated);

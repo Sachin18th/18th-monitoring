@@ -1,0 +1,16 @@
+Order No,Date,Customer Name,Email,Mobile,Member ID,Branch,Item SKU,Qty,Rate,Amount,Order Status,Delivery Address
+POS-1001,2026-07-01,Riya Gusain,riyagusain@18thdigitech.net,,,Mumbai - Andheri,DRESS-BOXIE-M,1,4200.00,4200.00,Completed,"Shop 14, Infiniti Mall, Andheri West, Mumbai"
+POS-1002,2026-07-02,Surbhi Pandey,surbhipandey@18thdigitech.net,9876543210,,Mumbai - Andheri,TOP-ALOUISA-S,2,1650.00,3300.00,Completed,"Shop 14, Infiniti Mall, Andheri West, Mumbai"
+POS-1003,2026-07-03,Loyalty Walk-in,,,LOY-88231,Delhi - Saket,SKIRT-BEACHLINE-L,1,2450.00,2450.00,Completed,"Select Citywalk, Saket, New Delhi"
+POS-1004,2026-07-04,Dhruv Singh,dhruvsingh@18thdigitech.net,8700719625,LOY-10044,Delhi - Saket,SHIRT-LINEN-M,1,2900.00,2900.00,Paid,"Select Citywalk, Saket, New Delhi"
+POS-1005,2026-07-05,Neha Kulkarni,neha.kulkarni@example.com,9900112233,,Pune - Koregaon,DRESS-MAXI-S,1,5100.00,5100.00,Completed,"Phoenix Marketcity, Viman Nagar, Pune"
+POS-1006,2026-07-09,Neha Kulkarni,,9900112233,,Pune - Koregaon,SCARF-SILK-OS,1,890.00,890.00,Completed,"Phoenix Marketcity, Viman Nagar, Pune"
+POS-1007,2026-07-06,Cash Customer,,,,Pune - Koregaon,TEE-BASIC-M,3,650.00,1950.00,Completed,
+POS-1008,2026-07-07,Aarav Singh,aarav.singh@example.com,8700719625,,Delhi - Saket,JEANS-SLIM-32,1,3400.00,3400.00,Completed,"Select Citywalk, Saket, New Delhi"
+POS-1009,08/07/2026,Riya Gusain,riyagusain@18thdigitech.net,,,Mumbai - Andheri,DRESS-BOXIE-M,1,4200.00,4200.00,Returned,"Shop 14, Infiniti Mall, Andheri West, Mumbai"
+POS-1010,09/07/2026,Ishaan Verma,ishaan.verma@example.com,+919812009900,,Bengaluru - Indiranagar,KURTA-COTTON-L,1,1899.00,1899.00,Completed,"100 Feet Road, Indiranagar, Bengaluru"
+POS-1011,2026-07-10,Meera Nair,meera.nair@example.com,9845001122,LOY-77120,Bengaluru - Indiranagar,SAREE-CHIFFON-OS,1,"₹7,250.00","₹7,250.00",Paid,"100 Feet Road, Indiranagar, Bengaluru"
+POS-1012,2026-07-11,Rohit Sharma,rohit.sharma@example.com,9822334455,,Mumbai - Andheri,BLAZER-WOOL-40,1,8900.00,8900.00,Cancelled,"Shop 14, Infiniti Mall, Andheri West, Mumbai"
+POS-1013,2026-07-12,Surbhi Pandey,,9876543210,,Delhi - Saket,BAG-TOTE-OS,1,2100.00,2100.00,Completed,"Select Citywalk, Saket, New Delhi"
+POS-1014,2026-07-13,Dhruv Singh,,8700719625,,Pune - Koregaon,SHOES-LOAFER-9,1,4750.00,4750.00,Shipped,"Phoenix Marketcity, Viman Nagar, Pune"
+POS-1015,2026-07-14,Ananya Rao,ananya.rao@example.com,9700887766,LOY-55901,Bengaluru - Indiranagar,DRESS-WRAP-M,2,3600.00,7200.00,Completed,"100 Feet Road, Indiranagar, Bengaluru"
