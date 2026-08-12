@@ -61,8 +61,14 @@ export const GlobalMemoryStore = {
     }
 };
 
-// Periodic pruning every 5 minutes
-setInterval(() => GlobalMemoryStore.pruneSessions(), 5 * 60 * 1000);
+// Periodic pruning every 5 minutes.
+//
+// unref'd so this timer alone never holds the process open. The API server is
+// kept alive by its listening socket, so pruning still runs exactly as before;
+// but a one-shot script that imports @kpi-platform/db (every script under
+// apps/api/src/scripts does) would otherwise finish its work and then hang
+// forever waiting on this interval.
+setInterval(() => GlobalMemoryStore.pruneSessions(), 5 * 60 * 1000).unref();
 
 // Initial seed
 GlobalMemoryStore.seed();
