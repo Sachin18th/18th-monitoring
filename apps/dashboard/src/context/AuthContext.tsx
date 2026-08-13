@@ -410,26 +410,14 @@ const isLongRunningMutationRequest = (url: string, method?: string) => {
 // they actually complete instead of aborting with "Request timed out…" (which
 // also left LTV / repeat-buyer headline stats showing 0).
 const isLargeDashboardListRequest = (url: string) =>
-    /\/dashboard\/(?:orders|customers)\/list(?:\?|$)/.test(url) ||
-    // Journey Intel's Session Journey Timeline aggregates six per-session event
-    // lookups across a page of sessions, so it scales with a store's event
-    // history rather than with the page size. Same budget as the big list
-    // fetches so it completes instead of aborting.
-    /\/storefront\/session-journeys?(?:-events)?(?:\?|$)/.test(url);
+    /\/dashboard\/(?:orders|customers)\/list(?:\?|$)/.test(url);
 
 // Endpoints whose failures are feature-specific and must NOT flip the whole app into
 // the global "Real-time Feed Interrupted" outage banner. PageSpeed in particular is
 // slow and frequently 502s / times out when Google's API is rate-limited — that is a
 // local PageSpeed problem, not a platform connectivity outage.
 const isOutageExemptRequest = (url: string) => {
-    return (
-        /\/pagespeed(?:\/|\?|$)/.test(url) ||
-        // A slow Session Journey Timeline on one store is a feature-local
-        // problem, not a platform outage — it must not black out the whole app
-        // with the "Real-time Feed Interrupted" banner while every other panel
-        // is loading fine. The timeline surfaces its own error state instead.
-        /\/storefront\/session-journeys?(?:-events)?(?:\?|$)/.test(url)
-    );
+    return /\/pagespeed(?:\/|\?|$)/.test(url);
 };
 
 interface User {

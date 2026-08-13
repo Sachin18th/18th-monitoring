@@ -2,7 +2,6 @@ import { prisma, encryptEmail, hashEmail, scrubEmails } from '@kpi-platform/db';
 import { getDataPlaneClient } from '../lib/tenant-prisma';
 import { IdentityResolver } from './identity-resolver.service';
 import { reserveTrackingBudget } from '../utils/track-rate-limit';
-import { classifyUserAgent } from '../utils/bot-detection';
 import {
   classifyEvent,
   STAGE_RANK,
@@ -656,7 +655,6 @@ export class StorefrontTrackingService {
     // Client identification parsed from the UA header (device already resolved).
     const browser = StorefrontTrackingService.detectBrowser(s.userAgent);
     const os = StorefrontTrackingService.detectOS(s.userAgent);
-    const bot = classifyUserAgent(s.userAgent);
     // First-sight columns (started_at / landing_page / referrer / device_type /
     // platform) are preserved on conflict; last_active_at only ever advances.
     // The funnel aggregate merges across batches:
@@ -673,12 +671,12 @@ export class StorefrontTrackingService {
          metadata, page_view_count, page_urls_visited, funnel_stage, funnel_stages_reached,
           product_viewed, product_ids_viewed, add_to_cart, checkout_started, purchase_completed,
          last_page_url, last_page_title, platform,
-          channel, source, medium, campaign, browser, os, is_bot, bot_name)
+          channel, source, medium, campaign, browser, os)
        VALUES ($1, $2, $3, $4::timestamptz, $5, $6, $7, $8,
             $9::jsonb, $10::int, $11::jsonb, $12, $13::jsonb,
             $14::bool, $15::jsonb, $16::bool, $17::bool, $18::bool,
             $19, $20, $21,
-            $22, $23, $24, $25, $26, $27, $28::bool, $29)
+            $22, $23, $24, $25, $26, $27)
        ON CONFLICT (connector_instance_id, session_id) DO UPDATE SET
          last_active_at = GREATEST(storefront_sessions.last_active_at, EXCLUDED.last_active_at),
          user_agent     = COALESCE(storefront_sessions.user_agent, EXCLUDED.user_agent),
@@ -692,11 +690,6 @@ export class StorefrontTrackingService {
          campaign       = COALESCE(storefront_sessions.campaign, EXCLUDED.campaign),
          browser        = COALESCE(storefront_sessions.browser, EXCLUDED.browser),
          os             = COALESCE(storefront_sessions.os, EXCLUDED.os),
-         -- Sticky: once a session is identified as a bot it stays one. The UA is
-         -- only sent on the first batch, so later batches for the same session
-         -- would otherwise re-classify it as human on a missing header.
-         is_bot         = storefront_sessions.is_bot OR EXCLUDED.is_bot,
-         bot_name       = COALESCE(storefront_sessions.bot_name, EXCLUDED.bot_name),
         metadata       = COALESCE(storefront_sessions.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
          page_view_count = storefront_sessions.page_view_count + EXCLUDED.page_view_count,
          page_urls_visited = COALESCE((
@@ -777,8 +770,6 @@ export class StorefrontTrackingService {
       a.campaign,
       browser,
       os,
-      bot.isBot,
-      bot.botName,
     );
   }
 
@@ -929,16 +920,11 @@ export class StorefrontTrackingService {
 
   static async listSessions(input: {
     connectorInstanceId: string;
-    /** Include bot/crawler sessions in the result. Defaults to false. */
-    includeBots?: boolean | null;
     from?: Date | null;
     to?: Date | null;
     limit?: number | null;
     offset?: number | null;
   }) {
-    // Bot sessions stay in the table; reported metrics exclude them unless the
-    // caller explicitly asks. See apps/api/src/utils/bot-detection.ts.
-    const includeBots = Boolean(input.includeBots);
     const limit = Math.min(Math.max(Number(input.limit) || 50, 1), 200);
     const offset = Math.max(Number(input.offset) || 0, 0);
     const to = input.to ?? new Date();
@@ -949,7 +935,7 @@ export class StorefrontTrackingService {
       SELECT id, session_id, visitor_id, started_at, last_active_at, user_agent,
              referrer, landing_page, device_type, metadata
       FROM storefront_sessions
-      WHERE connector_instance_id = ${input.connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND started_at >= ${from} AND started_at <= ${to}
       ORDER BY last_active_at DESC
       LIMIT ${limit} OFFSET ${offset}
@@ -957,7 +943,7 @@ export class StorefrontTrackingService {
     const totalRows = await db.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*)::bigint AS count
       FROM storefront_sessions
-      WHERE connector_instance_id = ${input.connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND started_at >= ${from} AND started_at <= ${to}
     `;
 
@@ -988,13 +974,8 @@ export class StorefrontTrackingService {
    */
   static async liveUsers(input: {
     connectorInstanceId: string;
-    /** Include bot/crawler sessions in the result. Defaults to false. */
-    includeBots?: boolean | null;
     windowMinutes?: number | null;
   }) {
-    // Bot sessions stay in the table; reported metrics exclude them unless the
-    // caller explicitly asks. See apps/api/src/utils/bot-detection.ts.
-    const includeBots = Boolean(input.includeBots);
     const windowMinutes = Math.min(Math.max(Number(input.windowMinutes) || 5, 1), 60);
     const since = new Date(Date.now() - windowMinutes * 60 * 1000);
     const empty = {
@@ -1011,7 +992,7 @@ export class StorefrontTrackingService {
           COUNT(DISTINCT visitor_id)::bigint AS live_visitors,
           COUNT(*)::bigint                   AS live_sessions
         FROM storefront_sessions
-        WHERE connector_instance_id = ${input.connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+        WHERE connector_instance_id = ${input.connectorInstanceId}
           AND last_active_at >= ${since}
       `;
 
@@ -1092,14 +1073,9 @@ export class StorefrontTrackingService {
    */
   static async funnel(input: {
     connectorInstanceId: string;
-    /** Include bot/crawler sessions in the result. Defaults to false. */
-    includeBots?: boolean | null;
     from?: Date | null;
     to?: Date | null;
   }) {
-    // Bot sessions stay in the table; reported metrics exclude them unless the
-    // caller explicitly asks. See apps/api/src/utils/bot-detection.ts.
-    const includeBots = Boolean(input.includeBots);
     const to = input.to ?? new Date();
     const from = input.from ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
     const db = await getDataPlaneClient(input.connectorInstanceId);
@@ -1120,7 +1096,7 @@ export class StorefrontTrackingService {
         COUNT(*) FILTER (WHERE checkout_started OR purchase_completed)::bigint AS checkout_count,
         COUNT(*) FILTER (WHERE purchase_completed)::bigint     AS purchase_count
       FROM storefront_sessions
-      WHERE connector_instance_id = ${input.connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+      WHERE connector_instance_id = ${input.connectorInstanceId}
         AND started_at >= ${from} AND started_at <= ${to}
     `;
 
@@ -1192,14 +1168,9 @@ export class StorefrontTrackingService {
    */
   static async sessionKpis(input: {
     connectorInstanceId: string;
-    /** Include bot/crawler sessions in the result. Defaults to false. */
-    includeBots?: boolean | null;
     from?: Date | null;
     to?: Date | null;
   }) {
-    // Bot sessions stay in the table; reported metrics exclude them unless the
-    // caller explicitly asks. See apps/api/src/utils/bot-detection.ts.
-    const includeBots = Boolean(input.includeBots);
     const to = input.to ?? new Date();
     const from = input.from ?? new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
     const { connectorInstanceId } = input;
@@ -1232,7 +1203,7 @@ export class StorefrontTrackingService {
           COUNT(*) FILTER (WHERE add_to_cart AND NOT purchase_completed)::bigint  AS cart_abandoned,
           COUNT(*) FILTER (WHERE checkout_started AND NOT purchase_completed)::bigint AS checkout_abandoned
         FROM storefront_sessions
-        WHERE connector_instance_id = ${connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+        WHERE connector_instance_id = ${connectorInstanceId}
           AND started_at >= ${from} AND started_at <= ${to}
       `,
       db.$queryRaw<Array<{ repeat_visitors: bigint; visitors: bigint }>>`
@@ -1242,7 +1213,7 @@ export class StorefrontTrackingService {
         FROM (
           SELECT visitor_id, COUNT(*) AS c
           FROM storefront_sessions
-          WHERE connector_instance_id = ${connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+          WHERE connector_instance_id = ${connectorInstanceId}
             AND started_at >= ${from} AND started_at <= ${to}
           GROUP BY visitor_id
         ) v
@@ -1256,12 +1227,12 @@ export class StorefrontTrackingService {
         FROM (
           SELECT NOT EXISTS (
             SELECT 1 FROM storefront_sessions p
-            WHERE p.connector_instance_id = s.connector_instance_id AND (${includeBots} OR p.is_bot = FALSE)
+            WHERE p.connector_instance_id = s.connector_instance_id
               AND p.visitor_id = s.visitor_id
               AND p.started_at < s.started_at
           ) AS is_first
           FROM storefront_sessions s
-          WHERE s.connector_instance_id = ${connectorInstanceId} AND (${includeBots} OR s.is_bot = FALSE)
+          WHERE s.connector_instance_id = ${connectorInstanceId}
             AND s.started_at >= ${from} AND s.started_at <= ${to}
         ) t
       `,
@@ -1271,7 +1242,7 @@ export class StorefrontTrackingService {
           COUNT(*)::bigint                                  AS sessions,
           COUNT(*) FILTER (WHERE purchase_completed)::bigint AS purchases
         FROM storefront_sessions
-        WHERE connector_instance_id = ${connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+        WHERE connector_instance_id = ${connectorInstanceId}
           AND started_at >= ${from} AND started_at <= ${to}
         GROUP BY platform
       `,
@@ -1280,7 +1251,7 @@ export class StorefrontTrackingService {
           (page_urls_visited->>0) AS entry_page,
           COUNT(*)::bigint        AS sessions
         FROM storefront_sessions
-        WHERE connector_instance_id = ${connectorInstanceId} AND (${includeBots} OR is_bot = FALSE)
+        WHERE connector_instance_id = ${connectorInstanceId}
           AND started_at >= ${from} AND started_at <= ${to}
           AND jsonb_array_length(page_urls_visited) > 0
         GROUP BY (page_urls_visited->>0)
@@ -1354,14 +1325,9 @@ export class StorefrontTrackingService {
    */
   static async journeyIntel(input: {
     connectorInstanceIds: string[];
-    /** Include bot/crawler sessions in the result. Defaults to false. */
-    includeBots?: boolean | null;
     from?: Date | null;
     to?: Date | null;
   }) {
-    // Bot sessions stay in the table; reported metrics exclude them unless the
-    // caller explicitly asks. See apps/api/src/utils/bot-detection.ts.
-    const botLiteral = input.includeBots ? 'TRUE' : 'FALSE';
     const ids = (input.connectorInstanceIds || []).filter(Boolean);
     const empty = {
       funnel: CANONICAL_FUNNEL_STAGES.map((stage, idx) => ({
@@ -1413,7 +1379,7 @@ export class StorefrontTrackingService {
              COUNT(*) FILTER (WHERE checkout_started OR purchase_completed)::bigint AS checkout_count,
              COUNT(*) FILTER (WHERE purchase_completed)::bigint AS purchase_count
            FROM storefront_sessions
-           WHERE connector_instance_id = ANY($1::text[]) AND (${botLiteral} OR is_bot = FALSE)
+           WHERE connector_instance_id = ANY($1::text[])
              AND started_at >= $2 AND started_at <= $3`,
           groupIds,
           from,
@@ -1431,7 +1397,7 @@ export class StorefrontTrackingService {
              COUNT(*) FILTER (WHERE checkout_started OR purchase_completed)::bigint      AS checkout_reached,
              COUNT(*) FILTER (WHERE checkout_started AND NOT purchase_completed)::bigint AS checkout_abandoned
            FROM storefront_sessions
-           WHERE connector_instance_id = ANY($1::text[]) AND (${botLiteral} OR is_bot = FALSE)
+           WHERE connector_instance_id = ANY($1::text[])
              AND started_at >= $2 AND started_at <= $3`,
           groupIds,
           from,
@@ -1450,7 +1416,7 @@ export class StorefrontTrackingService {
           `WITH per_visitor AS (
              SELECT visitor_id, COUNT(*) AS session_count
              FROM storefront_sessions
-             WHERE connector_instance_id = ANY($1::text[]) AND (${botLiteral} OR is_bot = FALSE)
+             WHERE connector_instance_id = ANY($1::text[])
                AND started_at >= $2 AND started_at <= $3
              GROUP BY visitor_id
            )
@@ -1466,7 +1432,7 @@ export class StorefrontTrackingService {
         db.$queryRawUnsafe(
           `SELECT platform, COUNT(*)::bigint AS sessions
            FROM storefront_sessions
-           WHERE connector_instance_id = ANY($1::text[]) AND (${botLiteral} OR is_bot = FALSE)
+           WHERE connector_instance_id = ANY($1::text[])
              AND started_at >= $2 AND started_at <= $3
            GROUP BY platform
            ORDER BY sessions DESC`,
@@ -1579,14 +1545,9 @@ export class StorefrontTrackingService {
    */
   static async journeyInsights(input: {
     connectorInstanceIds: string[];
-    /** Include bot/crawler sessions in the result. Defaults to false. */
-    includeBots?: boolean | null;
     from?: Date | null;
     to?: Date | null;
   }) {
-    // Bot sessions stay in the table; reported metrics exclude them unless the
-    // caller explicitly asks. See apps/api/src/utils/bot-detection.ts.
-    const botLiteral = input.includeBots ? 'TRUE' : 'FALSE';
     const ids = (input.connectorInstanceIds || []).filter(Boolean);
     const blank = {
       bounce_rate: 0,
@@ -1616,14 +1577,7 @@ export class StorefrontTrackingService {
     const pct = (num: number, den: number) => (den > 0 ? Number(((num / den) * 100).toFixed(2)) : 0);
 
     // Session-scoped filter (reused), and event-scoped filter.
-    // Human traffic only. Bot sessions are kept in the table (their volume is
-    // useful) but never counted in reported metrics — see is_bot in
-    // apps/api/src/utils/bot-detection.ts.
-    const sessWhere = `connector_instance_id = ANY($1::text[]) AND (${botLiteral} OR is_bot = FALSE) AND started_at >= $2 AND started_at <= $3`;
-    // NOTE: storefront_events carries no is_bot column, so event-derived figures
-    // still include bot activity. Filtering them needs either a join back to
-    // storefront_sessions or the flag denormalised onto events — deliberately
-    // out of scope here; session metrics were the reported problem.
+    const sessWhere = `connector_instance_id = ANY($1::text[]) AND started_at >= $2 AND started_at <= $3`;
     const evtWhere = `connector_instance_id = ANY($1::text[]) AND occurred_at >= $2 AND occurred_at <= $3`;
 
     // DATABASE-PER-INTEGRATION: run every aggregate once per store client (over
@@ -1734,7 +1688,7 @@ export class StorefrontTrackingService {
                ON e.connector_instance_id = s.connector_instance_id
               AND e.session_id = s.session_id
               AND e.canonical_stage = 'purchase'
-             WHERE s.connector_instance_id = ANY($1::text[]) AND (${botLiteral} OR s.is_bot = FALSE)
+             WHERE s.connector_instance_id = ANY($1::text[])
                AND s.started_at >= $2 AND s.started_at <= $3
                AND s.purchase_completed = true
              GROUP BY s.session_id, s.started_at

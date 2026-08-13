@@ -69,15 +69,10 @@ export const getCustomerIntelligence = async (req: FastifyRequest, reply: Fastif
     const tenantId = (req as any).tenantId || (req as any)?.user?.tenantId;
     const traceId = req.id as string;
 
-    // Journey Intel reports human traffic by default; ?include_bots=1 opts into
-    // showing crawler and automation sessions alongside it.
-    const q = (req.query as any) || {};
-    const includeBots = q.include_bots === '1' || q.include_bots === 'true' || q.includeBots === true;
-
     try {
-        const intelligence = await DashboardService.getCustomerIntelligence({ siteId, tenantId, includeBots });
+        const intelligence = await DashboardService.getCustomerIntelligence({ siteId, tenantId });
         return reply.send(ResponseUtil.success(intelligence, {
-            filters: { siteId, tenantId, includeBots }
+            filters: { siteId, tenantId }
         }, traceId));
     } catch (err: any) {
         return reply.status(500).send(ResponseUtil.error(err.message, traceId));

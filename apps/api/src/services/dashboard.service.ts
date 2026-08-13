@@ -712,8 +712,8 @@ export class DashboardService {
         const from = new Date(to.getTime() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000);
 
         const [journey, insights] = await Promise.all([
-            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds, from, to, includeBots: filters.includeBots }),
-            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds, from, to, includeBots: filters.includeBots })
+            StorefrontTrackingService.journeyIntel({ connectorInstanceIds: connectorIds, from, to }),
+            StorefrontTrackingService.journeyInsights({ connectorInstanceIds: connectorIds, from, to })
         ]);
 
         // ── Customer Summary — sourced directly from customer_profiles, scoped to

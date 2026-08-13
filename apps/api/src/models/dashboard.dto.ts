@@ -24,12 +24,6 @@ export interface MetricFilterDto {
     source?: string;
     limit?: number;
     offset?: number;
-    /**
-     * Include bot/crawler sessions in session-derived figures. Defaults to
-     * false — reported metrics are human traffic unless explicitly asked
-     * otherwise. See apps/api/src/utils/bot-detection.ts.
-     */
-    includeBots?: boolean;
 }
 
 /**
