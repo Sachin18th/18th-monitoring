@@ -306,14 +306,13 @@ export class IntegrationController {
             }
         });
 
-        // The initial order/customer sync (and Shopify pixel registration) make
-        // live, paginated calls to the store's API. Running them inline blocks
-        // the HTTP response — a slow, large, or unreachable store makes the dev
-        // proxy reset the socket (ECONNRESET / "socket hang up") and the UI sees
-        // a spurious 500 even though the connector was created. Kick the setup
-        // off in the background (like ConnectorResyncService) and respond now.
-        // Each sync service records its own health/lastError on the instance, so
-        // progress and failures are still surfaced without blocking the request.
+        // Store-database provisioning and Shopify pixel registration make live
+        // calls (Postgres CREATE DATABASE + migrations, and the Shopify Admin
+        // API). Running them inline blocks the HTTP response — a slow or
+        // unreachable store makes the dev proxy reset the socket (ECONNRESET /
+        // "socket hang up") and the UI sees a spurious 500 even though the
+        // connector was created. Kick the setup off in the background and
+        // respond now; failures are recorded on the instance instead.
         setImmediate(() => {
             void IntegrationController.runInitialSetup({ id, type, siteId, config, credentials })
                 .catch((err: any) => {
@@ -325,7 +324,10 @@ export class IntegrationController {
             ...instance,
             lastSuccessfulSync: instance.lastSyncAt?.toISOString(),
             lastAttemptedSync: instance.lastAttemptAt?.toISOString(),
-            initialSync: { status: 'PENDING', message: 'Initial sync started in the background.' }
+            initialSync: {
+                status: 'AWAITING_PLAN',
+                message: 'Store connected. Choose what to import to start a sync.'
+            }
         };
 
         return reply.code(201).send(ResponseUtil.success(mappedInstance, {}, req.id as string));
@@ -403,30 +405,21 @@ export class IntegrationController {
             // continue — the failed row stays visible for repair.
         }
 
-        // ─── Initial order + customer sync ───────────────────────────────────
-        // Orders and customers are synced INDEPENDENTLY. They authenticate against
-        // different provider ACLs (e.g. Adobe Commerce needs Magento_Sales::sales
-        // for orders and Magento_Customer::manage for customers, granted
-        // separately), so a failure in one must not skip the other. Each sync
-        // service records its own DEGRADED/lastError state on the instance.
-        const orderSync =
-            type === 'shopify' ? () => ShopifyOrderSyncService.syncConnectorInstance(id)
-            : type === 'adobe_commerce' ? () => AdobeCommerceOrderSyncService.syncConnectorInstance(id)
-            : type === 'bigcommerce' ? () => BigCommerceOrderSyncService.syncConnectorInstance(id)
-            : null;
-        const customerSync =
-            type === 'shopify' ? () => ShopifyCustomerSyncService.syncConnectorInstance(id)
-            : type === 'adobe_commerce' ? () => AdobeCommerceCustomerSyncService.syncConnectorInstance(id)
-            : type === 'bigcommerce' ? () => BigCommerceCustomerSyncService.syncConnectorInstance(id)
-            : null;
-        // Products (and their derived categories) sync independently too, via the resync
-        // service's provider-agnostic product entry point (Shopify uses its dedicated,
-        // checkpointed service; Adobe/BigCommerce use the inline canonical upsert).
-        const productSync =
-            ['shopify', 'adobe_commerce', 'bigcommerce'].includes(type)
-                ? () => ConnectorResyncService.syncProductsForInstance(id)
-                : null;
-
+        // ─── Entity sync is NOT started on connect ───────────────────────────
+        // Order/customer/product sync used to run here automatically. It fetched
+        // every page of every entity for all of history into memory before
+        // writing anything, inside the API process — which on a large store means
+        // gigabytes resident and an unresponsive API.
+        //
+        // Connecting a store now only provisions its database and registers the
+        // storefront pixel, so live client stores can be connected safely and
+        // start capturing customer journeys immediately. Historical import is
+        // deliberately a separate, user-initiated action:
+        //
+        //   POST /:connectorInstanceId/resync  { syncTargets: [...] }
+        //
+        // See docs/SYNC-CONTROL-PLAN.md — the sync-plan screen (entity selection,
+        // date range, scheduled windows, pause/resume) replaces this.
         const startedAt = new Date().toISOString();
         const results: Record<string, any> = {};
         const failedTargets: string[] = [];
@@ -435,7 +428,7 @@ export class IntegrationController {
         // incremental progress (orders finish → 50%, customers finish → 100%)
         // rather than a single jump at the end. Merges into existing metadata so
         // other keys (e.g. pixelConfig lives separately) are never clobbered.
-        const persistInitialSync = async (status: 'running' | 'completed' | 'failed') => {
+        const persistInitialSync = async (status: 'running' | 'completed' | 'failed' | 'awaiting_plan') => {
             try {
                 const current = await prisma.connectorInstance.findUnique({
                     where: { id },
@@ -470,63 +463,11 @@ export class IntegrationController {
             }
         };
 
-        if (orderSync) {
-            try {
-                const result = await orderSync();
-                results.orders = {
-                    status: (result?.failed ?? 0) > 0 ? 'partial' : 'completed',
-                    fetched: result?.fetched ?? 0,
-                    upserted: (result?.created ?? 0) + (result?.updated ?? 0),
-                    failed: result?.failed ?? 0
-                };
-                console.log('[Integration] initial order sync done', { id, siteId, ...result });
-            } catch (err: any) {
-                results.orders = { status: 'failed', error: err?.message || String(err) };
-                failedTargets.push('orders');
-                console.error('[Integration] initial order sync failed', { id, siteId, error: err?.message || err });
-            }
-            // Checkpoint after orders so the UI advances to ~50% mid-run.
-            await persistInitialSync('running');
-        }
-
-        if (customerSync) {
-            try {
-                const result = await customerSync();
-                results.customers = {
-                    status: (result?.failed ?? 0) > 0 ? 'partial' : 'completed',
-                    fetched: result?.fetched ?? 0,
-                    upserted: (result?.created ?? 0) + (result?.updated ?? 0),
-                    failed: result?.failed ?? 0
-                };
-                console.log('[Integration] initial customer sync done', { id, siteId, ...result });
-            } catch (err: any) {
-                results.customers = { status: 'failed', error: err?.message || String(err) };
-                failedTargets.push('customers');
-                console.error('[Integration] initial customer sync failed', { id, siteId, error: err?.message || err });
-            }
-            // Checkpoint after customers so the UI advances before products run.
-            await persistInitialSync('running');
-        }
-
-        if (productSync) {
-            try {
-                const result = await productSync();
-                results.products = {
-                    status: (result?.failed ?? 0) > 0 ? 'partial' : 'completed',
-                    fetched: result?.fetched ?? 0,
-                    upserted: (result?.created ?? 0) + (result?.updated ?? 0),
-                    failed: result?.failed ?? 0
-                };
-                console.log('[Integration] initial product sync done', { id, siteId, ...result });
-            } catch (err: any) {
-                results.products = { status: 'failed', error: err?.message || String(err) };
-                failedTargets.push('products');
-                console.error('[Integration] initial product sync failed', { id, siteId, error: err?.message || err });
-            }
-        }
-
-        // Stamp the terminal marker the UI polls for completion.
-        await persistInitialSync(failedTargets.length > 0 ? 'failed' : 'completed');
+        // No entity sync runs here. Mark the instance as waiting for the operator
+        // to choose what to import, so the UI shows "ready — no data imported yet"
+        // rather than a sync that never finishes.
+        await persistInitialSync('awaiting_plan');
+        console.log('[Integration] entity sync not auto-started; awaiting sync plan', { id, siteId, type });
 
         // ─── Shopify Web Pixel registration ──────────────────────────────────
         // Best-effort: register a Web Pixel on the connected store so checkout
