@@ -87,6 +87,13 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
             ? Prisma.sql`AND s.channel = ${channelParam}`
             : Prisma.empty;
 
+        // Crawlers, headless automation and our own synthetic monitoring are
+        // recorded but hidden from the timeline by default — otherwise a page
+        // of "sessions" is mostly Googlebot. ?include_bots=1 shows them.
+        // See apps/api/src/utils/bot-detection.ts.
+        const includeBots = req.query.include_bots === '1' || req.query.include_bots === 'true';
+        const botFilter = includeBots ? Prisma.empty : Prisma.sql`AND s.is_bot = FALSE`;
+
         try {
             const db = await getDataPlaneClient(connectorId);
             // Platform key for resolving a tracker-captured numeric customer_id
@@ -190,6 +197,7 @@ export const sessionJourneyRoutes = async (fastify: FastifyInstance) => {
                 ) v_cid_lookup ON true
                 WHERE s.connector_instance_id = ${connectorId}
                   ${channelFilter}
+                  ${botFilter}
                 ORDER BY s.started_at DESC
                 LIMIT ${limit}
             `;

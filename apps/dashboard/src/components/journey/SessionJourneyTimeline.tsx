@@ -29,6 +29,11 @@ interface Props {
   projectId: string;
   connectorInstanceId: string;
   tenantId: string;
+  /**
+   * Show crawler / automation sessions. Driven by the page-level toggle so the
+   * timeline and the summary figures above it always agree about what counts.
+   */
+  includeBots?: boolean;
 }
 
 interface Session {
@@ -197,7 +202,7 @@ const Spinner: React.FC<{ size?: number }> = ({ size = 18 }) => (
   />
 );
 
-export default function SessionJourneyTimeline({ projectId, connectorInstanceId, tenantId }: Props) {
+export default function SessionJourneyTimeline({ projectId, connectorInstanceId, tenantId, includeBots = false }: Props) {
   const { apiFetch } = useAuth();
 
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -232,6 +237,7 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
           limit: '50',
         });
         if (channel !== 'all') qs.set('channel', channel);
+        if (includeBots) qs.set('include_bots', '1');
         const res = await apiFetch(`/api/storefront/session-journeys?${qs.toString()}`);
         if (cancelled) return;
         const list: Session[] = Array.isArray(res?.sessions) ? res.sessions : [];
@@ -253,7 +259,7 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
     return () => {
       cancelled = true;
     };
-  }, [apiFetch, projectId, connectorInstanceId, tenantId, channel]);
+  }, [apiFetch, projectId, connectorInstanceId, tenantId, channel, includeBots]);
 
   const handleRowClick = useCallback(
     async (session: Session) => {

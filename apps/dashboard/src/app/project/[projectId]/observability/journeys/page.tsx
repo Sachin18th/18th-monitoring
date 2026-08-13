@@ -201,6 +201,11 @@ export default function JourneyIntelligencePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<'7d' | '30d' | '90d'>('30d');
+  // Bot and crawler sessions are recorded but excluded from reported figures by
+  // default — including our own synthetic monitoring, which drives a real
+  // browser over client storefronts on a schedule. This exposes them on demand
+  // rather than pretending they do not exist.
+  const [includeBots, setIncludeBots] = useState(false);
   const [funnelSteps, setFunnelSteps] = useState<any[]>([]);
   const [intelligence, setIntelligence] = useState<any>(null);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
@@ -223,6 +228,7 @@ export default function JourneyIntelligencePage() {
       if (connectorInstanceId && connectorInstanceId !== 'all') {
         qs.set('connector_instance_id', connectorInstanceId);
       }
+      if (includeBots) qs.set('include_bots', '1');
 
       const res = await apiFetch(`/api/v1/dashboard/customers/intelligence?${qs.toString()}`);
       const funnel = Array.isArray(res?.funnel) ? res.funnel : [];
@@ -241,7 +247,7 @@ export default function JourneyIntelligencePage() {
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, projectId, token, range, connectorInstanceId]);
+  }, [apiFetch, projectId, token, range, connectorInstanceId, includeBots]);
 
   useEffect(() => {
     if (!token || !projectId) {
@@ -256,7 +262,7 @@ export default function JourneyIntelligencePage() {
 
     initialLoadKeyRef.current = loadKey;
     loadData();
-  }, [loadData, projectId, token, range, connectorInstanceId, connectorSelectionTick]);
+  }, [loadData, projectId, token, range, connectorInstanceId, connectorSelectionTick, includeBots]);
 
   const isPageRestricted = allowedPageKeys !== null && !allowedPageKeys.includes('observability/journeys');
 
@@ -424,6 +430,30 @@ export default function JourneyIntelligencePage() {
                 <option value="30d">Last 30 days</option>
                 <option value="90d">Last 90 days</option>
               </select>
+              <label
+                title="Bot sessions are always recorded; this only controls whether they are counted in the figures shown."
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-card)',
+                  background: 'var(--bg-card)',
+                  padding: '10px 14px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  color: 'var(--text-secondary)',
+                  cursor: 'pointer'
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={includeBots}
+                  onChange={(event) => setIncludeBots(event.target.checked)}
+                  style={{ cursor: 'pointer', margin: 0 }}
+                />
+                Include bots
+              </label>
               <div
                 style={{
                   display: 'flex',
@@ -1156,6 +1186,7 @@ export default function JourneyIntelligencePage() {
           projectId={String(projectId)}
           connectorInstanceId={connectorInstanceId || ''}
           tenantId={user?.tenantId || ''}
+          includeBots={includeBots}
         />
       </div>
 

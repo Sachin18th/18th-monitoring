@@ -307,7 +307,18 @@ model StorefrontSession {
   // Soft reference (no FK), consistent with this table's connector-keyed design.
   customerProfileId   String? @map("customer_profile_id") @db.VarChar(36)
 
+  // Bot classification from user_agent (see apps/api/src/utils/bot-detection.ts).
+  // Sessions are flagged, never dropped: bot volume is useful in its own right,
+  // and RUM/Journey Intel filter on is_bot = false rather than losing the rows.
+  // botName carries the specific source ('googlebot', 'appmento-synthetic', …)
+  // so our own monitoring is distinguishable from third-party crawlers.
+  isBot               Boolean @default(false) @map("is_bot")
+  botName             String? @map("bot_name") @db.VarChar(50)
+
   @@unique([connectorInstanceId, sessionId], map: "uq_storefront_session_connector_session")
+  // RUM and Journey Intel read human traffic only, so every one of their
+  // queries carries is_bot = false alongside the connector filter.
+  @@index([connectorInstanceId, isBot], map: "idx_storefront_session_bot")
   @@index([connectorInstanceId, customerProfileId], map: "idx_storefront_session_customer")
   @@index([connectorInstanceId], map: "idx_storefront_session_connector")
   @@index([connectorInstanceId, visitorId], map: "idx_storefront_session_visitor")
@@ -340,6 +351,14 @@ model StorefrontEvent {
   @@index([connectorInstanceId, customerProfileId], map: "idx_storefront_event_customer")
   @@index([connectorInstanceId, occurredAt], map: "idx_storefront_event_connector_occurred")
   @@index([connectorInstanceId, sessionId], map: "idx_storefront_event_session")
+  // Session Journey Timeline runs six LEFT JOIN LATERALs per session, each
+  // "newest event in this session matching X" — filter on (connector, session),
+  // order by occurred_at, take one. The index above serves the filter but not
+  // the ordering, so each lateral sorted its matches; at 50 sessions that is 300
+  // sorts and the request timed out on busy stores, surfacing as the global
+  // "Real-time Feed Interrupted" banner. Including occurred_at lets each lateral
+  // read a single row straight off the index.
+  @@index([connectorInstanceId, sessionId, occurredAt], map: "idx_storefront_event_session_occurred")
   @@index([connectorInstanceId, eventType, occurredAt], map: "idx_storefront_event_type_occurred")
   @@index([connectorInstanceId, canonicalStage, occurredAt], map: "idx_storefront_events_canonical_stage")
   @@map("storefront_events")

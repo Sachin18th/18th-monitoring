@@ -109,6 +109,14 @@ async function detectPixelActivation(connectorInstanceId: string | null, body: a
   }
 }
 
+/**
+ * `include_bots=1` (or `true`) opts a read into showing crawler and automation
+ * sessions. Off by default: reported figures should be human traffic, but the
+ * rows are never deleted, so the dashboard can surface them on demand.
+ */
+const parseIncludeBots = (v: unknown): boolean =>
+  v === true || v === '1' || v === 'true' || v === 'yes';
+
 export const trackRoutes = async (fastify: FastifyInstance) => {
   // ── Storefront capture script (CDN-servable) ──────────────────────────────
   // In-memory cache with a short TTL so a rebuilt tracker.js is picked up
@@ -209,6 +217,7 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     try {
       const data = await StorefrontTrackingService.listSessions({
         connectorInstanceId: String(connectorInstanceId),
+        includeBots: parseIncludeBots(q.include_bots ?? q.includeBots),
         from: parseDate(q.from),
         to: parseDate(q.to),
         limit: q.limit ? Number(q.limit) : null,
@@ -234,6 +243,7 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     try {
       const data = await StorefrontTrackingService.liveUsers({
         connectorInstanceId: String(connectorInstanceId),
+        includeBots: parseIncludeBots(q.include_bots ?? q.includeBots),
         windowMinutes: q.window_minutes || q.windowMinutes ? Number(q.window_minutes ?? q.windowMinutes) : null,
       });
       return reply.code(200).send(ResponseUtil.success(data, {}, req.id as string));
@@ -284,6 +294,7 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     try {
       const data = await StorefrontTrackingService.funnel({
         connectorInstanceId: String(connectorInstanceId),
+        includeBots: parseIncludeBots(q.include_bots ?? q.includeBots),
         from: parseDate(q.from),
         to: parseDate(q.to),
       });
@@ -306,6 +317,7 @@ export const trackRoutes = async (fastify: FastifyInstance) => {
     try {
       const data = await StorefrontTrackingService.sessionKpis({
         connectorInstanceId: String(connectorInstanceId),
+        includeBots: parseIncludeBots(q.include_bots ?? q.includeBots),
         from: parseDate(q.from),
         to: parseDate(q.to),
       });
