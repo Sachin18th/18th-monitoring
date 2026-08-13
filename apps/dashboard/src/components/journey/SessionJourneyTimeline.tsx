@@ -22,7 +22,6 @@ import {
   Eye,
   ChevronRight,
   Check,
-  Bot,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -45,9 +44,6 @@ interface Session {
   last_active_at: string;
   device_type: string | null;
   browser: string | null;
-  is_bot?: boolean | null;
-  bot_name?: string | null;
-  user_agent?: string | null;
   os: string | null;
   landing_page: string | null;
   referrer: string | null;
@@ -325,23 +321,6 @@ export default function SessionJourneyTimeline({ projectId, connectorInstanceId,
               </span>
             );
           })()}
-          {session.is_bot && (
-            // Only ever rendered when "Include bots" is on — otherwise these
-            // sessions are filtered out server-side. The raw user agent is the
-            // tooltip so a misclassification can be diagnosed on the spot.
-            <span
-              title={session.user_agent || 'No user agent sent'}
-              style={{
-                ...pillStyle,
-                borderColor: 'rgba(245, 158, 11, 0.45)',
-                background: 'rgba(245, 158, 11, 0.12)',
-                color: '#f59e0b',
-                fontWeight: 600
-              }}
-            >
-              <Bot size={13} /> {session.bot_name || 'bot'}
-            </span>
-          )}
           <span style={pillStyle}>
             <Monitor size={13} /> {session.device_type ? titleCase(session.device_type) : 'Unknown device'}
           </span>
