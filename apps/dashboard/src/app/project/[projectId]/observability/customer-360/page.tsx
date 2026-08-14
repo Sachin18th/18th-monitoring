@@ -598,7 +598,7 @@ export default function Customer360Page() {
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {profile.email || 'Unknown customer'}
+                    {profile.email || profile.name || 'Unknown customer'}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {Object.entries(profile.externalIds || {}).map(([k, v]) => `${k}:${v}`).join(' · ') || 'no external id'} · hash {profile.emailHashPreview || '—'}
@@ -1101,7 +1101,7 @@ function LiveNow({ visitors, count, onOpen }: { visitors: any[] | null; count: n
               >
                 <span style={{ width: 7, height: 7, borderRadius: 999, background: '#22c55e', flexShrink: 0 }} />
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                  {v.identified ? v.email || 'Known customer' : 'Anonymous visitor'}
+                  {v.identified ? v.email || v.name || 'Known customer' : 'Anonymous visitor'}
                 </span>
                 {v.segment && <Badge color={SEGMENT_COLOR[v.segment] || '#64748b'}>{v.segment}</Badge>}
                 {v.totalLtv != null && <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{fmtMoney(v.totalLtv)} LTV</span>}

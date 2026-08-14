@@ -145,6 +145,12 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
           customerProfileId: s.customerProfileId ?? null,
           identified: !!p,
           email: p?.emailEncrypted ? decryptEmail(p.emailEncrypted) : null,
+          // Platforms that expose a name but no email (Magento) would otherwise
+          // show as "Known customer" with nothing to identify them by.
+          name: (() => {
+            const meta = ((p as any)?.metadata as any) || {};
+            return [meta.firstName, meta.lastName].filter(Boolean).join(' ').trim() || null;
+          })(),
           segment: m?.segment ?? null,
           totalLtv: p?.totalLtv != null ? Number(p.totalLtv) : null,
           funnelStage: s.funnelStage,
@@ -398,6 +404,12 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
             lifecycleState: profile.lifecycleState,
             identityConfidence: profile.identityConfidence != null ? Number(profile.identityConfidence) : null,
             email: profile.emailEncrypted ? decryptEmail(profile.emailEncrypted) : null, // in-memory only
+            // Some platforms give a name but no email — without this the detail
+            // header reads "Unknown customer" for a shopper we can actually name.
+            name: (() => {
+              const meta = (profile.metadata && typeof profile.metadata === 'object') ? profile.metadata as any : {};
+              return [meta.firstName, meta.lastName].filter(Boolean).join(' ').trim() || null;
+            })(),
             emailHashPreview: profile.emailHash ? `${String(profile.emailHash).slice(0, 8)}…` : null,
             externalIds: profile.externalIds || {},
             totalLtv: profile.totalLtv != null ? Number(profile.totalLtv) : null,
