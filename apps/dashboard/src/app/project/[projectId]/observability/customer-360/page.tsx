@@ -528,7 +528,10 @@ export default function Customer360Page() {
                       >
                         <Td>
                           <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                            {c.email || Object.entries(c.externalIds || {}).map(([k, v]) => `${k}:${v}`).join(', ') || 'Guest'}
+                            {c.email
+                              || c.name
+                              || Object.entries(c.externalIds || {}).map(([k, v]) => `${k}:${v}`).join(', ')
+                              || 'Guest'}
                           </span>
                         </Td>
                         <Td>

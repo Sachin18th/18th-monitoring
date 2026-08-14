@@ -500,6 +500,9 @@ export class StorefrontTrackingService {
               emailHash: ident.emailHash,
               emailEncrypted: ident.emailEncrypted,
               externalId: ident.customerId,
+              // Magento exposes fullname without an email on most pages, so the
+              // name is often the only human-readable identity we get.
+              customerName: ident.customerName,
               platform: platform === 'unknown' ? null : platform,
               visitorId,
               source: 'storefront-tracking',

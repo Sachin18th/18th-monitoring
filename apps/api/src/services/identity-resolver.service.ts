@@ -57,6 +57,14 @@ export interface ResolveSignals {
   visitorId?: string | null;
   /** Probabilistic: per-visit id. */
   sessionId?: string | null;
+  /**
+   * Display name captured alongside the identity, e.g. Magento's customer
+   * section exposing fullname without an email. Stored on the profile so the
+   * Customers pages can show a person rather than "Guest" — they build the
+   * display name from metadata.firstName/lastName, falling back to the email
+   * local part, so a name-only shopper previously had nothing to show.
+   */
+  customerName?: string | null;
   /** Optional lifecycle hint when creating (e.g. 'RETURNING' for a known customer). */
   lifecycleHint?: string | null;
   /** Free-form provenance recorded in profile.metadata on create. */
@@ -279,6 +287,23 @@ export class IdentityResolver {
     }
   }
 
+  /**
+   * Splits a captured display name into the firstName/lastName pair the rest of
+   * the platform uses. Deliberately naive — one space, remainder to lastName —
+   * because the goal is a recognisable label, not correct name parsing, and
+   * guessing at particles or multi-word surnames would do more harm than good.
+   */
+  private static splitDisplayName(name?: string | null): { firstName?: string; lastName?: string } {
+    const trimmed = String(name || '').trim().replace(/\s+/g, ' ');
+    if (!trimmed) return {};
+    const cut = trimmed.indexOf(' ');
+    if (cut === -1) return { firstName: trimmed.slice(0, 100) };
+    return {
+      firstName: trimmed.slice(0, cut).slice(0, 100),
+      lastName: trimmed.slice(cut + 1).slice(0, 100),
+    };
+  }
+
   private static async createProfile(
     db: any,
     profileId: string,
@@ -305,7 +330,13 @@ export class IdentityResolver {
           phoneHash: signals.phoneHash || undefined,
           lifecycleState: signals.lifecycleHint || (hasIdentity ? 'RETURNING' : 'NEW_GUEST'),
           identityConfidence: strongIdentity ? CONF_DETERMINISTIC : hasIdentity ? CONF_PHONE : CONF_PROBABILISTIC,
-          metadata: { source: signals.source || 'identity-resolver', connectorInstanceId: scope.connectorInstanceId },
+          metadata: {
+            source: signals.source || 'identity-resolver',
+            connectorInstanceId: scope.connectorInstanceId,
+            // Split into first/last because that is the shape the customer-sync
+            // services write and the dashboards read.
+            ...IdentityResolver.splitDisplayName(signals.customerName),
+          },
         },
       });
       return true;
@@ -330,7 +361,7 @@ export class IdentityResolver {
   private static async enrichProfile(db: any, profileId: string, signals: ResolveSignals, platform: string): Promise<void> {
     const profile = await db.customerProfile.findUnique({
       where: { id: profileId },
-      select: { emailHash: true, emailEncrypted: true, phoneHash: true, externalIds: true, lifecycleState: true },
+      select: { emailHash: true, emailEncrypted: true, phoneHash: true, externalIds: true, lifecycleState: true, metadata: true },
     });
     if (!profile) return;
 
@@ -341,6 +372,18 @@ export class IdentityResolver {
     if (signals.externalId != null) {
       const merged = { ...(profile.externalIds || {}), [platform]: String(signals.externalId) };
       data.externalIds = merged;
+    }
+    // Fill in a display name if we have one and the profile does not. Never
+    // overwrite: a name synced from the platform's own customer record is more
+    // authoritative than one scraped off a storefront page.
+    const existingMeta = (profile.metadata && typeof profile.metadata === 'object')
+      ? profile.metadata as Record<string, any>
+      : {};
+    if (!existingMeta.firstName && !existingMeta.lastName && signals.customerName) {
+      const parts = IdentityResolver.splitDisplayName(signals.customerName);
+      if (parts.firstName || parts.lastName) {
+        data.metadata = { ...existingMeta, ...parts };
+      }
     }
     if (profile.lifecycleState === 'NEW_GUEST' && (signals.emailHash || signals.externalId || signals.phoneHash)) {
       data.lifecycleState = signals.lifecycleHint || 'RETURNING';

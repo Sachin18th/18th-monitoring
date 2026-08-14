@@ -208,9 +208,16 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
       const customers = rows.map((p: any) => {
         const m = Array.isArray(p.metrics) && p.metrics.length ? p.metrics[0] : null;
         const snap = Array.isArray(p.behaviorSnapshots) && p.behaviorSnapshots.length ? p.behaviorSnapshots[0] : null;
+        // Some platforms expose a name without an email — Magento's customer
+        // section gives fullname but no address unless extended. Those shoppers
+        // are identified, so surface the name rather than letting the UI fall
+        // through to "Guest".
+        const meta = (p.metadata && typeof p.metadata === 'object') ? p.metadata as any : {};
+        const name = [meta.firstName, meta.lastName].filter(Boolean).join(' ').trim() || null;
         return {
           id: p.id,
           email: p.emailEncrypted ? decryptEmail(p.emailEncrypted) : null,
+          name,
           lifecycleState: p.lifecycleState,
           externalIds: p.externalIds || {},
           totalLtv: p.totalLtv != null ? Number(p.totalLtv) : null,
