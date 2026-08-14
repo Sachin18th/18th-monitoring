@@ -286,7 +286,13 @@
       }
     };
     var GENERIC = {
-      confirmation: /\/(thank[-_]?you|order[-_](received|confirmation|complete|success)|order-confirmation|success|orders?\/)/i,
+      // Deliberately does NOT include a bare "success" or a bare "orders/":
+      // both matched ordinary pages (any /success/ route, and every customer
+      // order-history URL) and a false Purchase is far more damaging than a
+      // missed one — the funnel stage only ratchets upward, so it cannot be
+      // corrected later. Platform-specific patterns above carry the real
+      // confirmation URLs; this is only reached for unrecognised platforms.
+      confirmation: /\/(thank[-_]?you|order[-_](received|confirmation|complete|success)|order-confirmation)/i,
       checkout: /\/checkout(\/|\b)/i,
       product: /\/(products?|item|p)\//i,
       cart: /\/(cart|basket|bag)(\/|\b)/i,
@@ -324,6 +330,22 @@
       } catch (e) { return false; }
     }
 
+    // Customer account pages — order history and a past order's detail view —
+    // are NOT purchases, but every confirmation signal we have fires on them:
+    // they sit under /orders/ (matching both the Shopify and GENERIC URL
+    // patterns) and they render order numbers (matching hasOrderId()).
+    //
+    // That made a shopper reviewing last month's order look like a fresh
+    // purchase. The damage is lasting because funnel_stage only ever ratchets
+    // upward server-side, so one false hit permanently marks the session as
+    // converted — inflating the Customers page and the checkout funnel.
+    //
+    // Checked before any confirmation signal, so it overrides all of them.
+    var ACCOUNT_PATH = /\/(account|customer\/account|my[-_]?account|sales\/order|order[-_]history|orders\/history)(\/|\b)/i;
+    function isAccountPage() {
+      try { return ACCOUNT_PATH.test(location.pathname); } catch (e) { return false; }
+    }
+
     function pageType() {
       var native = platform() === 'shopify' ? shopifyNativeType()
         : platform() === 'adobe_commerce' ? magentoNativeType()
@@ -332,7 +354,7 @@
 
       // DOM + URL fallback (order matters: confirmation before checkout,
       // since /checkout/onepage/success contains "/checkout").
-      if (hasOrderId() || urlMatches('confirmation')) return 'confirmation';
+      if (!isAccountPage() && (hasOrderId() || urlMatches('confirmation'))) return 'confirmation';
       if (urlMatches('checkout') || /(^|\s)checkout/.test(docClass())) return 'checkout';
       if (domProduct() || urlMatches('product')) return 'product';
       if (urlMatches('cart')) return 'cart';
