@@ -56,12 +56,26 @@ const getFilters = (req: any) => {
 // Standard error responder for all controller methods
 const respondWithError = (res: any, err: any, context: string, siteId?: string) => {
     const correlationId = (res.request as any)?.id || 'unknown';
+
+    // Errors that carry their own client-range status are expected conditions,
+    // not faults — most notably StoreDatabaseNotActive (409) while a freshly
+    // connected store's database is still being provisioned in the background.
+    // Reporting those as 500 makes the platform alert on its own normal setup
+    // flow and inflates the error-rate KPI, so honour the status and log them
+    // as a warning with no stack.
+    const status = Number(err?.statusCode);
+    if (Number.isFinite(status) && status >= 400 && status < 500) {
+        console.warn(`[API SKIP] ${context} | siteId=${siteId || 'none'} | rid=${correlationId} | ${err.code || 'CLIENT_ERROR'}: ${err.message}`);
+        return res.code(status).send(errorResponse(err.message, err.code || 'CLIENT_ERROR', null, correlationId));
+    }
+
     console.error(`[API FAIL] ${context} | siteId=${siteId || 'none'} | rid=${correlationId} | Error:`, err);
-    
+
     // Hide details in production
     const message = env.NODE_ENV === 'production' ? 'An internal server error occurred' : err.message;
-    
-    return res.code(500).send(errorResponse(message, 'INTERNAL_SERVER_ERROR', null, correlationId));
+
+    return res.code(Number.isFinite(status) && status >= 500 ? status : 500)
+        .send(errorResponse(message, err?.code || 'INTERNAL_SERVER_ERROR', null, correlationId));
 };
 
 export const getSummaries = async (req: any, res: any) => {

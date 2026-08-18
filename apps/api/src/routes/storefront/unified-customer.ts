@@ -36,6 +36,10 @@ const STAGE_RANK: Record<string, number> = {
   purchase: 4,
 };
 
+// Upper bound on the ids a customer-name search feeds into the list query, so a
+// broad term ("a") on a large store can't build an unbounded IN clause.
+const NAME_SEARCH_MATCH_CAP = 5000;
+
 export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', tenantAuthHandler);
 
@@ -133,7 +137,11 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
       const profiles = profileIds.length
         ? await db.customerProfile.findMany({ where: { id: { in: profileIds } }, include: { metrics: true } })
         : [];
-      const pmap = new Map(profiles.map((p: any) => [p.id, p]));
+      // Annotated: `profiles.map(...)` yields `any[]`, not a `[K, V]` tuple, so an
+      // un-annotated Map infers no key/value type and every read off `.get()`
+      // fails to typecheck. `db` is untyped (getDataPlaneClient returns any), so
+      // the profile row has no nominal type to name here.
+      const pmap = new Map<string, any>(profiles.map((p: any) => [p.id, p]));
 
       const iso = (d: any) => (d instanceof Date ? d.toISOString() : d ?? null);
       const visitors = sessions.map((s: any) => {
@@ -148,7 +156,7 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
           // Platforms that expose a name but no email (Magento) would otherwise
           // show as "Known customer" with nothing to identify them by.
           name: (() => {
-            const meta = ((p as any)?.metadata as any) || {};
+            const meta = p?.metadata || {};
             return [meta.firstName, meta.lastName].filter(Boolean).join(' ').trim() || null;
           })(),
           segment: m?.segment ?? null,
@@ -172,6 +180,7 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
   /**
    * GET /api/storefront/customers
    * Query: projectId, connectorInstanceId (required); page (default 1), pageSize (default 30, max 100).
+   *        name (optional) — case-insensitive partial match on the customer's name.
    * Server-side paginated customer list, most valuable first, with computed metrics.
    */
   fastify.get('/customers', async (req: any, reply: any) => {
@@ -182,6 +191,7 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 30, 1), 100);
     const segment = String(req.query.segment || '').trim();
+    const nameQuery = String(req.query.name || '').trim().slice(0, 100);
 
     try {
       const db = await getDataPlaneClient(connectorId);
@@ -198,6 +208,38 @@ export const unifiedCustomerRoutes = async (fastify: FastifyInstance) => {
         } else {
           where.metrics = { some: { segment } };
         }
+      }
+      // Optional name search. The display name is assembled from
+      // metadata.firstName/lastName (a JSON column), so match it in SQL where
+      // both halves can be concatenated and lower-cased — Prisma's JSON
+      // string_contains is case-sensitive and can't span two keys. Matching the
+      // combined "first last" string also lets "riya g" find "Riya Gusain".
+      if (nameQuery) {
+        const like = `%${nameQuery.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+        const matches = await db.$queryRaw<Array<{ id: string }>>`
+          SELECT id FROM customer_profiles
+          WHERE connector_instance_id = ${connectorId}
+            AND lower(
+              btrim(
+                coalesce(metadata->>'firstName', '') || ' ' || coalesce(metadata->>'lastName', '')
+              )
+            ) LIKE ${like}
+          ORDER BY total_ltv DESC NULLS LAST, last_seen_at DESC
+          LIMIT ${NAME_SEARCH_MATCH_CAP}
+        `;
+        if (matches.length === NAME_SEARCH_MATCH_CAP) {
+          // The cap keeps the id list (and the IN clause) bounded. It's ordered
+          // the same way the list is, so the visible pages are still the most
+          // valuable matches — but say so rather than implying full coverage.
+          req.log?.warn?.(
+            { connectorId, nameQuery, cap: NAME_SEARCH_MATCH_CAP },
+            '[customers] name search hit the match cap; deeper matches are not paged',
+          );
+        }
+        const matchedIds = (matches as Array<{ id: string }>).map((r: { id: string }) => r.id);
+        // Intersect with a segment-derived id list rather than overwriting it.
+        const already: string[] | null = where.id?.in ?? null;
+        where.id = { in: already ? matchedIds.filter((id: string) => already.includes(id)) : matchedIds };
       }
       const [total, rows] = await Promise.all([
         db.customerProfile.count({ where }),

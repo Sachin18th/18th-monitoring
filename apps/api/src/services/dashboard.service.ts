@@ -705,8 +705,10 @@ export class DashboardService {
         });
         const connectorIds = connectorRows.map((c) => c.id);
 
-        // Journey Intel range: allowlisted 7d/30d/90d, default 30d.
-        const RANGE_DAYS: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 };
+        // Journey Intel range: allowlisted 1d/7d/30d (the page's selector), with
+        // '24h' accepted as an alias since that is getFilters' default, and 90d
+        // kept for other callers of this endpoint. Unrecognized → 30d.
+        const RANGE_DAYS: Record<string, number> = { '1d': 1, '24h': 1, '7d': 7, '30d': 30, '90d': 90 };
         const range = RANGE_DAYS[(filters as any).timeRange] ? (filters as any).timeRange : '30d';
         const to = new Date();
         const from = new Date(to.getTime() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000);
@@ -974,6 +976,7 @@ export class DashboardService {
                 placedAt: true,
                 lifecycleState: true,
                 taxAmount: true,
+                currency: true,
             }
         });
         
@@ -1033,8 +1036,20 @@ export class DashboardService {
             { stage: 'Cancelled', count: allOrders.filter((o: any) => (o.normalizedStatus || '').toUpperCase() === 'CANCELLED').length, color: '#ef4444' },
         ];
 
+        // Store currency for display. canonical_orders.currency is what the
+        // connector recorded per order, so we take the most frequent code in the
+        // window rather than the first row — a stray multi-currency order must not
+        // relabel the whole page. Falls back to USD when there are no orders yet.
+        const currencyCounts = new Map<string, number>();
+        for (const order of allOrders as Array<{ currency?: string | null }>) {
+            const code = String(order.currency || '').trim().toUpperCase();
+            if (code) currencyCounts.set(code, (currencyCounts.get(code) || 0) + 1);
+        }
+        const currency = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || 'USD';
+
         return {
             totalOrders: allOrders.length,
+            currency,
             totalRevenue: Math.round(totalRevenue * 100) / 100,
             averageOrderValue: Math.round(averageOrderValue * 100) / 100,
             taxTotal: Math.round(taxTotal * 100) / 100,

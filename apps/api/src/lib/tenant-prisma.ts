@@ -47,12 +47,33 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 export class StoreDatabaseNotActive extends Error {
+  /** The tenant_databases row status: 'provisioning' | 'failed' | null (no row yet). */
+  public readonly provisioningStatus: string | null;
+  /**
+   * HTTP status the API layer should answer with.
+   *
+   * A store DB that is still provisioning (or whose row does not exist yet) is a
+   * NORMAL, transient state: `provisionStoreDatabase` runs in the background
+   * after a connector is created, so every read in that window would otherwise
+   * 500. Those 500s are counted by the platform's own error-rate KPI and trip
+   * the CRITICAL "High API Error Rate" rule — the product alerting on itself for
+   * a store being set up correctly. Answer 409 instead: not ready, retryable,
+   * not a server fault.
+   *
+   * A `failed` provision is a genuine fault and stays 5xx so it gets noticed.
+   */
+  public readonly statusCode: number;
+  public readonly code: string;
+
   constructor(connectorInstanceId: string, status: string | null) {
     super(
       `[tenant-prisma] Integration ${connectorInstanceId} has no active store database (status: ${status ?? 'none'}). ` +
         `Provision it before running store-data queries.`
     );
     this.name = 'StoreDatabaseNotActive';
+    this.provisioningStatus = status;
+    this.statusCode = status === 'failed' ? 503 : 409;
+    this.code = status === 'failed' ? 'STORE_DATABASE_PROVISION_FAILED' : 'STORE_DATABASE_NOT_READY';
   }
 }
 

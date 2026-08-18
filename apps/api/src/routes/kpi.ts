@@ -1,10 +1,23 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from '@kpi-platform/db';
-import { getSiteDataPlaneClient } from '../lib/tenant-prisma';
+import { getSiteDataPlaneClient, getScopedClient, queryAllSiteClients } from '../lib/tenant-prisma';
 import { KpiRegistry } from '../services/kpi-engine/registry';
 import { tenantAuthHandler } from '../middlewares/auth.middleware';
 import { tenantIsolationGuard } from '../middlewares/tenant-isolation.middleware';
 import { ResponseUtil } from '../utils/response';
+
+/**
+ * The store the dashboard currently has selected. The dashboard's apiFetch
+ * appends `connector_instance_id` to every request; Fastify surfaces a
+ * duplicated param as an array, so collapse to the first non-empty scalar.
+ * Returns null for "no specific store" (the whole project).
+ */
+const selectedConnectorId = (req: any): string | null => {
+    const raw = (req.query as any)?.connector_instance_id ?? (req.query as any)?.connectorInstanceId;
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    const text = value === null || value === undefined ? '' : String(value).trim();
+    return text && text !== 'all' ? text : null;
+};
 
 export const kpiRoutes = async (fastify: FastifyInstance) => {
 
@@ -18,10 +31,16 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
      */
     fastify.get('/tenants/:tenantId/projects/:siteId/kpi/catalog', async (req, reply) => {
         const { siteId } = req.params as any;
+        // Coverage is reported for the store the operator has selected, so
+        // switching stores re-derives which KPIs are actually available.
+        const connectorInstanceId = selectedConnectorId(req);
 
         // Check real connector instances in DB to determine which integrations are active
         const connectors = await prisma.connectorInstance.findMany({
-            where: { siteId },
+            where: {
+                siteId,
+                ...(connectorInstanceId ? { id: connectorInstanceId } : {})
+            },
             select: { category: true, status: true }
         });
 
@@ -30,8 +49,17 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
             .map(c => (c.category || '').toLowerCase());
 
         // Check if any browser/RUM telemetry exists (determines EXPERIENCE KPI availability)
-        const db = await getSiteDataPlaneClient(siteId);
-        const hasRumData = await db.performanceMetric.count({ where: { siteId }, take: 1 }).then((n: number) => n > 0);
+        const rumWhere = {
+            siteId,
+            ...(connectorInstanceId ? { connectorInstanceId } : {})
+        };
+        const rumCounts = connectorInstanceId
+            ? [await (await getScopedClient(siteId, connectorInstanceId))
+                .performanceMetric.count({ where: rumWhere, take: 1 })]
+            : await queryAllSiteClients<number>(siteId, async (db) => [
+                await db.performanceMetric.count({ where: rumWhere, take: 1 }),
+            ]);
+        const hasRumData = rumCounts.some((n) => Number(n) > 0);
         if (hasRumData && !activeCategories.includes('browser_sdk')) {
             activeCategories.push('browser_sdk');
         }
@@ -59,6 +87,10 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
         const { siteId } = req.params as any;
         const { range } = req.query as any;
         const correlationId = req.id as string;
+        // Every figure below is scoped to the selected store. Without this the
+        // page read only the site's FIRST store DB (getSiteDataPlaneClient
+        // returns clients[0]), so switching stores never changed the numbers.
+        const connectorInstanceId = selectedConnectorId(req);
 
         // Compute date filter from range param
         const now = new Date();
@@ -71,28 +103,39 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
         const dateFilter = startDate ? { gte: startDate, lte: now } : undefined;
 
         // 1. Revenue + Order Count from canonicalOrder
-        const db = await getSiteDataPlaneClient(siteId);
-        const [orders, perfMetrics, lifecycleEvents] = await Promise.all([
-            db.canonicalOrder.findMany({
+        // A store selection reads that store's DB only; with none selected we
+        // fan out across every store DB of the site and merge.
+        const readSiteData = async (query: (client: any) => Promise<any[]>): Promise<any[]> => {
+            if (!connectorInstanceId) return queryAllSiteClients<any>(siteId, query);
+            const db = await getScopedClient(siteId, connectorInstanceId);
+            return query(db);
+        };
+        const connectorWhere = connectorInstanceId ? { connectorInstanceId } : {};
+
+        const [orders, perfMetricsMerged, lifecycleEvents] = await Promise.all([
+            readSiteData((db: any) => db.canonicalOrder.findMany({
                 where: {
                     siteId,
+                    ...connectorWhere,
                     ...(dateFilter ? { placedAt: dateFilter } : {})
                 },
                 select: { totalAmount: true, createdAt: true, placedAt: true }
-            }),
-            db.performanceMetric.findMany({
+            })),
+            readSiteData((db: any) => db.performanceMetric.findMany({
                 where: {
                     siteId,
+                    ...connectorWhere,
                     metricName: { in: ['lcp', 'pageLoadTime', 'page_load_time'] },
                     ...(dateFilter ? { timestamp: dateFilter } : {})
                 },
                 select: { metricValue: true, timestamp: true },
                 orderBy: { timestamp: 'desc' },
                 take: 500
-            }),
+            })),
             prisma.connectorLifecycleEvent.findMany({
                 where: {
                     projectId: siteId,
+                    ...connectorWhere,
                     ...(dateFilter ? { createdAt: dateFilter } : {})
                 },
                 select: { severity: true, createdAt: true },
@@ -100,6 +143,13 @@ export const kpiRoutes = async (fastify: FastifyInstance) => {
                 take: 1000
             })
         ]);
+
+        // Each store DB ordered its own slice; re-sort the merged set so the
+        // newest-first assumptions below (avg over the latest 500, lastPerfDate)
+        // still hold on a multi-store site.
+        const perfMetrics = perfMetricsMerged
+            .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, 500);
 
         const totalRevenue = orders.reduce((s: number, o: any) => s + Number(o.totalAmount || 0), 0);
         const orderCount = orders.length;

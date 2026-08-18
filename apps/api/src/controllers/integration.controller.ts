@@ -12,6 +12,7 @@ import { BigCommerceCustomerSyncService } from '../services/bigcommerce-customer
 import { ConnectorResyncService } from '../services/connector-resync.service';
 import { registerShopifyPixel } from '../../../../packages/connectors/src/commerce/shopify-pixel.service';
 import { StoreHealthService } from '../services/store-health.service';
+import { ConnectorValidationService } from '../services/connector-validation.service';
 import { isTenantDataPlaneEnabled } from '../lib/tenant-prisma';
 import { provisionStoreDatabase } from '../services/tenant-database-provisioning.service';
 
@@ -196,27 +197,38 @@ export class IntegrationController {
 
     /**
      * Validate credentials for a connector type before persistence.
+     *
+     * Backs the setup modal's "Test Connection" button. Actually calls the
+     * merchant's store with the supplied credentials and reports, per
+     * capability, whether the token can read it — see
+     * ConnectorValidationService for the probe list.
+     *
+     * A store-side failure (bad token, missing scope) is still an HTTP 200 with
+     * `success: true`; the verdict lives in `data.ok`. That keeps the diagnostic
+     * metadata reachable by the client, which unwraps `data` and throws on
+     * non-2xx. Only a malformed request or an unregistered type is a non-2xx.
      */
     public static async validate(req: FastifyRequest, reply: FastifyReply) {
         const { type, config, credentials } = req.body as any;
-        
+
         const connector = ConnectorRegistry.get(type);
         if (!connector) {
-            return reply.code(404).send(ResponseUtil.error([{ 
-                code: 'CONNECTOR_NOT_FOUND', 
-                message: `Connector type '${type}' is not registered in the system.` 
+            return reply.code(404).send(ResponseUtil.error([{
+                code: 'CONNECTOR_NOT_FOUND',
+                message: `Connector type '${type}' is not registered in the system.`
             }], req.id as string));
         }
 
-        try {
-            const result = await connector.validateCredentials(config, credentials);
-            return reply.send(ResponseUtil.success(result, { type }, req.id as string));
-        } catch (err: any) {
-            return reply.code(500).send(ResponseUtil.error([{ 
-                code: 'VALIDATION_FAILED', 
-                message: err.message 
-            }], req.id as string));
-        }
+        const result = await ConnectorValidationService.validate(type, config || {}, credentials || {});
+
+        console.log('[IntegrationController] validate', {
+            type,
+            ok: result.ok,
+            latencyMs: result.metadata.latencyMs,
+            scopesMissing: result.metadata.scopesMissing,
+        });
+
+        return reply.send(ResponseUtil.success(result, { type }, req.id as string));
     }
 
     /**

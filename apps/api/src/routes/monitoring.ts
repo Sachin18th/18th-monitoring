@@ -284,7 +284,14 @@ export const monitoringRoutes = async (fastify: FastifyInstance) => {
      */
     fastify.get('/tenants/:tenantId/projects/:siteId/alert-rules', async (req, reply) => {
         const { siteId } = req.params as any;
-        const rules = await AlertRuleService.list(siteId);
+        const { connector_instance_id } = req.query as any;
+        // Same normalization as GET /alerts: a repeated query param arrives as
+        // an array. Scoping the list is what makes the Alert Center show the
+        // selected store's rules instead of every store's.
+        const connectorInstanceId = Array.isArray(connector_instance_id)
+            ? connector_instance_id[0]
+            : connector_instance_id;
+        const rules = await AlertRuleService.list(siteId, connectorInstanceId);
         return reply.send(ResponseUtil.success({ rules }, {}, req.id as string));
     });
 

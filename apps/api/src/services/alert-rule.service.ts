@@ -35,9 +35,22 @@ export class AlertRuleService {
     };
   }
 
-  static async list(siteId: string) {
+  /**
+   * @param connectorInstanceId When set, returns only the rules that apply to
+   *   that store: rules scoped to it, plus project-wide rules (null scope,
+   *   which evaluate the whole project and must stay visible whichever store is
+   *   selected). Omit it — as the AlertEngine does — to get every rule of the site.
+   */
+  static async list(siteId: string, connectorInstanceId?: string | null) {
+    const scoped = connectorInstanceId && connectorInstanceId !== 'all' ? connectorInstanceId : null;
     const rows = await queryAllSiteClients(siteId, (db) =>
-      db.alertRule.findMany({ where: { siteId }, orderBy: { createdAt: 'desc' } }),
+      db.alertRule.findMany({
+        where: {
+          siteId,
+          ...(scoped ? { OR: [{ connectorInstanceId: scoped }, { connectorInstanceId: null }] } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
     );
     // Re-sort the merged set (each store DB was individually ordered).
     rows.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());

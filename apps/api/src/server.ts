@@ -147,7 +147,11 @@ export const bootstrapApi = async () => {
 
         const err = error as any;
         const message = env.NODE_ENV === 'production' ? 'An internal server error occurred' : error.message;
-        reply.status(500).send(errorResponse(message, err.code || 'INTERNAL_SERVER_ERROR', null, correlationId));
+        // Honour an explicit 5xx from the error (e.g. 503 when a store database
+        // failed to provision) instead of flattening everything to 500.
+        const status = Number(err.statusCode);
+        reply.status(Number.isFinite(status) && status >= 500 ? status : 500)
+            .send(errorResponse(message, err.code || 'INTERNAL_SERVER_ERROR', null, correlationId));
     });
     
     // ── Global Observability & Security Middlewares ────────────────────────

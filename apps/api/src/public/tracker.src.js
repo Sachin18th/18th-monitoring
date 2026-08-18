@@ -95,6 +95,12 @@
     var SENSITIVE = /(token|auth|email|password|secret|key|sig|otp)/i;
 
     // ── Tiny helpers ─────────────────────────────────────────────────────────
+    // Captured before patchNetwork() instruments window.fetch: every identity
+    // probe goes through this, so our own requests can never be mistaken for an
+    // add-to-cart call or reported as a storefront network error by RUM.
+    var NATIVE_FETCH = null;
+    try { if (window.fetch) NATIVE_FETCH = window.fetch.bind(window); } catch (e) {}
+
     function nowMs() { try { return Date.now(); } catch (e) { return +new Date(); } }
 
     function uuid() {
@@ -382,6 +388,7 @@
     var BC_ID_KEY = '__plat_bid';   // sessionStorage — cached BigCommerce identity (JSON)
     var SHOP_ID_KEY = '__plat_shid';// sessionStorage — cached Shopify identity (JSON)
     var IDS_KEY = '__plat_ids';     // sessionStorage — identity signal emitted this session
+    var CUSTOM_ID_KEY = '__plat_cid';// sessionStorage — app-supplied identity (headless/PWA)
     var ID_FETCH_TIMEOUT_MS = 3000; // abandon a probe fetch after 3s (next page retries)
     var _identity = null;
     var _identityAt = 0;
@@ -393,6 +400,23 @@
     // backend can see WHY identity did or didn't resolve on a given storefront
     // (invaluable when debugging a store we can't log into ourselves).
     var _idProbe = '';
+    // Identity pushed in by the host application via window.track.identify().
+    // Headless storefronts (PWA / custom front-ends) expose none of the platform
+    // globals the probes below read, so the app itself is the only source of
+    // truth there. This is STICKY: no probe may overwrite or clear it — only
+    // window.track.reset() (logout / account switch) does.
+    var _appIdentity = null;
+    var _appIdentitySig = '';       // last payload emitted, so identify() is idempotent
+    try {
+      var _appCached = store('s', CUSTOM_ID_KEY);
+      if (_appCached) {
+        var _appParsed = JSON.parse(_appCached);
+        if (_appParsed && (_appParsed.email || _appParsed.customer_name || _appParsed.customer_id)) {
+          _appIdentity = _appParsed;
+          _appIdentitySig = _appCached;
+        }
+      }
+    } catch (e) {}
 
     function cacheIdentity(key, out, probeTag) {
       _identity = out;
@@ -403,7 +427,9 @@
 
     // The sessionStorage key each platform caches its resolved identity under
     // (__plat_mid / __plat_bid / __plat_shid) — so a tag/element-sourced
-    // identity is persisted in the same slot the async probes use.
+    // identity is persisted in the same slot the async probes use. Headless
+    // front-ends have no such slot: an app-supplied identity lives in
+    // __plat_cid, written ONLY by window.track.identify() — see below.
     function idKeyForPlatform() {
       var p = platform();
       if (p === 'adobe_commerce') return MAGE_ID_KEY;
@@ -448,7 +474,7 @@
           }, ID_FETCH_TIMEOUT_MS);
         }
       } catch (e) {}
-      return window.fetch(url, opts);
+      return (NATIVE_FETCH || window.fetch)(url, opts);
     }
 
     // Async fallback for Magento themes that don't populate mage-cache-storage:
@@ -530,6 +556,34 @@
       } catch (e) {}
     }
 
+    // A server-rendered identity global — the platform-agnostic sibling of
+    // readTagIdentity(). Any storefront that can render into its own HTML shell
+    // (Shopify Liquid, a Next.js/SSR PWA, a custom front-end) can expose the
+    // logged-in shopper this way, and it lands on the FIRST event of the page —
+    // before an app-side identify() call could hydrate:
+    //   <script>window.__PLAT_CUSTOMER__={id:..,name:"..",email:".."}</script>
+    // Mutates + returns `out`.
+    function readGlobalIdentity(out) {
+      try {
+        var pc = window.__PLAT_CUSTOMER__;
+        if (pc && typeof pc === 'object') {
+          if (pc.email) out.email = String(pc.email).slice(0, 320);
+          if (pc.name) out.customer_name = String(pc.name).slice(0, 200);
+          else {
+            var nm = [pc.first_name || pc.firstName, pc.last_name || pc.lastName].filter(Boolean).join(' ');
+            if (nm) out.customer_name = nm.slice(0, 200);
+          }
+          if (pc.id != null && pc.id !== 0 && pc.id !== '') out.customer_id = String(pc.id).slice(0, 100);
+          if (out.email || out.customer_name || out.customer_id) {
+            // Keep Shopify's historical breadcrumb value; everything else gets
+            // its own, so the dashboard can tell the two sources apart.
+            _idProbe = platform() === 'shopify' ? 'shopify_liquid:ok' : 'global_customer:ok';
+          }
+        }
+      } catch (e) {}
+      return out;
+    }
+
     // Read the logged-in Shopify shopper's signals from the storefront globals
     // into `out`. Shopify exposes only the numeric customer id on normal pages
     // (ShopifyAnalytics.meta.page.customerId / __st.cid) — the id is resolved to
@@ -544,19 +598,7 @@
       //     id:{{ customer.id | json }}};</script>{% endif %}
       // When present it yields full name+email; otherwise we fall back to the
       // numeric id below (resolved to a synced profile server-side).
-      try {
-        var pc = window.__PLAT_CUSTOMER__;
-        if (pc && typeof pc === 'object') {
-          if (pc.email) out.email = String(pc.email).slice(0, 320);
-          if (pc.name) out.customer_name = String(pc.name).slice(0, 200);
-          else {
-            var nm = [pc.first_name || pc.firstName, pc.last_name || pc.lastName].filter(Boolean).join(' ');
-            if (nm) out.customer_name = nm.slice(0, 200);
-          }
-          if (pc.id != null && pc.id !== 0 && pc.id !== '') out.customer_id = String(pc.id).slice(0, 100);
-          if (out.email || out.customer_name || out.customer_id) _idProbe = 'shopify_liquid:ok';
-        }
-      } catch (e) {}
+      readGlobalIdentity(out);
       try {
         if (!out.customer_id) {
           var a = window.ShopifyAnalytics;
@@ -603,6 +645,280 @@
         };
         setTimeout(poll, 800);
       } catch (e) {}
+    }
+
+    // ── Headless Magento: PWA Studio / Venia ────────────────────────────────
+    // A Venia storefront is invisible to every probe above: it exposes no
+    // window.Magento, no Magento body classes (so platform() === 'custom'), it
+    // has no mage-cache-storage (that is a Luma/RequireJS artifact), and it runs
+    // on its own origin authenticating with a bearer JWT rather than the PHP
+    // session cookie — so /customer/section/load/ is unreachable too.
+    //
+    // What it DOES have, in localStorage:
+    //   M2_VENIA_BROWSER_PERSISTENCE__signin_token
+    //     → {"value":"\"<jwt>\"","timeStored":<ms>,"ttl":<seconds>}
+    //       the JWT payload carries `uid` — the Magento customer entity id,
+    //       which the backend resolves to a name/email against the synced
+    //       customer_profiles.external_ids->>'adobe_commerce'.
+    //   apollo-cache-persist-default
+    //     → the persisted Apollo cache; once Venia has run its customer query
+    //       this holds a { __typename: "Customer", firstname, lastname, email }
+    //       entity, giving us the name/email directly.
+    // The token itself is NEVER transmitted — only the uid it contains.
+    var PWA_M2_PREFIX = 'M2_VENIA_BROWSER_PERSISTENCE__';
+    var PWA_ID_KEY = '__plat_pwaid'; // sessionStorage — cached Venia identity (JSON)
+    var _pwaFetchAt = 0;             // throttle for the authenticated GraphQL probe
+    var APOLLO_MAX_NODES = 20000;    // walk budget: never block the main thread
+
+    function b64urlDecode(str) {
+      try {
+        var s = String(str).replace(/-/g, '+').replace(/_/g, '/');
+        while (s.length % 4) s += '=';
+        return window.atob(s);
+      } catch (e) { return ''; }
+    }
+
+    // Read one BrowserPersistence envelope, honouring its ttl. Values are stored
+    // JSON-encoded inside `value`, so a token comes back as a bare string.
+    function veniaGet(name) {
+      try {
+        var raw = window.localStorage.getItem(PWA_M2_PREFIX + name);
+        if (!raw) return null;
+        var env = JSON.parse(raw);
+        if (!env || env.value === undefined) return null;
+        if (env.timeStored && env.ttl && nowMs() - env.timeStored > env.ttl * 1000) return null;
+        var v = env.value;
+        if (typeof v === 'string') { try { v = JSON.parse(v); } catch (e) {} }
+        return v;
+      } catch (e) { return null; }
+    }
+
+    function isVenia() {
+      try {
+        if (window.localStorage.getItem(PWA_M2_PREFIX + 'signin_token') != null) return true;
+        for (var i = 0; i < window.localStorage.length; i++) {
+          var k = window.localStorage.key(i);
+          if (k && k.indexOf(PWA_M2_PREFIX) === 0) return true;
+        }
+      } catch (e) {}
+      return false;
+    }
+
+    // Breadth-first hunt through the persisted Apollo cache for the Customer
+    // entity. Apollo normalises differently across versions (Customer:<id>,
+    // embedded under ROOT_QUERY.customer, or a plain object), so we match on
+    // __typename rather than on any key shape, with a hard node budget.
+    function apolloCustomer() {
+      try {
+        var raw = null;
+        for (var i = 0; i < window.localStorage.length; i++) {
+          var k = window.localStorage.key(i);
+          if (k && k.indexOf('apollo-cache-persist') === 0) { raw = window.localStorage.getItem(k); break; }
+        }
+        if (!raw) return null;
+        var root = JSON.parse(raw);
+        var queue = [root], seen = 0;
+        while (queue.length && seen < APOLLO_MAX_NODES) {
+          var node = queue.shift();
+          seen++;
+          if (!node || typeof node !== 'object') continue;
+          if (node.__typename === 'Customer' && (node.email || node.firstname || node.lastname)) return node;
+          for (var key in node) {
+            if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
+            var v = node[key];
+            if (v && typeof v === 'object') queue.push(v);
+            else if (typeof v === 'string' && v.length > 2 && v.charAt(0) === '{') {
+              // Some persisters store each entity as a JSON string.
+              try { var pv = JSON.parse(v); if (pv && typeof pv === 'object') queue.push(pv); } catch (e) {}
+            }
+          }
+        }
+      } catch (e) {}
+      return null;
+    }
+
+    // Authenticated identity for a Venia storefront: ask Magento directly.
+    //
+    // This is the PWA's counterpart to fetchMagentoIdentity()'s section-load call
+    // and, in practice, the only path that always works. The alternatives each
+    // depend on something that may not be there:
+    //   - the JWT uid alone needs the shopper to exist in the synced
+    //     customer_profiles (external_ids.adobe_commerce);
+    //   - the Apollo cache needs Venia to have already run + persisted a customer
+    //     query (cold cache, purge-on-signout, or persistence disabled → nothing).
+    // A bearer-token GraphQL query needs neither: a signed-in shopper always has
+    // a token, and Magento answers with the authoritative record. This is exactly
+    // how Venia itself renders "Hi, <name>".
+    //
+    // The token is sent ONLY to the store's own GraphQL endpoint, in the
+    // Authorization header, and is never transmitted to our ingest; cookies are
+    // omitted (the bearer token is the whole credential). Only firstname,
+    // lastname and email are read off the response.
+    //
+    // Endpoint: relative /graphql by default, which is same-origin on a Venia /
+    // UPWARD deployment (no CORS involved). A build whose browser talks straight
+    // to the Magento backend origin can override it with data-graphql-url on the
+    // tracker tag; without CORS on that backend the probe simply fails silently
+    // and the uid / identify() paths still apply.
+    function veniaGraphqlUrl() {
+      try {
+        var u = ds.graphqlUrl || qp.gql || qp.graphql_url || cfg.graphqlUrl;
+        if (u) return String(u);
+      } catch (e) {}
+      try { return location.origin + '/graphql'; } catch (e) { return '/graphql'; }
+    }
+
+    function fetchVeniaIdentity(token, uid) {
+      try {
+        if (!token || !window.fetch) return;
+        if (_appIdentity) return;                                   // identify() wins
+        if (_identity && (_identity.customer_name || _identity.email)) return;
+        var t = nowMs();
+        if (t - _pwaFetchAt < 60000) return;                        // one attempt per minute
+        _pwaFetchAt = t;
+
+        var headers = {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        };
+        // Multi-store: pass Venia's own store view when it has one. Omitted
+        // otherwise, which lets Magento fall back to its default store view —
+        // hardcoding 'default' would pin the wrong view on a multi-store setup.
+        try {
+          var sv = veniaGet('store_view_code');
+          if (sv && typeof sv === 'string') headers['Store'] = sv.slice(0, 60);
+        } catch (e) {}
+
+        var timedOut = false;
+        fetchWithTimeout(veniaGraphqlUrl(), {
+          method: 'POST',
+          credentials: 'omit',
+          headers: headers,
+          body: JSON.stringify({ query: '{customer{firstname lastname email}}' })
+        }, function () { timedOut = true; }).then(function (r) {
+          if (!r || !r.ok) {
+            _idProbe = 'pwa_gql:http_' + (r ? r.status : 0);
+            emitIdentitySignal();
+            return null;
+          }
+          return r.json();
+        }).then(function (j) {
+          try {
+            if (!j) return;
+            // Magento reports auth failures INSIDE a 200 response, so an
+            // errors[] payload must be treated as a failure, not as "no name".
+            if (j.errors && j.errors.length) {
+              _idProbe = 'pwa_gql:unauth';
+              emitIdentitySignal();
+              return;
+            }
+            var c = j.data && j.data.customer;
+            if (!c) { _idProbe = 'pwa_gql:empty'; emitIdentitySignal(); return; }
+            var out = {};
+            var nm = [c.firstname, c.lastname].filter(Boolean).join(' ').trim();
+            if (nm) out.customer_name = nm.slice(0, 200);
+            if (c.email) out.email = String(c.email).slice(0, 320);
+            if (uid) out.customer_id = String(uid).slice(0, 100);
+            if (!out.customer_name && !out.email && !out.customer_id) {
+              _idProbe = 'pwa_gql:empty';
+              emitIdentitySignal();
+              return;
+            }
+            cacheIdentity(PWA_ID_KEY, out, 'pwa_gql:ok');
+            try { store('s', IDS_KEY, ''); } catch (e) {}  // re-arm: this may be a mid-session login
+            emitIdentitySignal();
+          } catch (e) {}
+        })['catch'](function () {
+          try {
+            _idProbe = timedOut ? 'pwa_gql:timeout' : 'pwa_gql:err';
+            emitIdentitySignal();
+          } catch (e) {}
+        });
+      } catch (e) {}
+    }
+
+    // Resolve a logged-in Venia shopper. Mutates + returns `out`.
+    function readPwaIdentity(out) {
+      try {
+        if (!isVenia()) return out;
+        // The token is the single source of "is anyone signed in". It is read
+        // FIRST, before the session cache, because Venia's sign-out removes it —
+        // and a store that never integrated identify() has no way to call
+        // reset(). Cache-first would keep serving the previous shopper for the
+        // rest of the tab's session.
+        var tok = veniaGet('signin_token');
+        var signedIn = typeof tok === 'string' && tok.indexOf('.') > 0;
+        if (!signedIn) {
+          try { store('s', PWA_ID_KEY, ''); } catch (e) {}   // invalidate on sign-out
+          if (!_idProbe) _idProbe = 'pwa_venia:guest';
+          return out;
+        }
+        // Resolved earlier this session? (the Apollo walk is the expensive part)
+        try {
+          var pc = store('s', PWA_ID_KEY);
+          if (pc) {
+            var pj = JSON.parse(pc);
+            if (pj && (pj.email || pj.customer_name || pj.customer_id)) {
+              if (pj.email && !out.email) out.email = pj.email;
+              if (pj.customer_name && !out.customer_name) out.customer_name = pj.customer_name;
+              if (pj.customer_id && !out.customer_id) out.customer_id = pj.customer_id;
+              _idProbe = 'pwa_venia:ok';
+              return out;
+            }
+          }
+        } catch (e) {}
+
+        var found = {};
+        // 1) The signin token proves a logged-in shopper and carries the uid.
+        if (signedIn) {
+          var payload = tok.split('.')[1];
+          var claims = null;
+          try { claims = JSON.parse(b64urlDecode(payload)); } catch (e) {}
+          var uid = claims && (claims.uid != null ? claims.uid : claims.customer_id);
+          if (uid != null && String(uid) !== '0') found.customer_id = String(uid).slice(0, 100);
+        }
+        // 2) Venia may also persist the customer object outright.
+        var cust = veniaGet('customer') || veniaGet('user');
+        // 3) Otherwise mine the persisted Apollo cache for the Customer entity.
+        if (!cust || typeof cust !== 'object') cust = apolloCustomer();
+        if (cust && typeof cust === 'object') {
+          if (cust.email && !found.email) found.email = String(cust.email).slice(0, 320);
+          var nm = cust.name || [cust.firstname || cust.first_name, cust.lastname || cust.last_name]
+            .filter(Boolean).join(' ');
+          if (nm) found.customer_name = String(nm).trim().slice(0, 200);
+          var cid = cust.id != null ? cust.id : cust.entity_id;
+          if (!found.customer_id && cid != null && String(cid) !== '0') found.customer_id = String(cid).slice(0, 100);
+        }
+
+        if (!found.email && !found.customer_name && !found.customer_id) {
+          // Signed in, but the token's claims had an unexpected shape and the
+          // Apollo cache was cold — the authenticated query still resolves them.
+          fetchVeniaIdentity(tok, null);
+          if (!_idProbe) _idProbe = 'pwa_venia:token';
+          return out;
+        }
+        if (found.email && !out.email) out.email = found.email;
+        if (found.customer_name && !out.customer_name) out.customer_name = found.customer_name;
+        if (found.customer_id && !out.customer_id) out.customer_id = found.customer_id;
+        _idProbe = found.customer_name || found.email ? 'pwa_venia:ok' : 'pwa_venia:uid';
+        // Signed in, but the local reads produced no human-readable identity
+        // (Apollo cache cold — the common case). Ask Magento directly.
+        if (!found.customer_name && !found.email) {
+          fetchVeniaIdentity(tok, found.customer_id);
+        }
+        try { store('s', PWA_ID_KEY, JSON.stringify(found)); } catch (e) {}
+        // First resolution of this session — typically a login that happened
+        // with no page load, long after the boot-time signal already reported
+        // "nothing found". Re-arm and fire it so the identity reaches the ingest
+        // immediately rather than riding the shopper's next tracked interaction.
+        // Deferred: emitIdentitySignal() envelopes an event, which re-enters
+        // identityInfo(), and we are inside it right now.
+        try {
+          store('s', IDS_KEY, '');
+          setTimeout(function () { try { emitIdentitySignal(); } catch (e) {} }, 0);
+        } catch (e) {}
+      } catch (e) {}
+      return out;
     }
 
     // Identity rendered by the store's server directly onto our own <script> tag,
@@ -657,6 +973,13 @@
     }
 
     function identityInfo() {
+      // Identity pushed in by the host app (window.track.identify) wins outright
+      // and never expires. Without this short-circuit an app-supplied identity
+      // would be wiped 15s later: the TTL lapses, the probes below find nothing
+      // on a headless storefront (platform 'custom' has no branch), and the
+      // `_identity = out ? ... : null` at the end of this function nulls it —
+      // silently anonymising every subsequent event.
+      if (_appIdentity) { _identityAt = nowMs(); return _appIdentity; }
       var t = nowMs();
       if (_identityAt && t - _identityAt < 15000) return _identity; // probe at most every 15s
       var out = {};
@@ -677,6 +1000,15 @@
         } catch (e) {}
         return _identity;
       }
+      // Server-rendered identity global — checked for every platform (not just
+      // Shopify) so a headless/SSR front-end resolves without a platform branch.
+      // Flow continues into the branches below, so Shopify still layers its
+      // numeric-cid fallback on top when the global carries only name/email.
+      readGlobalIdentity(out);
+      // Magento PWA Studio / Venia: localStorage token + persisted Apollo cache.
+      // Universal like the two above — Venia detects as platform 'custom', so a
+      // platform branch would never run for it.
+      readPwaIdentity(out);
       try {
         var p = platform();
         if (p === 'adobe_commerce') {
@@ -1543,12 +1875,98 @@
     window.track = function (type, props) {
       try { if (type) emit(String(type), props && typeof props === 'object' ? props : {}); } catch (e) {}
     };
-    // Drain any pre-load queued calls: window._platq = [['type', {..}], ...]
+
+    // window.track.identify({ id, name, email }) — the host application tells us
+    // who is logged in. This is the ONLY identity source available to a headless
+    // storefront (PWA / custom front-end): none of the platform globals the
+    // probes read exist there, and no same-origin platform endpoint is reachable.
+    //
+    // Call it whenever the app's auth state changes — including on cold-start
+    // token rehydration, not just on the login submit — and call reset() on
+    // logout. Repeat calls with the same payload are ignored, so wiring it
+    // straight into a framework effect is safe.
+    //
+    // Pass the PLATFORM's customer id (Shopify/BigCommerce/Magento), not an
+    // internal app id: the backend resolves it against the synced
+    // customer_profiles.external_ids to recover name/email if this beacon is lost.
+    window.track.identify = function (o) {
+      try {
+        // Reject empties and unrendered template placeholders, so a broken
+        // server-side interpolation can never become a bogus customer_id.
+        var clean = function (v) {
+          if (v == null) return '';
+          var s = String(v).trim();
+          if (!s || s === '0' || s === 'null' || s === 'undefined') return '';
+          return s.indexOf('{{') > -1 ? '' : s;
+        };
+        var out = {};
+        var email = clean(o && o.email);
+        var name = clean(o && (o.name || o.customer_name));
+        var id = clean(o && (o.id || o.customer_id));
+        if (!name && o) {
+          var n = [clean(o.first_name || o.firstName), clean(o.last_name || o.lastName)]
+            .filter(Boolean).join(' ');
+          if (n) name = n;
+        }
+        if (email) out.email = email.slice(0, 320);
+        if (name) out.customer_name = name.slice(0, 200);
+        if (id) out.customer_id = id.slice(0, 100);
+        if (!out.email && !out.customer_name && !out.customer_id) return;
+
+        var sig = JSON.stringify(out);
+        if (sig === _appIdentitySig) return;  // idempotent — safe in a render loop
+        _appIdentitySig = sig;
+        _appIdentity = out;
+        // Always __plat_cid, on every platform: this slot means "the app told us",
+        // and only it is restored as sticky identity on the next page load. The
+        // per-platform slots stay what their probes produced.
+        cacheIdentity(CUSTOM_ID_KEY, out, 'app_identify:ok');
+        // Re-arm the once-per-session identity signal ('' is falsy, and store()
+        // has no delete) so a login mid-session is transmitted immediately
+        // instead of waiting for the shopper's next tracked interaction.
+        try { store('s', IDS_KEY, ''); } catch (e) {}
+        emitIdentitySignal();
+      } catch (e) {}
+    };
+
+    // window.track.reset() — logout / account switch. Without this the resolved
+    // identity outlives the shopper: a long-lived PWA tab would attribute the
+    // next user's sessions to the previous one, and backfillVisitorIdentity
+    // would then spread that label across the visitor's other sessions.
+    window.track.reset = function () {
+      try {
+        _appIdentity = null;
+        _appIdentitySig = '';
+        _identity = null;
+        _identityAt = 0;
+        _identitySent = false;
+        _idProbe = '';
+        var keys = [CUSTOM_ID_KEY, SHOP_ID_KEY, MAGE_ID_KEY, BC_ID_KEY, PWA_ID_KEY, IDS_KEY];
+        for (var k = 0; k < keys.length; k++) {
+          try { store('s', keys[k], ''); } catch (e) {}
+        }
+      } catch (e) {}
+    };
+
+    // The tracker's cross-session visitor id — for a server-to-server identity
+    // link (POST {visitor_id, customer} from the app's backend) when a
+    // client-side beacon can't be relied on.
+    window.track.visitorId = function () { return VISITOR; };
+
+    // Drain any pre-load queued calls: window._platq = [['type', {..}], ...].
+    // 'identify' / 'reset' are routed to their handlers rather than emitted as
+    // event types — a PWA app shell often knows the shopper (restored token)
+    // before this async script has executed.
     try {
       var pre = window._platq;
       if (pre && pre.length) {
         for (var i = 0; i < pre.length; i++) {
-          try { window.track.apply(null, pre[i]); } catch (e) {}
+          try {
+            var call = pre[i] || [];
+            if (call[0] === 'identify') window.track.identify(call[1]);
+            else if (call[0] === 'reset') window.track.reset();
+            else window.track.apply(null, call);
+          } catch (e) {}
         }
         window._platq = [];
       }
@@ -1592,8 +2010,18 @@
     // 500ms poll backstop for SPA frameworks that bypass history hooks.
     try { setInterval(function () { try { onNav(); } catch (e) {} }, 500); } catch (e) {}
 
-    // Periodic flush.
-    try { setInterval(function () { try { flush(false); } catch (e) {} }, FLUSH_MS); } catch (e) {}
+    // Periodic flush. While the shopper is still anonymous this also re-runs the
+    // identity probes: on a SPA a login can happen with no navigation and no
+    // tracked interaction, and identityInfo() is otherwise only reached from
+    // envelope() — so an idle post-login tab would never notice. identityInfo()
+    // rate-limits itself to one probe per 15s, and each probe short-circuits on
+    // its session cache once identity resolves, so this costs nothing after.
+    try {
+      setInterval(function () {
+        try { flush(false); } catch (e) {}
+        try { if (!_identity && !_appIdentity) identityInfo(); } catch (e) {}
+      }, FLUSH_MS);
+    } catch (e) {}
 
     // First navigation (initial page load).
     onNav();
