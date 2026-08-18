@@ -4,7 +4,7 @@ import React from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { LockKeyhole } from 'lucide-react';
 import { Button, Typography } from '@kpi-platform/ui';
-import { getDefaultProjectPathForRole, normalizeRole } from '@kpi-platform/shared-types';
+import { canAccessProjectPath } from '@kpi-platform/shared-types';
 import { useAuth } from '../../context/AuthContext';
 
 interface PageRestrictedProps {
@@ -24,11 +24,13 @@ export const PageRestricted: React.FC<PageRestrictedProps> = ({ message }) => {
   const { user } = useAuth();
 
   const projectId = (params?.projectId as string) || '';
-  const normalizedRole = normalizeRole(user?.role);
 
   const handleGoBack = () => {
-    if (projectId && normalizedRole) {
-      router.replace(`/project/${projectId}${getDefaultProjectPathForRole(normalizedRole)}`);
+    // Overview is in every role's sidebar set, so it is the safe landing spot
+    // for anyone who hit a restricted page. Still gate on canAccessProjectPath
+    // so a future ROLE_ACCESS change can't bounce the user restricted → restricted.
+    if (projectId && canAccessProjectPath(user?.role, `/project/${projectId}/overview`)) {
+      router.replace(`/project/${projectId}/overview`);
       return;
     }
 

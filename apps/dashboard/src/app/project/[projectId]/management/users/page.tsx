@@ -1,12 +1,13 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Button, Input, Typography } from '@kpi-platform/ui';
 import { Plus, RefreshCw, Search, ShieldCheck, UserPlus, UserX, Users, X } from 'lucide-react';
 import { PROJECT_PAGE_ACCESS_OPTIONS, PROJECT_PAGE_KEYS, normalizeRole } from '@kpi-platform/shared-types';
 import { useAuth } from '../../../../../context/AuthContext';
+import { useConnectorFilter } from '../../../../../hooks/useConnectorFilter';
 import { RoleGuard } from '../../../../../components/auth/RoleGuard';
 import { SectionHeader } from '../../../../../components/ui/SectionHeader';
 import { PageHero } from '../../../../../components/PageHero';
@@ -267,6 +268,12 @@ export default function UserManagementPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { apiFetch, user } = useAuth();
+  // Governance is project-wide: access, roles and page permissions are granted
+  // per project, not per store, so the roster is the same whichever store is
+  // selected. We still re-sync on a switch (so the page never shows a snapshot
+  // taken under the old scope) and name the active store in the header so the
+  // project-wide scope is explicit rather than looking like a stuck filter.
+  const { connectorLabel, connectorInstanceId, connectorSelectionTick } = useConnectorFilter();
 
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -304,6 +311,15 @@ export default function UserManagementPage() {
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  // Re-sync when the operator switches the active store. Skips the first run —
+  // the mount load above already covers it.
+  const lastSelectionTick = useRef(connectorSelectionTick);
+  useEffect(() => {
+    if (lastSelectionTick.current === connectorSelectionTick) return;
+    lastSelectionTick.current = connectorSelectionTick;
+    loadUsers();
+  }, [connectorSelectionTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The API already scopes the roster to this project's members plus super admins,
   // so show exactly what it returns.
@@ -548,7 +564,11 @@ export default function UserManagementPage() {
               icon={ShieldCheck}
               eyebrow="Governance"
               title="Administration"
-              subtitle={`Manage project access, permissions, and account status for ${projectId}.`}
+              subtitle={
+                connectorInstanceId
+                  ? `Manage project access, permissions, and account status for ${projectId} — project-wide, covering ${connectorLabel} and every other store.`
+                  : `Manage project access, permissions, and account status for ${projectId}.`
+              }
               live
             />
 

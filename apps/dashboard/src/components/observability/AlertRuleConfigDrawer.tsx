@@ -210,6 +210,9 @@ export function AlertRuleConfigDrawer({
   const loadRules = useCallback(async () => {
     setLoading(true);
     try {
+      // apiFetch stamps the active store's connector_instance_id, so the backend
+      // returns this store's rules plus the project-wide ones. connectorInstanceId
+      // is a dependency so switching stores with the drawer open re-scopes the list.
       const res = await apiFetch(`/api/v1/dashboard/alert-rules`, { suppressUnauthorizedRedirect: true });
       setRules(Array.isArray(res?.rules) ? res.rules : []);
     } catch (err) {
@@ -218,7 +221,7 @@ export function AlertRuleConfigDrawer({
     } finally {
       setLoading(false);
     }
-  }, [apiFetch, showError]);
+  }, [apiFetch, showError, connectorInstanceId]);
 
   const loadNotif = useCallback(async () => {
     try {

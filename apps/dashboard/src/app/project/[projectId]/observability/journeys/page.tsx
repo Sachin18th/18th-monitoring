@@ -200,7 +200,7 @@ export default function JourneyIntelligencePage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [range, setRange] = useState<'7d' | '30d' | '90d'>('30d');
+  const [range, setRange] = useState<'1d' | '7d' | '30d'>('1d');
   const [funnelSteps, setFunnelSteps] = useState<any[]>([]);
   const [intelligence, setIntelligence] = useState<any>(null);
   const [allowedPageKeys, setAllowedPageKeys] = useState<string[] | null>(null);
@@ -407,7 +407,7 @@ export default function JourneyIntelligencePage() {
             <>
               <select
                 value={range}
-                onChange={(event) => setRange(event.target.value as '7d' | '30d' | '90d')}
+                onChange={(event) => setRange(event.target.value as '1d' | '7d' | '30d')}
                 aria-label="Date range"
                 style={{
                   borderRadius: '10px',
@@ -420,9 +420,9 @@ export default function JourneyIntelligencePage() {
                   cursor: 'pointer'
                 }}
               >
+                <option value="1d">Last 1 day</option>
                 <option value="7d">Last 7 days</option>
                 <option value="30d">Last 30 days</option>
-                <option value="90d">Last 90 days</option>
               </select>
               <div
                 style={{
@@ -1151,11 +1151,14 @@ export default function JourneyIntelligencePage() {
 
         {/* Session Journey Timeline — individual visitor paths, event by event.
             Self-contained: loads its own session/event data scoped to the active
-            connector. Rendered below all existing journey intelligence sections. */}
+            connector. `range` keeps its Explore lane on the same date window as
+            the funnel above it. Rendered below all existing journey intelligence
+            sections. */}
         <SessionJourneyTimeline
           projectId={String(projectId)}
           connectorInstanceId={connectorInstanceId || ''}
           tenantId={user?.tenantId || ''}
+          range={range}
         />
       </div>
 

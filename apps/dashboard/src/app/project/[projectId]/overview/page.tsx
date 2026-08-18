@@ -15,6 +15,7 @@ import {
   ChevronRight,
   Flame,
   Database,
+  Map as MapIcon,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -422,14 +423,11 @@ export default function ProjectOverviewPage() {
           : 'Order throughput, failures and delays.',
     },
     {
-      name: 'Performance',
-      icon: Activity,
-      path: 'performance',
-      tone: latencyTone as 'success' | 'warning' | 'critical',
-      metric:
-        perf?.p95 !== undefined
-          ? `p95 ${formatMs(perf.p95)} · uptime ${Number(perf.uptime || 0).toFixed(2)}%`
-          : 'Latency and uptime across the fleet.',
+      name: 'Journey Intel',
+      icon: MapIcon,
+      path: 'observability/journeys',
+      tone: 'success' as 'success' | 'warning' | 'critical',
+      metric: 'Session journeys, funnel drop-off and conversion paths.',
     },
     {
       name: 'Customers',

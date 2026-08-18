@@ -317,6 +317,13 @@ model StorefrontSession {
   @@index([connectorInstanceId, channel], map: "idx_storefront_session_channel")
   @@index([connectorInstanceId, funnelStage, startedAt(sort: Desc)], map: "idx_ss_funnel")
   @@index([connectorInstanceId, purchaseCompleted, startedAt(sort: Desc)], map: "idx_ss_purchase")
+  // Session Journey Timeline list ordering + (startedAt, id) keyset cursor.
+  @@index([connectorInstanceId, startedAt(sort: Desc), id(sort: Desc)], map: "idx_ss_recent")
+  // NOTE: a partial index `idx_ss_abandoned` also exists on
+  // (connector_instance_id, started_at DESC) WHERE checkout_started AND NOT
+  // purchase_completed — see 20260817120000_session_journey_pagination_indexes.
+  // Prisma cannot express partial indexes, so it is SQL-only and will look like
+  // drift to `migrate dev`. Do not drop it.
   @@map("storefront_sessions")
 }
 
@@ -342,6 +349,8 @@ model StorefrontEvent {
   @@index([connectorInstanceId, sessionId], map: "idx_storefront_event_session")
   @@index([connectorInstanceId, eventType, occurredAt], map: "idx_storefront_event_type_occurred")
   @@index([connectorInstanceId, canonicalStage, occurredAt], map: "idx_storefront_events_canonical_stage")
+  // Identity fallback on the session list: newest event for a visitor.
+  @@index([connectorInstanceId, visitorId, occurredAt(sort: Desc)], map: "idx_storefront_event_visitor")
   @@map("storefront_events")
 }
 

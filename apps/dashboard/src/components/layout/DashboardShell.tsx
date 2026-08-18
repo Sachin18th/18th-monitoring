@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { usePathname, useParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { useConnectorPlatform } from '../../context/ConnectorPlatformContext';
 import { NavGroup, formatBreadcrumbLabel, useTheme } from '@kpi-platform/ui';
-import { useToast } from '@kpi-platform/ui';
 import { PROJECT_PAGE_ACCESS_OPTIONS, ROLE_ACCESS, canAccessRoute, getDefaultProjectPathForRole, normalizeRole } from '@kpi-platform/shared-types';
 import type { ConnectedStore } from '../../lib/ecommerceConnectors';
 import {
@@ -32,7 +31,6 @@ import {
   ChevronLeft,
   ChevronDown,
   ChevronRight,
-  RefreshCw,
   Search,
   Home,
   Clock3,
@@ -117,8 +115,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   const { user, logout, isLoading, apiFetch, token, setProject } = useAuth();
   const { healthLevel, healthLabel, connectorsLoaded, selectedStoreLabel, storeOptions, setActiveStoreId, activeStoreId, connectedStores } = useConnectorPlatform();
   const { theme, toggleTheme, mounted } = useTheme();
-  const { success, error: showError } = useToast();
-  const resyncPollerRef = useRef<number | null>(null);
   const normalizedRole = useMemo(() => normalizeRole(user?.role), [user?.role]);
 
   const projectId = (params.projectId as string) || '';
@@ -131,14 +127,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
   const [showStoreDropdown, setShowStoreDropdown] = React.useState(false);
   const [allowedPageKeys, setAllowedPageKeys] = React.useState<string[] | null>(null);
   const [hasResolvedPagePermissions, setHasResolvedPagePermissions] = React.useState(false);
-  const [resyncDialog, setResyncDialog] = React.useState<{
-    title: string;
-    connectorId: string;
-    connectorName: string;
-    phase: 'running' | 'failed';
-    message?: string | null;
-  } | null>(null);
-
   type HeaderStore = ConnectedStore & {
     lastResyncAt?: string;
   };
@@ -147,14 +135,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
     () => (connectedStores as HeaderStore[]).find((store) => store.connectorId === activeStoreId) || null,
     [activeStoreId, connectedStores],
   );
-
-  useEffect(() => {
-    return () => {
-      if (resyncPollerRef.current) {
-        window.clearInterval(resyncPollerRef.current);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (!isLoading && user && isProjectRoute) {
@@ -364,105 +344,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
     return items;
   }, [pathname, projectId, isProjectRoute]);
-
-  const handleRefresh = useCallback(async () => {
-    const connectorId = selectedStore?.connectorId || activeStoreId || '';
-    const connectorName = selectedStore?.name || selectedStoreLabel || 'Selected store';
-
-    if (!connectorId) {
-      showError('Select a store before starting a resync.', 'Resync unavailable');
-      return;
-    }
-
-    setResyncDialog({
-      title: 'Resync in progress',
-      connectorId,
-      connectorName,
-      phase: 'running',
-      message: 'Resyncing the selected store. Please keep this window open.',
-    });
-
-    try {
-      const response = await apiFetch(
-        `/api/v1/tenants/current/projects/${projectId}/integrations/${connectorId}/resync`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ syncTargets: ['orders', 'customers', 'products'] }),
-        },
-      );
-
-      const payload = response?.data ?? response;
-      const jobId = payload?.jobId;
-
-      if (!jobId) {
-        throw new Error('Resync job was not created.');
-      }
-
-      const pollStatus = async () => {
-        const statusResponse = await apiFetch(
-          `/api/v1/tenants/current/projects/${projectId}/integrations/${connectorId}/resync/status?jobId=${jobId}`,
-        );
-        const statusPayload = statusResponse?.data ?? statusResponse;
-        const status = String(statusPayload?.status || '').toLowerCase();
-        const errorMessage = statusPayload?.error || null;
-
-        if (status === 'completed') {
-          if (resyncPollerRef.current) {
-            window.clearInterval(resyncPollerRef.current);
-            resyncPollerRef.current = null;
-          }
-          setResyncDialog(null);
-          success(`Resync completed for ${connectorName}`);
-          return;
-        }
-
-        if (status === 'failed') {
-          if (resyncPollerRef.current) {
-            window.clearInterval(resyncPollerRef.current);
-            resyncPollerRef.current = null;
-          }
-          setResyncDialog({
-            title: 'Resync failed',
-            connectorId,
-            connectorName,
-            phase: 'failed',
-            message: errorMessage || 'The resync job failed to finish.',
-          });
-          showError(errorMessage || 'The resync job failed to finish.', connectorName);
-        }
-
-        return status;
-      };
-
-      const initialStatus = await pollStatus();
-      if (initialStatus === 'queued' || initialStatus === 'running') {
-        resyncPollerRef.current = window.setInterval(() => {
-          void pollStatus().catch((error: any) => {
-            console.error('[DashboardShell] Failed to poll resync status', error);
-            if (resyncPollerRef.current) {
-              window.clearInterval(resyncPollerRef.current);
-              resyncPollerRef.current = null;
-            }
-            setResyncDialog({
-              title: 'Resync failed',
-              connectorId,
-              connectorName,
-              phase: 'failed',
-              message: error?.message || 'The resync job failed to finish.',
-            });
-            showError(error?.message || 'Failed to check resync status.', connectorName);
-          });
-        }, 5000);
-      }
-    } catch (error: any) {
-      if (resyncPollerRef.current) {
-        window.clearInterval(resyncPollerRef.current);
-        resyncPollerRef.current = null;
-      }
-      setResyncDialog(null);
-      showError(error?.message || 'Failed to start resync.', connectorName);
-    }
-  }, [activeStoreId, apiFetch, projectId, selectedStore, selectedStoreLabel, showError, success]);
 
   const formatSyncTime = useCallback((value?: string | null) => {
     if (!value) return '—';
@@ -986,16 +867,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
             <button
               type="button"
               className="project-header-icon-button"
-              onClick={handleRefresh}
-              aria-label="Start resync"
-              title="Start resync"
-            >
-              <RefreshCw style={{ width: '16px', height: '16px' }} />
-            </button>
-
-            <button
-              type="button"
-              className="project-header-icon-button"
               onClick={toggleTheme}
               aria-label="Toggle theme"
               title="Toggle theme"
@@ -1115,53 +986,6 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
 
         <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>{children}</div>
 
-        {resyncDialog ? (
-          <div
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 80,
-              background: 'rgba(2, 6, 23, 0.45)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '16px'
-            }}
-          >
-            <div style={{ width: '100%', maxWidth: '420px', borderRadius: '14px', background: shellColors.sidebarBg, border: `1px solid ${shellColors.borderSecondary}`, boxShadow: '0 24px 60px rgba(0, 0, 0, 0.22)', padding: '20px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: resyncDialog.phase === 'failed' ? 'rgba(239, 68, 68, 0.12)' : 'rgba(59, 130, 246, 0.12)', color: resyncDialog.phase === 'failed' ? '#ef4444' : '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <RefreshCw style={{ width: '18px', height: '18px' }} className={resyncDialog.phase === 'failed' ? undefined : 'animate-spin'} />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: shellColors.pillText }}>{resyncDialog.title}</div>
-                  <div style={{ fontSize: '12px', color: shellColors.mutedText, marginTop: '2px' }}>{resyncDialog.connectorName}</div>
-                </div>
-              </div>
-
-              <div style={{ marginTop: '16px', fontSize: '13px', color: shellColors.pillText, lineHeight: 1.5 }}>
-                {resyncDialog.message || 'Resyncing the selected store. Please wait until the job finishes.'}
-              </div>
-
-              {resyncDialog.phase === 'failed' ? (
-                <>
-                  <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', fontSize: '12px' }}>
-                    {resyncDialog.message}
-                  </div>
-                  <div style={{ marginTop: '16px', display: 'flex', justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      onClick={() => setResyncDialog(null)}
-                      style={{ padding: '8px 16px', borderRadius: '10px', border: `1px solid ${shellColors.borderSecondary}`, background: 'transparent', color: shellColors.pillText, fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
-                    >
-                      Close
-                    </button>
-                  </div>
-                </>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
       </main>
     </div>
   );

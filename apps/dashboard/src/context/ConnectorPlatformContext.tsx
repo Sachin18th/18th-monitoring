@@ -120,8 +120,6 @@ export const ConnectorPlatformContext = createContext<
   ConnectorPlatformContextValue | undefined
 >(undefined);
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 const createId = (prefix: string) =>
   `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
 
@@ -543,12 +541,23 @@ export const ConnectorPlatformProvider: React.FC<{
     console.log("ConnectorPlatformContext mounted");
   }, []);
 
+  /**
+   * Two-stage connection test.
+   *
+   * Stage 1 is offline shape validation — it catches the common paste errors
+   * without spending a round trip. Stage 2 hands the not-yet-persisted
+   * credentials to the API, which calls the merchant's store and reports which
+   * permissions the token actually has (see ConnectorValidationService).
+   *
+   * Stage 2 distinguishes two failure kinds: the store rejecting us comes back
+   * as an HTTP 200 with `ok: false` plus diagnostic metadata, whereas a thrown
+   * error means we never reached our own API.
+   */
   const testConnectorConnection = async (
     platform: EcommercePlatform,
     values: ConnectorSetupValues,
   ): Promise<ConnectorTestResult> => {
-    await delay(700);
-
+    // ── Stage 1: local shape checks ──────────────────────────────────────
     if (platform === "shopify") {
       const normalizedShopDomain = normalizeShopDomain(values.shopDomain || "");
 
@@ -595,10 +604,54 @@ export const ConnectorPlatformProvider: React.FC<{
       }
     }
 
-    return {
-      ok: true,
-      message: "Connection successful — store data is accessible",
-    };
+    // ── Stage 2: live probe against the merchant's store ─────────────────
+    // buildConnectorPayload is declared below in this same scope; it is
+    // initialised long before a user can click Test.
+    const projectId = currentProject || "default-project";
+    const tenantId = user?.tenantId || "current";
+    const payload = buildConnectorPayload(platform, values, projectId);
+
+    try {
+      const result = await apiFetch(
+        `/api/v1/tenants/${tenantId}/projects/${projectId}/integrations/validate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            type: payload.type,
+            config: payload.config,
+            credentials: payload.credentials,
+          }),
+          // Adobe fans out six probes at up to 12s each; allow for the worst case.
+          timeout: 45000,
+        },
+      );
+
+      if (!result || typeof result.ok !== "boolean") {
+        return {
+          ok: false,
+          error: "The connection test returned an unreadable response.",
+        };
+      }
+
+      return result.ok
+        ? {
+            ok: true,
+            message: result.message || "Connection successful.",
+            metadata: result.metadata,
+          }
+        : {
+            ok: false,
+            error: result.error || "Connection test failed.",
+            metadata: result.metadata,
+          };
+    } catch (error: any) {
+      return {
+        ok: false,
+        error:
+          error?.message ||
+          "Could not reach the platform API to run the connection test.",
+      };
+    }
   };
 
   const buildConnectorPayload = (

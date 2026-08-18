@@ -28,11 +28,12 @@ const nextConfig = {
         proxyTimeout: 250000,
     },
     // Next.js 16 blocks dev/HMR requests from non-localhost origins. When the
-    // app is reached through a tunnel (ngrok) the browser origin is that tunnel
-    // host, so it must be allow-listed or the client never hydrates (the page
-    // stays stuck on the SSR "Initializing workspace…" state). Wildcards cover
-    // ngrok's rotating free subdomains.
+    // app is reached through a tunnel the browser origin is that tunnel host,
+    // so it must be allow-listed or the client never hydrates (the page stays
+    // stuck on the SSR "Initializing workspace…" state). Wildcards cover the
+    // rotating free subdomains each provider hands out per session.
     allowedDevOrigins: [
+        '*.trycloudflare.com',
         '*.ngrok-free.dev',
         '*.ngrok-free.app',
         '*.ngrok.io',

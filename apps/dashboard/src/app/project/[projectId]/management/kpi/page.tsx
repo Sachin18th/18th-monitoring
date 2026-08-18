@@ -2,12 +2,14 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../../../../context/AuthContext';
+import { useConnectorFilter } from '../../../../../hooks/useConnectorFilter';
 import { useParams } from 'next/navigation';
 import { PageRestricted } from '../../../../../components/PageRestricted';
 import { PageHero } from '../../../../../components/PageHero';
 import PageSpeedCharts from '../../../../../components/rum/PageSpeedCharts';
 import { PaymentGatewayPanel } from '../../../../../components/observability/PaymentGatewayPanel';
 import { SmsGatewayPanel } from '../../../../../components/observability/SmsGatewayPanel';
+import { formatMoneyExact, numberLocaleFor } from '../../../../../lib/format-money';
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -89,13 +91,10 @@ const EMPTY: React.CSSProperties = {
 };
 
 /* ─── helpers ────────────────────────────────────────────────── */
-const fmt = (n: any, dec = 0) => {
+/** Plain count. Grouping follows the store currency's locale (see numberLocaleFor). */
+const fmtIn = (n: any, locale: string, dec = 0) => {
   if (n == null || isNaN(Number(n))) return '—';
-  return Number(n).toLocaleString('en-IN', { maximumFractionDigits: dec });
-};
-const fmtCur = (n: any) => {
-  if (n == null || isNaN(Number(n))) return '—';
-  return `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  return Number(n).toLocaleString(locale, { maximumFractionDigits: dec });
 };
 const fmtPct = (n: any) => {
   if (n == null || isNaN(Number(n))) return '—';
@@ -173,6 +172,10 @@ export default function KpiAnalyticsPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const { token, apiFetch, user } = useAuth();
+  // Active store. apiFetch stamps connector_instance_id on every request below,
+  // so the id itself is only needed to re-run the load when the operator
+  // switches stores — without it the page keeps the previous store's figures.
+  const { connectorInstanceId, connectorLabel } = useConnectorFilter();
 
   const [timeRange, setTimeRange] = useState('30d');
   const [rumDevice, setRumDevice] = useState<'all' | 'mobile' | 'desktop'>('all');
@@ -249,13 +252,29 @@ export default function KpiAnalyticsPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [projectId, token, apiFetch, timeRange, user?.tenantId]);
+  }, [projectId, token, apiFetch, timeRange, user?.tenantId, connectorInstanceId]);
 
+  // connectorInstanceId is part of loadData's identity, so switching stores
+  // re-runs this and the full-page skeleton covers the in-flight reload —
+  // the previous store's figures are never left on screen.
   useEffect(() => { loadData(); }, [loadData]);
 
   if (allowedPageKeys !== null && !allowedPageKeys.includes('management/kpi')) {
     return <PageRestricted pageKey="management/kpi" />;
   }
+
+  /* ── store currency ─────────────────────────────────────────────
+     Sourced from the canonical orders in scope (canonical_orders.currency),
+     which is what the connector recorded for this store. Every money figure and
+     the digit grouping on this page follow it, so a USD store never renders ₹. */
+  const currency = String(orderSummary?.currency || 'USD').toUpperCase();
+  const numberLocale = numberLocaleFor(currency);
+  const fmt = (n: any, dec = 0) => fmtIn(n, numberLocale, dec);
+  const fmtCur = (n: any) => formatMoneyExact(n, currency);
+  const currencySymbol = fmtCur(0).replace(/[\d.,\s]/g, '') || currency;
+  // Recharts matches the tooltip/legend entry by the series `name`, so the label
+  // has to be one value shared by the <Area>, the tooltip and the legend.
+  const revenueSeriesName = `Revenue (${currencySymbol})`;
 
   /* ── derived values ─────────────────────────────────────────── */
   const revenue    = orderSummary?.totalRevenue    ?? kpiSummary.find(k => k.key === 'revenue')?.value;
@@ -338,7 +357,11 @@ export default function KpiAnalyticsPage() {
           icon={BarChart3}
           eyebrow="KPI Governance"
           title="KPI Analytics Engine"
-          subtitle="Unified business, operational, and experience intelligence across all connected data sources."
+          subtitle={
+            connectorInstanceId
+              ? `Business, operational, and experience intelligence for ${connectorLabel}.`
+              : 'Unified business, operational, and experience intelligence across all connected data sources.'
+          }
           live
           right={
             <>
@@ -508,15 +531,15 @@ export default function KpiAnalyticsPage() {
                         tickFormatter={(v: string) => v.length === 10 ? v.slice(5) : v} />
                       <YAxis yAxisId="left"  tick={TICK_STYLE} tickLine={false} axisLine={false} />
                       <YAxis yAxisId="right" orientation="right" tick={TICK_STYLE} tickLine={false} axisLine={false}
-                        tickFormatter={(v: number) => `₹${v}`} />
+                        tickFormatter={(v: number) => fmtCur(v)} />
                       <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: 'var(--text-secondary)' }}
-                        formatter={(v: any, name: string) => name === 'Revenue (₹)' ? [`₹${Number(v).toLocaleString('en-IN')}`, name] : [v, name]} />
+                        formatter={(v: any, name: string) => name === revenueSeriesName ? [fmtCur(v), name] : [v, name]} />
                       <Area yAxisId="left"  type="monotone" dataKey="orders"  stroke={C.blue} fill="url(#gOrders)"  strokeWidth={2} dot={false} name="Orders" />
-                      <Area yAxisId="right" type="monotone" dataKey="revenue" stroke={C.green} fill="url(#gRevenue)" strokeWidth={2} dot={false} name="Revenue (₹)" />
+                      <Area yAxisId="right" type="monotone" dataKey="revenue" stroke={C.green} fill="url(#gRevenue)" strokeWidth={2} dot={false} name={revenueSeriesName} />
                     </AreaChart>
                   </ResponsiveContainer>
                   <div style={{ display: 'flex', gap: '18px', marginTop: '10px' }}>
-                    {[{ color: C.blue, label: 'Orders' }, { color: C.green, label: 'Revenue (₹)' }].map(l => (
+                    {[{ color: C.blue, label: 'Orders' }, { color: C.green, label: revenueSeriesName }].map(l => (
                       <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <span style={{ width: '10px', height: '3px', borderRadius: '2px', background: l.color, display: 'inline-block' }} />
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{l.label}</span>

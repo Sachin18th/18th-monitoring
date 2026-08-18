@@ -297,6 +297,212 @@ sessions and funnels don't merge across brands or locales.
 
 ---
 
+## 4. Headless front-ends & PWAs (`window.track.identify`)
+
+On Shopify / BigCommerce / Adobe the tracker resolves the logged-in shopper by
+reading what the platform itself exposes (`mage-cache-storage`,
+`ShopifyAnalytics`, `window.customer`, the section-load / cart endpoints). A
+**headless storefront or PWA exposes none of those**, and it is usually on its
+own origin, so the platform's session cookie is unreachable too — every probe in
+`identityInfo()` is a no-op there and sessions arrive anonymous.
+
+The app itself is the only source of truth, so it pushes identity in:
+
+```js
+window.track.identify({ id, name, email });  // login, and on restored-session boot
+window.track.reset();                        // logout / account switch
+window.track.visitorId();                    // for an optional server-to-server link
+```
+
+### Step 1 — the tag
+
+```html
+<!-- Pre-load queue: identify() may be called before the async tracker executes -->
+<script>window._platq = window._platq || [];</script>
+
+<script src="API_HOST/api/track/tracker.js"
+        data-connector-id="CONNECTOR_ID"
+        data-ingest-url="API_HOST/api/track"
+        async></script>
+```
+
+Next.js App Router: render the first as `<Script id="platq" strategy="beforeInteractive">`,
+the second as `<Script strategy="afterInteractive">`.
+
+### Step 2 — a small wrapper in the app
+
+```js
+// src/lib/platTracker.js
+const queue = (call) => { window._platq = window._platq || []; window._platq.push(call); };
+
+function clean(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v).trim();
+  if (!s || s === '0' || s === 'null' || s === 'undefined') return '';
+  return s.indexOf('{{') > -1 ? '' : s;
+}
+
+/** Tell the tracker who is logged in. Safe to call on every render — repeat
+ *  payloads are ignored by the tracker. */
+export function identify(user) {
+  if (typeof window === 'undefined' || !user) return;
+  const payload = {
+    // The PLATFORM's customer id (Shopify / BigCommerce / Magento), NOT an
+    // internal app id — see "Which id to send" below.
+    id: clean(user.id),
+    name: clean(user.name) || [clean(user.firstName), clean(user.lastName)].filter(Boolean).join(' '),
+    email: clean(user.email),
+  };
+  if (!payload.id && !payload.name && !payload.email) return;
+  if (window.track && window.track.identify) window.track.identify(payload);
+  else queue(['identify', payload]);          // tracker not loaded yet
+}
+
+/** Clear identity on logout. Stale identity is worse than none: a long-lived PWA
+ *  tab would otherwise label the next user's sessions with the previous user. */
+export function reset() {
+  if (typeof window === 'undefined') return;
+  if (window.track && window.track.reset) window.track.reset();
+  else queue(['reset']);
+}
+
+/** Optional custom events (already supported on every platform). */
+export function track(type, props) {
+  if (typeof window === 'undefined') return;
+  if (window.track) window.track(type, props || {});
+  else queue([type, props || {}]);
+}
+```
+
+### Step 3 — wire it to auth state
+
+```jsx
+// Mount once, high in the tree.
+'use client';
+import { useEffect } from 'react';
+import { identify, reset } from '@/lib/platTracker';
+import { useAuth } from '@/context/AuthContext';
+
+export default function TrackerIdentity() {
+  const { user } = useAuth();               // null while logged out / restoring
+  useEffect(() => {
+    if (user) identify({ id: user.shopifyCustomerId, name: user.fullName, email: user.email });
+    else reset();
+  }, [user]);
+  return null;
+}
+```
+
+One effect covers login, logout **and** cold-start token rehydration — all three
+are just changes to `user`. That last case matters most in a PWA: the app resumes
+already logged in, with no login event to hook.
+
+Vue: `watch(user, u => u ? identify({...}) : reset(), { immediate: true })`.
+Vanilla: call `identify()` in the login success handler **and** wherever a session
+is restored from storage; `reset()` in the logout handler.
+
+### Magento PWA Studio / Venia — resolves automatically
+
+A Venia storefront needs **no app change**. It is invisible to the normal Adobe
+probes (no `window.Magento`, no Magento body classes, no `mage-cache-storage`,
+and `/customer/section/load/` is unreachable because Venia runs on its own origin
+and authenticates with a bearer JWT), so the tracker reads what Venia actually
+persists in `localStorage`:
+
+| Source | Yields |
+| ------ | ------ |
+| `apollo-cache-persist-default` | the `Customer` entity → `firstname`/`lastname`/`email`, free, no network call (`id_probe=pwa_venia:ok`) |
+| **authenticated GraphQL** — `POST /graphql` with `Authorization: Bearer <signin_token>` and `{customer{firstname lastname email}}` | the authoritative name + email whenever the shopper is signed in (`id_probe=pwa_gql:ok`). Fired only when the cache above came up empty, at most once per minute, aborted after 3s. The token goes only to the store's own endpoint and never to our ingest; cookies are omitted. |
+| `M2_VENIA_BROWSER_PERSISTENCE__signin_token` | the JWT's `uid` → the Magento customer entity id (`id_probe=pwa_venia:uid`), used as the last resort and as the `customer_id` alongside the two above. An expired envelope (`timeStored`+`ttl`) is ignored. |
+
+The GraphQL endpoint defaults to a relative `/graphql`, which is same-origin on a
+Venia/UPWARD deployment. A build whose browser talks straight to the Magento
+backend origin can override it with `data-graphql-url` on the tracker tag — but
+that backend then needs CORS, otherwise the probe fails silently and the uid path
+applies. Magento reports an expired or revoked token *inside* a 200 response
+(`errors[]`), which is treated as a failure (`pwa_gql:unauth`), never as an empty
+identity.
+
+With the uid alone, name/email are resolved server-side against
+`customer_profiles.external_ids->>'adobe_commerce'` — so **the Adobe customer
+sync must have run for that shopper**. If it hasn't, or if the Apollo cache is
+cold, call `identify()` from Venia's `useUserContext()` for an authoritative
+answer:
+
+```js
+const [{ currentUser, isSignedIn }] = useUserContext();
+useEffect(() => {
+  if (isSignedIn && currentUser?.email) {
+    identify({ id: currentUser.id, name: `${currentUser.firstname} ${currentUser.lastname}`, email: currentUser.email });
+  } else if (!isSignedIn) {
+    reset();
+  }
+}, [isSignedIn, currentUser]);
+```
+
+A sign-in on a Venia SPA route triggers no navigation, so while the shopper is
+anonymous the tracker re-probes every flush tick (identity probes are rate-limited
+to one per 15s and stop entirely once identity resolves) — an idle post-login tab
+is still picked up.
+
+### Alternative — server-rendered global (SSR shells)
+
+If your front-end renders its own HTML shell, you can also expose the shopper
+before any JS runs. It lands on the **first** event of the page, ahead of
+hydration, and is read on every platform:
+
+```html
+<script>window.__PLAT_CUSTOMER__ = { id: 8123, name: "Asha Menon", email: "asha@example.com" };</script>
+```
+
+A merchant-placed `<div id="__plat_customer" data-customer-id data-customer-name
+data-customer-email hidden>` works identically. Both are fallbacks — they cannot
+react to a login or a logout that happens without a page load, so an app with a
+client-side auth flow should still call `identify()`/`reset()`.
+
+### Which id to send
+
+| Backing platform | Pass as `id`                                                    |
+| ---------------- | --------------------------------------------------------------- |
+| Shopify          | numeric `customer.id` (strip the `gid://shopify/Customer/` prefix) |
+| BigCommerce      | `customer.id` from the Customers API                             |
+| Adobe Commerce   | the customer `entity_id`                                         |
+
+The backend resolves this against the synced
+`customer_profiles.external_ids`, so name/email are recovered server-side even if
+this beacon never lands. Sending `email` too gives a second, independent match key
+(`email_hash`). An internal app UUID matches nothing — the identity would then
+depend entirely on the client payload surviving the network.
+
+### Service worker
+
+The SW must never cache the tracker or the ingest, or your users keep executing an
+old build after a deploy:
+
+```js
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  if (url.pathname.startsWith('/api/track') || url.pathname.startsWith('/api/rum')) return; // network only
+  // …existing caching…
+});
+```
+
+Workbox: a `NetworkOnly` route for `/\/api\/(track|rum)/`, and exclude
+`tracker.js` from precaching.
+
+### Verifying
+
+1. Log in → DevTools → Network → `POST /api/track` containing an `element_click`
+   event with `properties.track = "identity_resolved"` and
+   `id_probe = "app_identify:ok"` (or `"global_customer:ok"` for the SSR global),
+   carrying `customer_id` / `customer_name` / `email`.
+2. Console: `sessionStorage.__plat_cid` is populated; empty after logout.
+3. Dashboard → Session Journeys: the session shows the shopper's name.
+
+Automated coverage: `node apps/api/src/public/tracker.identity.smoke.mjs`.
+
+---
+
 ## Verifying the install
 
 After loading the storefront, confirm events are arriving:

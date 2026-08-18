@@ -64,7 +64,10 @@ export default function Customer360Page() {
 
   // Detail selection (null = paginated customer list view).
   const [detailKey, setDetailKey] = useState<{ by: 'email' | 'id'; value: string } | null>(null);
-  const [emailInput, setEmailInput] = useState('');
+  // One search box: an exact email jumps straight to that customer, anything
+  // else filters the list by name (server-side, debounced).
+  const [searchInput, setSearchInput] = useState('');
+  const [nameFilter, setNameFilter] = useState('');
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -126,6 +129,7 @@ export default function Customer360Page() {
         pageSize: String(PAGE_SIZE),
       });
       if (segmentFilter) qs.set('segment', segmentFilter);
+      if (nameFilter) qs.set('name', nameFilter);
       const res = await apiFetch(`/api/storefront/customers?${qs.toString()}`, { suppressUnauthorizedRedirect: true });
       setCustomers(Array.isArray(res?.customers) ? res.customers : []);
       setTotal(Number(res?.total) || 0);
@@ -135,11 +139,24 @@ export default function Customer360Page() {
     } finally {
       setListLoading(false);
     }
-  }, [apiFetch, projectId, token, connectorInstanceId, page, segmentFilter]);
+  }, [apiFetch, projectId, token, connectorInstanceId, page, segmentFilter, nameFilter]);
 
   useEffect(() => {
     if (!detailKey) loadList();
   }, [loadList, detailKey]);
+
+  // Debounce the name search so typing doesn't fire a request per keystroke.
+  // An email-shaped value is a jump target, not a name filter.
+  useEffect(() => {
+    const term = searchInput.trim();
+    const next = term.includes('@') ? '' : term;
+    if (next === nameFilter) return;
+    const id = setTimeout(() => {
+      setNameFilter(next);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(id);
+  }, [searchInput, nameFilter]);
 
   // Segment counts for the filter chips (refreshed with the store).
   const loadSegments = useCallback(async () => {
@@ -164,6 +181,8 @@ export default function Customer360Page() {
   useEffect(() => {
     setDetailKey(null);
     setPage(1);
+    setSearchInput('');
+    setNameFilter('');
   }, [connectorSelectionTick]);
 
   // ── Customer detail (unified 360) ────────────────────────────────────────
@@ -462,26 +481,48 @@ export default function Customer360Page() {
             <CustomerInsights projectId={String(projectId)} connectorInstanceId={connectorInstanceId} apiFetch={apiFetch} />
           ) : (
           <>
-          {/* quick jump to a specific customer by exact email */}
+          {/* search by name (filters the list), or jump by exact email */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (emailInput.trim()) setDetailKey({ by: 'email', value: emailInput.trim() });
+              const term = searchInput.trim();
+              if (!term) return;
+              // Emails are stored encrypted, so they can only be matched exactly —
+              // an email-shaped term resolves the customer directly. A name is a
+              // partial match, so it filters the list instead.
+              if (term.includes('@')) setDetailKey({ by: 'email', value: term });
+              else {
+                setNameFilter(term);
+                setPage(1);
+              }
             }}
             style={{ display: 'flex', gap: 10, marginBottom: 16, maxWidth: 460 }}
           >
             <div style={{ position: 'relative', flex: 1 }}>
               <Search size={16} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--text-muted)' }} />
               <input
-                type="email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                placeholder="Jump to a customer by exact email…"
+                type="search"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search by customer name, or exact email…"
                 style={{
                   width: '100%', padding: '10px 12px 10px 36px', borderRadius: 8,
                   border: '1px solid var(--border-card)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: 14,
                 }}
               />
+              {searchInput && (
+                <button
+                  type="button"
+                  onClick={() => { setSearchInput(''); setNameFilter(''); setPage(1); }}
+                  title="Clear search"
+                  style={{
+                    position: 'absolute', right: 8, top: 7, border: 0, background: 'transparent',
+                    color: 'var(--text-muted)', cursor: 'pointer', fontSize: 16, lineHeight: '20px', padding: '4px 6px',
+                  }}
+                >
+                  ×
+                </button>
+              )}
             </div>
           </form>
 
@@ -502,7 +543,9 @@ export default function Customer360Page() {
 
           {listLoading && <Empty text="Loading customers…" />}
           {!listLoading && listError && <Empty text={listError} />}
-          {!listLoading && !listError && customers && customers.length === 0 && <Empty text="No customers found for this store yet." />}
+          {!listLoading && !listError && customers && customers.length === 0 && (
+            <Empty text={nameFilter ? `No customer matches “${nameFilter}”.` : 'No customers found for this store yet.'} />
+          )}
           {!listLoading && !listError && customers && customers.length > 0 && (
             <div style={{ border: '1px solid var(--border-card)', borderRadius: 12, overflow: 'hidden', background: 'var(--bg-card)' }}>
               <div style={{ overflowX: 'auto' }}>

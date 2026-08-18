@@ -639,7 +639,7 @@ export default function BackendObservabilityPage() {
                     alignItems: 'center',
                     borderBottom: index === connectors.length - 1 ? 'none' : '1px solid var(--border-card)',
                     minWidth: '760px',
-                  }}
+                  }} 
                 >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
                     <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

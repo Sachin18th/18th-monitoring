@@ -14,6 +14,44 @@ function localeFor(currency: string): string {
   return currency === 'INR' ? 'en-IN' : 'en-US';
 }
 
+/**
+ * Grouping locale for plain (non-money) counts on a store-currency page, so a
+ * USD store doesn't render `1,00,000` orders under Indian grouping.
+ */
+export function numberLocaleFor(currency: string): string {
+  return localeFor(currency);
+}
+
+/**
+ * Exact money with the store's currency symbol, keeping up to `maxFractionDigits`
+ * decimals and dropping trailing zeros (60900 → `$60,900`, 7612.5 → `$7,612.5`).
+ * Use for dense stat rows; use {@link formatMoneyCompact} for headline tiles.
+ */
+export function formatMoneyExact(
+  n: number | null | undefined,
+  currency = 'USD',
+  maxFractionDigits = 2,
+): string {
+  if (n == null || Number.isNaN(Number(n))) return '—';
+  const value = Number(n);
+  const locale = localeFor(currency);
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      currencyDisplay: 'narrowSymbol',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: maxFractionDigits,
+    }).format(value);
+  } catch {
+    // Non-ISO or unknown code — Intl throws, so fall back to the symbol map.
+    const sign = value < 0 ? '-' : '';
+    return `${sign}${symbolFor(currency)}${Math.abs(value).toLocaleString(locale, {
+      maximumFractionDigits: maxFractionDigits,
+    })}`;
+  }
+}
+
 /** Label for the compaction scheme used, e.g. for the controls caption. */
 export function compactUnitLabel(currency: string): string {
   return currency === 'INR' ? 'Lakh / Crore' : 'K / M';

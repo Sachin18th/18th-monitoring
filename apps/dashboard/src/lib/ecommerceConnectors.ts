@@ -40,7 +40,8 @@ export const connectorsConfig: ConnectorsConfig = {
       steps: [
         'Open your Adobe Commerce Admin panel.',
         'Go to System → Extensions → Integrations.',
-        'Create a new Integration and enable required API resources.',
+        'Create a new Integration and grant these API resources: Sales → Operations → Orders, Customers, Catalog → Products and Categories.',
+        'Also grant Carts (abandoned-cart sync) and Stores (used by the connector health probe).',
         'Activate the integration to generate an Access Token.',
         "Paste the token here as 'Admin API Access Token'."
       ],
@@ -81,7 +82,8 @@ export const connectorsConfig: ConnectorsConfig = {
       steps: [
         'Open Shopify Admin.',
         'Go to Settings → Apps and sales channels → Develop apps.',
-        'Create an app and configure Admin API scopes (read_orders, read_customers, read_products, read_analytics).',
+        'Create an app and enable these Admin API scopes: read_orders, read_all_orders, read_customers, read_products.',
+        'Optional: add write_script_tags to auto-install the tracker, and write_pixels + read_customer_events for the checkout Web Pixel.',
         'Install the app to your store.',
         'Copy the Admin API access token.',
         'Enter your Shopify store domain (e.g. your-store.myshopify.com).'
@@ -137,7 +139,8 @@ export const connectorsConfig: ConnectorsConfig = {
       title: 'How to get your BigCommerce API access token and store hash',
       steps: [
         'Open BigCommerce Control Panel and go to Advanced Settings → API Accounts.',
-        'Create a new API account with the required scopes (orders, customers, products).',
+        'Create a new API account with these OAuth scopes: Orders read-only, Customers read-only, Products read-only.',
+        'Optional: set Content to modify so the storefront tracker can be auto-installed.',
         'Copy the API Access Token and the Store Hash from the account details.',
         "Enter the Store Hash (e.g. abc123) and paste the API Access Token."
       ],
@@ -264,9 +267,14 @@ export type ConnectorTestMetadata = {
     products?: number;
   };
   scopesGranted?: string[];
+  /** Missing permissions that block the connector entirely. */
   scopesMissing?: string[];
+  /** Missing permissions that only degrade specific features. */
+  scopesOptionalMissing?: string[];
   webhooksSupported?: boolean;
-  checks?: Array<{ name: string; ok: boolean; detail?: string }>;
+  checks?: Array<{ name: string; ok: boolean; required?: boolean; detail?: string }>;
+  /** Caveats the probe cannot resolve on its own (e.g. Shopify PCD approval). */
+  warnings?: string[];
 };
 
 export type ConnectorTestResult =
